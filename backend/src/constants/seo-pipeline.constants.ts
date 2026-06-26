@@ -123,3 +123,30 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
 }
+
+/**
+ * LLM rate limit configuration.
+ *
+ * GEMINI FREE TIER: 15 RPM → one call every 4 seconds.
+ * When upgrading to paid plan, change REQUESTS_PER_MINUTE and DELAY_MS here.
+ * Every job that calls LLM sequentially imports this — one place to change.
+ *
+ * DELAY_MS = Math.ceil(60_000 / REQUESTS_PER_MINUTE) + 500ms buffer.
+ * The buffer prevents hitting the limit exactly on the boundary.
+ */
+export const LLM_RATE_LIMIT = {
+  REQUESTS_PER_MINUTE: 15,
+  DELAY_MS:            4_500, // 60000/15 = 4000 + 500ms safety buffer
+} as const
+
+/**
+ * Technical audit LLM configuration.
+ * Controls how many pages are processed per batch before sleeping.
+ * On free tier: process 1 page at a time (1 LLM call per page).
+ * On paid tier: increase PAGES_PER_BATCH to parallelise.
+ */
+export const TECHNICAL_AUDIT_CONFIG = {
+  PAGES_PER_BATCH:    1,    // Process N pages before sleeping — increase on paid plan
+  MAX_ALT_TEXT_IMGS:  10,   // Cap: only generate alt text for first N missing-alt images per page
+  MAX_FAQ_QUESTIONS:  5,    // Cap: max FAQ Q&A pairs per page
+} as const

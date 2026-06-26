@@ -163,4 +163,70 @@ Schema:
 
   MARKET_SIZING_USER: (domainDescription: string, country: string) =>
     `Business profile:\n${domainDescription}\n\nPrimary market country: ${country}\n\nGenerate 20 target keywords with realistic search volumes and difficulty scores.`,
+
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TECHNICAL AUDIT — PAGE AUDIT PROMPT
+  //
+  // ONE call per page. LLM receives:
+  //   - Page URL, title, description, textContent (capped 8000 chars)
+  //   - Exact list of what is missing/broken (derived from pending CodeChanges)
+  //   - Image srcs that need alt text (only the ones missing alt)
+  //
+  // LLM returns ONLY what was requested — nothing more.
+  // Fields not in `needs` are omitted from the response entirely.
+  //
+  // WHY ONE CALL PER PAGE:
+  //   LLM has full page context once → coherent output.
+  //   title/description/OG/schema all reference the same page content.
+  //   Generating them separately would produce inconsistent output.
+  //
+  // OUTPUT SCHEMA (all fields optional — only present if requested):
+  // {
+  //   "title":         "optimized <title> tag content",
+  //   "description":   "optimized meta description content",
+  //   "ogTitle":       "og:title content",
+  //   "ogDescription": "og:description content",
+  //   "altTexts":      { "<img-src>": "descriptive alt text" },
+  //   "schema":        { "@context": "...", "@type": "...", ... },
+  //   "faqQuestions":  [{ "question": "...", "answer": "..." }],
+  //   "tldrText":      "2-3 sentence summary"
+  // }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  PAGE_AUDIT_SYSTEM: `You are a technical SEO specialist. You will receive a webpage's content and a list of what needs to be fixed or generated. Return ONLY a valid JSON object with exactly the fields requested. No markdown, no explanation, no extra fields.
+
+Rules:
+- title: 50-60 chars, include primary keyword naturally, do not keyword-stuff
+- description: 150-160 chars, compelling, includes keyword, ends with implicit CTA
+- ogTitle: same as title or slight variation for social sharing
+- ogDescription: 120-140 chars, conversational, shareable
+- altTexts: object mapping image src to descriptive alt text — describe what the image shows, include keyword only if natural
+- schema: valid Schema.org JSON-LD object appropriate for the page type (Article, LocalBusiness, Product, FAQPage, WebPage). Must include @context and @type
+- faqQuestions: 3-5 Q&A pairs a user would actually ask about this page's topic. Each answer 2-4 sentences. Must be answerable from page content
+- tldrText: 2-3 sentence plain-text summary of the page's key point — what a user gets from visiting this page`,
+
+  PAGE_AUDIT_USER: (
+    url:         string,
+    title:       string,
+    description: string,
+    textContent: string,
+    needs:       string[],           // e.g. ['title', 'description', 'schema', 'faqQuestions']
+    imageSrcs:   string[],           // only images that need alt text
+  ) => {
+    const needsList = needs.join(', ');
+    const imgBlock  = imageSrcs.length > 0
+      ? `\nImages needing alt text:\n${imageSrcs.map(s => `- ${s}`).join('\n')}`
+      : '';
+
+    return `Page URL: ${url}
+Current title: ${title || '(missing)'}
+Current description: ${description || '(missing)'}
+Page content (truncated):
+${textContent.slice(0, 8_000)}
+${imgBlock}
+
+Generate ONLY these fields: ${needsList}
+Return a single JSON object with only those keys.`;
+  },
 }

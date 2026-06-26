@@ -46,6 +46,8 @@ import {
 } from '../constants/seo-pipeline.constants';
 import { runSiteCrawlJob }       from './jobs/site-crawl.job';
 import { runBlogGenerationJob }  from './jobs/blog-generation.job';
+import { runBusinessProfileJob }  from './jobs/business-profile.job';
+import { runTechnicalAuditJob } from './jobs/technical-audit.job';
 
 // ── Job data shapes ────────────────────────────────────────────────────────
 
@@ -199,16 +201,14 @@ async function handleSiteCrawl(job: Job<PipelineJobData>): Promise<void> {
 async function handleBusinessProfile(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/business-profile.job.ts
-  logger.debug('STUB: business-profile', { projectId });
+  await runBusinessProfileJob(job);
   await markStepCompleted(projectId, step);
 }
 
 async function handleTechnicalAudit(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/technical-audit.job.ts
-  logger.debug('STUB: technical-audit', { projectId });
+  await runTechnicalAuditJob(job);
   await markStepCompleted(projectId, step);
 }
 

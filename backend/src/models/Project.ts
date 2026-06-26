@@ -21,87 +21,137 @@
  *   - Each concern has a clear, single-responsibility model
  */
 
-import mongoose, { Document, Schema, Types } from "mongoose";
+import mongoose, { Document, Schema, Types } from 'mongoose';
+import { PIPELINE_SEQUENCE, type PipelineStep } from '../constants/seo-pipeline.constants';
+
+// ── Pipeline step state ────────────────────────────────────────────────────
+
+interface IPipelineStepState {
+  status:       'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERRORED';
+  startedAt?:   Date;
+  completedAt?: Date;
+  error?:       string;
+}
+
+type IPipelineSteps = Partial<Record<PipelineStep, IPipelineStepState>>;
+
+interface IPipeline {
+  jobId?:       string; // BullMQ job ID
+  currentStep?: PipelineStep;
+  status:       'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERRORED';
+  startedAt?:   Date;
+  completedAt?: Date;
+  steps:        IPipelineSteps;
+}
+
+// ── Main document ──────────────────────────────────────────────────────────
 
 export interface IProject extends Document {
-  // Core identity
-  domain: string; // e.g. "example.com" — no protocol, no trailing slash
+  domain:         string;
   organizationId: Types.ObjectId;
-  ownerId: Types.ObjectId;
+  ownerId:        Types.ObjectId;
 
-  // Subscription (Stripe)
-  isSubscribed: boolean;
-  stripeCustomerId?: string;
+  // Subscription
+  isSubscribed:          boolean;
+  stripeCustomerId?:     string;
   stripeSubscriptionId?: string;
-  trialEndsAt?: Date;
-  subscriptionEndDate?: Date;
-  cancelAtPeriodEnd: boolean;
+  trialEndsAt?:          Date;
+  subscriptionEndDate?:  Date;
+  cancelAtPeriodEnd:     boolean;
 
-  // Feature flags — quick checks without loading related collections
-  isGscConnected: boolean;
-  isCmsConnected: boolean;
-  isOwnershipVerified: boolean;
-  isKeywordsPicked: boolean;
+  // Feature flags
+  isGscConnected:          boolean;
+  isCmsConnected:          boolean;
+  isOwnershipVerified:     boolean;
+  isKeywordsPicked:        boolean;
   isTechnicalSeoConnected: boolean;
-  isOnboardingComplete: boolean;
+  isOnboardingComplete:    boolean;
 
-  // GSC settings stored here (not in GoogleToken — those are just the OAuth creds)
-  gscPropertyType?: "site" | "domain";
+  // GSC
+  gscPropertyType?:       'site' | 'domain';
   gscTargetCountryCodes?: string[];
 
-  // AI writer config — shape evolves rapidly, kept as Mixed for now
-  autoBlogConfig?: Record<string, unknown>;
-  keywordPillars?: Record<string, unknown>;
+  // AI config
+  autoBlogConfig?:       Record<string, unknown>;
+  keywordPillars?:       Record<string, unknown>;
   blogWriterInstruction?: string;
+
+  // Pipeline state
+  pipeline: IPipeline;
 
   createdAt: Date;
   updatedAt: Date;
 }
 
+// ── Pipeline step schema ───────────────────────────────────────────────────
+
+const PipelineStepStateSchema = new Schema<IPipelineStepState>(
+  {
+    status:      { type: String, enum: ['PENDING', 'RUNNING', 'COMPLETED', 'ERRORED'], default: 'PENDING' },
+    startedAt:   { type: Date },
+    completedAt: { type: Date },
+    error:       { type: String },
+  },
+  { _id: false },
+);
+
+// Build default steps object — all PENDING at creation
+function defaultSteps(): IPipelineSteps {
+  const steps: IPipelineSteps = {};
+  for (const step of PIPELINE_SEQUENCE) {
+    steps[step] = { status: 'PENDING' };
+  }
+  return steps;
+}
+
+const PipelineSchema = new Schema<IPipeline>(
+  {
+    jobId:       { type: String },
+    currentStep: { type: String },
+    status:      { type: String, enum: ['PENDING', 'RUNNING', 'COMPLETED', 'ERRORED'], default: 'PENDING' },
+    startedAt:   { type: Date },
+    completedAt: { type: Date },
+    steps:       { type: Schema.Types.Mixed, default: defaultSteps },
+  },
+  { _id: false },
+);
+
+// ── Project schema ─────────────────────────────────────────────────────────
+
 const ProjectSchema = new Schema<IProject>(
   {
-    domain: { type: String, required: true, trim: true, lowercase: true },
-    organizationId: {
-      type: Schema.Types.ObjectId,
-      ref: "Organization",
-      required: true,
-    },
-    ownerId: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+    domain:         { type: String, required: true, trim: true, lowercase: true },
+    organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true },
+    ownerId:        { type: Schema.Types.ObjectId, ref: 'User', required: true },
 
-    // Subscription
-    isSubscribed: { type: Boolean, default: false },
-    stripeCustomerId: { type: String },
-    stripeSubscriptionId: { type: String },
-    trialEndsAt: { type: Date },
-    subscriptionEndDate: { type: Date },
-    cancelAtPeriodEnd: { type: Boolean, default: false },
+    isSubscribed:          { type: Boolean, default: false },
+    stripeCustomerId:      { type: String },
+    stripeSubscriptionId:  { type: String },
+    trialEndsAt:           { type: Date },
+    subscriptionEndDate:   { type: Date },
+    cancelAtPeriodEnd:     { type: Boolean, default: false },
 
-    // Feature flags
-    isGscConnected: { type: Boolean, default: false },
-    isCmsConnected: { type: Boolean, default: false },
-    isOwnershipVerified: { type: Boolean, default: false },
-    isKeywordsPicked: { type: Boolean, default: false },
+    isGscConnected:          { type: Boolean, default: false },
+    isCmsConnected:          { type: Boolean, default: false },
+    isOwnershipVerified:     { type: Boolean, default: false },
+    isKeywordsPicked:        { type: Boolean, default: false },
     isTechnicalSeoConnected: { type: Boolean, default: false },
-    isOnboardingComplete: { type: Boolean, default: false },
+    isOnboardingComplete:    { type: Boolean, default: false },
 
-    // GSC settings
-    gscPropertyType: { type: String, enum: ["site", "domain"] },
+    gscPropertyType:       { type: String, enum: ['site', 'domain'] },
     gscTargetCountryCodes: { type: [String], default: [] },
 
-    // AI config
-    autoBlogConfig: { type: Schema.Types.Mixed },
-    keywordPillars: { type: Schema.Types.Mixed },
+    autoBlogConfig:        { type: Schema.Types.Mixed },
+    keywordPillars:        { type: Schema.Types.Mixed },
     blogWriterInstruction: { type: String },
+
+    pipeline: { type: PipelineSchema, default: () => ({ status: 'PENDING', steps: defaultSteps() }) },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 ProjectSchema.index({ organizationId: 1 });
 ProjectSchema.index({ domain: 1, organizationId: 1 }, { unique: true });
 ProjectSchema.index({ ownerId: 1 });
 
-export const Project = mongoose.model<IProject>("Project", ProjectSchema);
+export const Project = mongoose.model<IProject>('Project', ProjectSchema);

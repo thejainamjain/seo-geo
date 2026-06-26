@@ -225,16 +225,14 @@ async function handleCompetitorDiscovery(job: Job<PipelineJobData>): Promise<voi
 async function handleKeywordResearch(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/keyword-research.job.ts
-  await await runKeywordResearchJob(job);
+  await runKeywordResearchJob(job);
   await markStepCompleted(projectId, step);
 }
 
 async function handleSerpResearch(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/serp-research.job.ts
-  await await runSerpResearchJob(job);
+  await runSerpResearchJob(job);
   await markStepCompleted(projectId, step);
 }
 

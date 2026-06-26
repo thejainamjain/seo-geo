@@ -49,6 +49,8 @@ import { runBlogGenerationJob }  from './jobs/blog-generation.job';
 import { runBusinessProfileJob }  from './jobs/business-profile.job';
 import { runTechnicalAuditJob } from './jobs/technical-audit.job';
 import { runCompetitorDiscoveryJob } from './jobs/competitor-discovery.job';
+import { runKeywordResearchJob }    from './jobs/keyword-research.job';
+import { runSerpResearchJob }       from './jobs/serp-research.job';
 
 // ── Job data shapes ────────────────────────────────────────────────────────
 
@@ -224,7 +226,7 @@ async function handleKeywordResearch(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
   // TODO: extract to workers/jobs/keyword-research.job.ts
-  logger.debug('STUB: keyword-research', { projectId });
+  await await runKeywordResearchJob(job);
   await markStepCompleted(projectId, step);
 }
 
@@ -232,7 +234,7 @@ async function handleSerpResearch(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
   // TODO: extract to workers/jobs/serp-research.job.ts
-  logger.debug('STUB: serp-research', { projectId });
+  await await runSerpResearchJob(job);
   await markStepCompleted(projectId, step);
 }
 

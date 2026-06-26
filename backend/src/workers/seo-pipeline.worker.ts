@@ -48,6 +48,7 @@ import { runSiteCrawlJob }       from './jobs/site-crawl.job';
 import { runBlogGenerationJob }  from './jobs/blog-generation.job';
 import { runBusinessProfileJob }  from './jobs/business-profile.job';
 import { runTechnicalAuditJob } from './jobs/technical-audit.job';
+import { runCompetitorDiscoveryJob } from './jobs/competitor-discovery.job';
 
 // ── Job data shapes ────────────────────────────────────────────────────────
 
@@ -215,8 +216,7 @@ async function handleTechnicalAudit(job: Job<PipelineJobData>): Promise<void> {
 async function handleCompetitorDiscovery(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/competitor-discovery.job.ts
-  logger.debug('STUB: competitor-discovery', { projectId });
+  await runCompetitorDiscoveryJob(job);
   await markStepCompleted(projectId, step);
 }
 

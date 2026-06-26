@@ -212,13 +212,12 @@ async function fetchDataForSeo(
  * Fetches keywords that a competitor domain ranks for in Google.
  * Uses DataForSEO Labs → Domain Ranked Keywords endpoint.
  *
- * Used by: keyword-research.job.ts
- *
  * @param domain      - Competitor domain (e.g. "example.com")
  * @param countryCode - Two-letter ISO country code (e.g. "in", "us")
  * @param projectId   - For logging context
  * @param limit       - Max keywords to return per domain
  */
+
 export async function getRankedKeywords(
   domain:      string,
   countryCode: string,

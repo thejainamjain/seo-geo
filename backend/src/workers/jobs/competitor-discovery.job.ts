@@ -52,7 +52,7 @@ import type { Job } from 'bullmq';
 import { logger }          from '../../open-tele';
 import { Project }         from '../../models/Project';
 import { BusinessContext } from '../../models/BusinessContext';
-import { searchOrganic, filterCompetitorDomains } from '../../lib/serp';
+import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '../../lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   });
 
   // 4. Derive country code for localized SERP results
-  const countryCode = deriveCountryCode(bc.company?.targetRegions, projectId);
+  const countryCode = deriveCountryCodeFromRegions(bc.company?.targetRegions, projectId);
 
   // 5. Run SerpAPI search — throws on failure → BullMQ retries
   const serpResult = await searchOrganic(

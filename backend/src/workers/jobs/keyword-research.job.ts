@@ -61,12 +61,10 @@
 import type { Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { logger }          from '../../open-tele';
-import { Project }         from '../../models/Project';
-import { BusinessContext } from '../../models/BusinessContext';
-import { Keyword }         from '../../models/Keyword';
+import { Project, Keyword, BusinessContext}         from '../../models';
 import { getRankedKeywords } from '../../lib/dataforseo';
 import { generateMarketSizing, scoreKeywordAlignment } from '../../lib/llm';
-import { deriveCountryCodeFromRegions }  from '../../lib/serp-utils';
+import { deriveCountryCodeFromRegions } from '../../lib/serp';
 import type { PipelineJobData }          from '../seo-pipeline.worker';
 import type { DataForSeoKeyword }        from '../../lib/dataforseo';
 import { LLM_RATE_LIMIT }               from '../../constants/seo-pipeline.constants';
@@ -528,22 +526,22 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
   //    bulkWrite with upsert:true keyed on { projectId, keyword }
   const bulkOps = scheduled.map(kw => ({
     updateOne: {
-      filter: { projectId: projectObjectId, keyword: kw.keyword }, // check if this is correct, as projectId is already in filter
+      filter: { projectId: projectObjectId, keyword: kw.keyword },
       update: {
         $set: {
           searchVolume:    kw.searchVolume,
           difficulty:      kw.difficulty,
           cpc:             kw.cpc,
-          status:          'upcoming' as const, // check if this is correct, as status is not in filter
+          status:          'upcoming' as const,
           source:          kw.source,
           alignmentScore:  kw.alignmentScore,
           relevanceReason: kw.relevanceReason,
           weekNumber:      kw.weekNumber,
           startDate:       kw.startDate,
-          pageType:        'blog' as const, // check if this is correct, as pageType is not in filter
+          pageType:        'blog' as const,
         },
         $setOnInsert: {
-          projectId: projectObjectId, //check if this is correct, as projectId is already in filter
+          projectId: projectObjectId,
           keyword: kw.keyword,
         },
       },
@@ -551,8 +549,8 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
     },
   }));
 
-  const bulkResult = await Keyword.bulkWrite(bulkOps, { ordered: false });  // need to recheck this bulkOps error as it 
-  logger.info('Keywords upserted to database', {                            //changed file without notice when fixing the error 
+  const bulkResult = await Keyword.bulkWrite(bulkOps, { ordered: false }); 
+  logger.info('Keywords upserted to database', {                            
     projectId,
     upserted:  bulkResult.upsertedCount,
     modified:  bulkResult.modifiedCount,

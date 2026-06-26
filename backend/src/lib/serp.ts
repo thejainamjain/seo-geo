@@ -297,3 +297,54 @@ export function filterCompetitorDomains(
 
   return deduped.slice(0, limit);
 }
+
+// ── Country code derivation (shared utility) ───────────────────────────────
+
+/**
+ * Derives a SerpAPI/DataForSEO country code from BusinessContext.company.targetRegions.
+ * Falls back to 'us' if no match found.
+ *
+ * Example: ["Udaipur, Rajasthan, India"] → 'in'
+ *
+ * Used by: competitor-discovery.job.ts, keyword-research.job.ts
+ */
+const REGION_TO_COUNTRY_MAP: Array<{ pattern: RegExp; code: string }> = [
+  { pattern: /india|rajasthan|udaipur|mumbai|delhi|bangalore|hyderabad|chennai|kolkata/i, code: 'in' },
+  { pattern: /united kingdom|uk|england|scotland|wales/i,                                  code: 'gb' },
+  { pattern: /australia|sydney|melbourne|brisbane/i,                                       code: 'au' },
+  { pattern: /canada|toronto|vancouver|montreal/i,                                         code: 'ca' },
+  { pattern: /germany|berlin|munich|frankfurt/i,                                           code: 'de' },
+  { pattern: /france|paris|lyon|marseille/i,                                               code: 'fr' },
+  { pattern: /singapore/i,                                                                  code: 'sg' },
+  { pattern: /uae|dubai|abu dhabi/i,                                                       code: 'ae' },
+  { pattern: /united states|usa|new york|california|texas/i,                              code: 'us' },
+];
+
+export function deriveCountryCodeFromRegions(
+  targetRegions: string[] | undefined,
+  projectId:     string,
+): string {
+  if (!targetRegions || targetRegions.length === 0) {
+    logger.debug('No target regions set — defaulting country to us', { projectId });
+    return 'us';
+  }
+
+  const regionText = targetRegions.join(' ');
+
+  for (const { pattern, code } of REGION_TO_COUNTRY_MAP) {
+    if (pattern.test(regionText)) {
+      logger.debug('Country code derived from target regions', {
+        projectId,
+        regionText,
+        countryCode: code,
+      });
+      return code;
+    }
+  }
+
+  logger.warn('Could not derive country code from target regions — defaulting to us', {
+    projectId,
+    targetRegions,
+  });
+  return 'us';
+}

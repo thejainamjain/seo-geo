@@ -51,6 +51,7 @@ import { runTechnicalAuditJob } from './jobs/technical-audit.job';
 import { runCompetitorDiscoveryJob } from './jobs/competitor-discovery.job';
 import { runKeywordResearchJob }    from './jobs/keyword-research.job';
 import { runSerpResearchJob }       from './jobs/serp-research.job';
+import { runCmsPublishJob } from './jobs/cms-publish.job';
 
 // ── Job data shapes ────────────────────────────────────────────────────────
 
@@ -332,11 +333,7 @@ async function handleBlogGeneration(job: Job<PipelineJobData>): Promise<void> {
 async function handleCmsPublish(job: Job<PipelineJobData>): Promise<void> {
   const { projectId, step } = job.data;
   await markStepRunning(projectId, step);
-
-  // TODO: extract to workers/jobs/cms-publish.job.ts
-  // Will: publish ready blog posts to connected CMS (Mon–Sat 5PM UTC only)
-  logger.debug('STUB: cms-publish', { projectId });
-
+  await runCmsPublishJob(job);
   await markStepCompleted(projectId, step);
 
   // Register repeatable cron jobs for this project now that pipeline is complete.

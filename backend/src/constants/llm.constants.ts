@@ -204,7 +204,15 @@ Rules:
 - altTexts: object mapping image src to descriptive alt text — describe what the image shows, include keyword only if natural
 - schema: valid Schema.org JSON-LD object appropriate for the page type (Article, LocalBusiness, Product, FAQPage, WebPage). Must include @context and @type
 - faqQuestions: 3-5 Q&A pairs a user would actually ask about this page's topic. Each answer 2-4 sentences. Must be answerable from page content
-- tldrText: 2-3 sentence plain-text summary of the page's key point — what a user gets from visiting this page`,
+- tldrText: 2-3 sentence plain-text summary of the page's key point — what a user gets from visiting this page
+- brokenLinkFix: one sentence suggesting anchor text replacement or noting the link should be removed
+- contentExpansion: 2-3 bullet topics that would expand this page's thin content
+- redirectFix: one sentence explaining which internal links should be updated to point to the final URL
+- h1Suggestion: a compelling H1 tag (60-70 chars, includes primary keyword)
+- schemaFix: one sentence listing the missing schema fields and suggested values
+- speedFix: 2-3 specific actionable suggestions to reduce page load time
+- canonicalFix: one sentence explaining the canonical mismatch and the correct canonical URL
+- pageSizeFix: one sentence identifying what's making the page large and how to reduce it`,
 
   PAGE_AUDIT_USER: (
     url:         string,

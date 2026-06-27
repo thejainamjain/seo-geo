@@ -46,6 +46,7 @@ import { Project }      from '@/models/Project';
 import { Blog }         from '@/models/Blog';
 import { GoogleToken }  from '@/models/GoogleToken';
 import { BlogLearning } from '@/models/BlogLearning';
+import { Keyword } from '@/models/Keyword';
 
 // ── Thresholds ─────────────────────────────────────────────────────────────
 
@@ -361,8 +362,17 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
         topQueries:  metrics.topQueries.length,
       });
 
-      // Derive primary keyword from blog slug as fallback
-      const keyword = blog.slug.replace(/-/g, ' ');
+      // Load actual keyword string — more accurate than slug approximation
+      // Falls back to slug-derived string if keywordId missing (older blogs)
+      let keyword = blog.slug.replace(/-/g, ' ');
+      if (blog.keywordId) {
+        try {
+          const kw = await Keyword.findById(blog.keywordId).select('keyword').lean();
+          if (kw?.keyword) keyword = kw.keyword;
+        } catch {
+          // Non-fatal — fall back to slug
+        }
+      }
 
       // Detect insights
       const insights = detectInsights(metrics, blog, keyword);

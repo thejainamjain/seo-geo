@@ -54,6 +54,7 @@ import { Project }         from '@/models/Project';
 import { BusinessContext } from '@/models/BusinessContext';
 import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
+import { crawlSinglePage } from '@/lib/crawler';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -288,6 +289,86 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
       runValidators: false, // competition field is Mixed — no validators to run
     },
   );
+  
+  // 8. Crawl competitor homepages — extract content for blog generation context
+  //    crawlSinglePage() from lib/crawler.ts — lightweight, no link-following.
+  //    Results stored in BusinessContext.competition.competitorInsights.
+  //    Non-fatal: if all crawls fail, pipeline continues with domains only.
+  if (competitorDomains.length > 0) {
+    logger.info('Crawling competitor homepages', {
+      projectId,
+      count: competitorDomains.length,
+    });
+
+    const competitorInsights: Array<{
+      domain:      string;
+      title:       string;
+      description: string;
+      h1:          string | null;
+      h2s:         string[];
+      textSnippet: string;  // first 500 chars — enough for LLM context
+      hasSchema:   boolean;
+      wordCount:   number;
+    }> = [];
+
+    for (const competitorDomain of competitorDomains) {
+      const url = `https://${competitorDomain}`;
+      try {
+        const page = await crawlSinglePage(url, competitorDomain);
+        if (!page) {
+          logger.debug('Competitor page returned null', { projectId, competitorDomain });
+          continue;
+        }
+
+        competitorInsights.push({
+          domain:      competitorDomain,
+          title:       page.title,
+          description: page.description,
+          h1:          page.h1,
+          h2s:         page.h2s.slice(0, 5),       // top 5 h2s only
+          textSnippet: page.textContent.slice(0, 500),
+          hasSchema:   page.hasSchema,
+          wordCount:   page.wordCount,
+        });
+
+        logger.debug('Competitor homepage crawled', {
+          projectId,
+          competitorDomain,
+          title:     page.title,
+          wordCount: page.wordCount,
+          hasSchema: page.hasSchema,
+        });
+
+        // Polite delay between competitor crawls
+        await new Promise(resolve => setTimeout(resolve, 1_000));
+
+      } catch (err) {
+        logger.warn('Competitor homepage crawl failed — skipping', {
+          projectId,
+          competitorDomain,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (competitorInsights.length > 0) {
+      await BusinessContext.findOneAndUpdate(
+        { projectId },
+        {
+          $set: {
+            'competition.competitorInsights': competitorInsights,
+          },
+        },
+        { runValidators: false },
+      );
+
+      logger.info('Competitor insights stored', {
+        projectId,
+        crawledCount: competitorInsights.length,
+        totalDomains: competitorDomains.length,
+      });
+    }
+  }
 
   logger.info('BusinessContext.competition.mainCompetitors updated', {
     projectId,

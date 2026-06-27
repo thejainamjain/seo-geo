@@ -192,7 +192,10 @@ async function markStepErrored(projectId: string, step: PipelineStep, error: str
       [`pipeline.steps.${step}.error`]:  error,
     },
   });
-  logger.error(new Error(`Pipeline step permanently failed: ${step}`), { projectId, step, error });
+  logger.error(new Error(`Pipeline step permanently failed: ${step}`), {
+    projectId, step, error,
+    resumeHint: `POST /api/projects/${projectId}/pipeline/resume to retry from this step`,
+  });
 }
 
 // ── Job handlers ───────────────────────────────────────────────────────────

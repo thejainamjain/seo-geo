@@ -83,23 +83,38 @@ const LLM_NEEDED_TYPES = new Set([
   'open_graph',
   'alt_text',
   'schema',
+  'broken_link',
+  'thin_content',
+  'redirect_chain',
+  'missing_h1',
+  'schema_invalid',
+  'page_speed',
+  'non_self_canonical',
+  'page_size',
 ]);
 
 /**
  * SEO factor weights for score calculation.
  * Higher weight = more impact on final score.
- * Mirrors industry standards (title/schema matter more than OG tags).
+ *  (title/schema matter more than OG tags).
  */
 const FACTOR_WEIGHTS: Record<string, number> = {
-  title:        10,
-  description:  8,
-  open_graph:   6,
-  canonical:    7,
-  alt_text:     5,
-  link_title:   3,
-  schema:       9,
-  broken_link:  8,
-  internal_link: 4,
+  title:             10,
+  description:        8,
+  open_graph:         6,
+  canonical:          7,
+  alt_text:           5,
+  link_title:         3,
+  schema:             9,
+  broken_link:        8,
+  internal_link:      4,
+  thin_content:       7,   // Thin pages hurt rankings significantly
+  redirect_chain:     6,   // Multi-hop redirects waste crawl budget
+  missing_h1:         8,   // H1 is a primary on-page ranking signal
+  schema_invalid:     7,   // Invalid schema is worse than no schema
+  page_speed:         9,   // Core Web Vitals are a direct ranking factor
+  non_self_canonical: 8,   // Non-self canonicals confuse Googlebot
+  page_size:          5,   // Oversized pages slow Googlebot
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -231,6 +246,22 @@ function buildPageNeeds(pageChanges: PageCodeChanges): {
       needs.push('description');
     } else if (type === 'schema') {
       needs.push('schema');
+    } else if (type === 'broken_link') {
+      needs.push('brokenLinkFix');
+    } else if (type === 'thin_content') {
+      needs.push('contentExpansion');
+    } else if (type === 'redirect_chain') {
+      needs.push('redirectFix');
+    } else if (type === 'missing_h1') {
+      needs.push('h1Suggestion');
+    } else if (type === 'schema_invalid') {
+      needs.push('schemaFix');
+    } else if (type === 'page_speed') {
+      needs.push('speedFix');
+    } else if (type === 'non_self_canonical') {
+      needs.push('canonicalFix');
+    } else if (type === 'page_size') {
+      needs.push('pageSizeFix');
     }
   }
 
@@ -341,6 +372,35 @@ async function applyCodeChanges(
           update: { $set: { newHtml: schemaHtml } },
         },
       });
+    }
+  }
+
+  const newV2Types = [
+    'broken_link', 'thin_content', 'redirect_chain', 'missing_h1',
+    'schema_invalid', 'page_speed', 'non_self_canonical', 'page_size',
+  ] as const;
+
+  for (const v2type of newV2Types) {
+    const suggestion = (llmResult as Record<string, unknown>)[
+      v2type === 'broken_link'      ? 'brokenLinkFix'    :
+      v2type === 'thin_content'     ? 'contentExpansion' :
+      v2type === 'redirect_chain'   ? 'redirectFix'      :
+      v2type === 'missing_h1'       ? 'h1Suggestion'     :
+      v2type === 'schema_invalid'   ? 'schemaFix'        :
+      v2type === 'page_speed'       ? 'speedFix'         :
+      v2type === 'non_self_canonical'? 'canonicalFix'    :
+      'pageSizeFix'
+    ] as string | undefined;
+
+    if (suggestion && pageChanges.changeIds[v2type]) {
+      for (const id of pageChanges.changeIds[v2type]!) {
+        ops.push({
+          updateOne: {
+            filter: { _id: id },
+            update: { $set: { newHtml: `<!-- SEO Fix: ${suggestion} -->` } },
+          },
+        });
+      }
     }
   }
 

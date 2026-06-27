@@ -278,14 +278,22 @@ export interface MarketSizingLlmResponse {
 }
 
 export interface PageAuditLlmResponse {
-  title?:         string;
-  description?:   string;
-  ogTitle?:       string;
-  ogDescription?: string;
-  altTexts?:      Record<string, string>; // { imageSrc: altText }
-  schema?:        Record<string, unknown>;
-  faqQuestions?:  Array<{ question: string; answer: string }>;
-  tldrText?:      string;
+  title?:            string;
+  description?:      string;
+  ogTitle?:          string;
+  ogDescription?:    string;
+  altTexts?:         Record<string, string>;
+  schema?:           Record<string, unknown>;
+  faqQuestions?:     Array<{ question: string; answer: string }>;
+  tldrText?:         string;
+  brokenLinkFix?:    string;  // Suggested anchor text replacement or removal note
+  contentExpansion?: string;  // Topics to add to expand thin content
+  redirectFix?:      string;  // Which URLs to update to point to final URL
+  h1Suggestion?:     string;  // Suggested H1 tag text
+  schemaFix?:        string;  // What fields are missing and suggested values
+  speedFix?:         string;  // Performance improvement suggestions
+  canonicalFix?:     string;  // Explanation of canonical mismatch + fix
+  pageSizeFix?:      string;  // What's making the page large + fix suggestions
 }
 
 export interface SeoScoreLlmResponse {

@@ -55,8 +55,18 @@ export interface IBusinessContext extends Document {
     mainCompetitors?: string[];
     differentiation?: string;
     uniqueStrengths?: string;
-    tradeOffs?: string;           // What you deliberately don't offer
-    proof?: string;               // Evidence/claims that back up your strengths
+    tradeOffs?: string;
+    proof?: string;
+    competitorInsights?: Array<{
+      domain:      string;
+      title:       string;
+      description: string;
+      h1:          string | null;
+      h2s:         string[];
+      textSnippet: string;
+      hasSchema:   boolean;
+      wordCount:   number;
+    }>;
   };
 
   // Step 5: Social proof & trust signals

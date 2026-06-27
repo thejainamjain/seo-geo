@@ -46,8 +46,8 @@ const DOMAIN_CHECK_CHARS = 4000; // Check first 4000 chars of Gemini response
  * Build a realistic user query from a keyword.
  * We don't send the keyword verbatim — we simulate how a real user asks.
  */
-function buildUserQuery(keyword: string, domain: string): string {
-  return `I'm looking for information about "${keyword}". Can you recommend the best options or resources? Please include specific websites or businesses if you know any.`;
+function buildUserQuery(keyword: string): string {
+  return `I'm looking for information about "${keyword}". Can you recommend the best options or resources? Please include specific websites or businesses if you know relevant ones.`;
 }
 
 /**
@@ -56,9 +56,23 @@ function buildUserQuery(keyword: string, domain: string): string {
  */
 function domainAppearsInResponse(response: string, domain: string): boolean {
   const haystack = response.slice(0, DOMAIN_CHECK_CHARS).toLowerCase();
-  // Strip www. for flexible matching: "www.example.com" matches "example.com"
+
+  // Strip www. for flexible matching
   const normalizedDomain = domain.replace(/^www\./, '').toLowerCase();
-  return haystack.includes(normalizedDomain);
+
+  // Check 1: exact domain mention (example.com)
+  if (haystack.includes(normalizedDomain)) return true;
+
+  // Check 2: brand name extracted from domain
+  // "cleaningpro.in" → "cleaningpro", "rank-ai.com" → "rank ai"
+  const brandName = normalizedDomain
+    .split('.')[0]!
+    .replace(/-/g, ' ')
+    .toLowerCase();
+
+  if (brandName.length > 3 && haystack.includes(brandName)) return true;
+
+  return false;
 }
 
 function delay(ms: number): Promise<void> {
@@ -150,7 +164,7 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
     }
 
     try {
-      const userQuery = buildUserQuery(keyword.keyword, project.domain);
+      const userQuery = buildUserQuery(keyword.keyword);
 
       logger.debug('Sending GEO query to Gemini', {
         projectId,

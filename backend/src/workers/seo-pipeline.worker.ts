@@ -52,6 +52,8 @@ import { runCompetitorDiscoveryJob } from './jobs/competitor-discovery.job';
 import { runKeywordResearchJob }    from './jobs/keyword-research.job';
 import { runSerpResearchJob }       from './jobs/serp-research.job';
 import { runCmsPublishJob } from './jobs/cms-publish.job';
+import { runGeoAnalyticsJob } from './jobs/geo-analytics.job';
+import { runGscMonitorJob }   from './jobs/gsc-monitor.job';
 
 // ── Job data shapes ────────────────────────────────────────────────────────
 
@@ -373,19 +375,17 @@ async function handleCmsPublish(job: Job<PipelineJobData>): Promise<void> {
 }
 
 async function handleGeoAnalytics(job: Job<PipelineJobData>): Promise<void> {
-  const { projectId, step } = job.data;
-  await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/geo-analytics.job.ts
-  logger.debug('STUB: geo-analytics', { projectId });
-  await markStepCompleted(projectId, step);
+  const { projectId } = job.data;
+  logger.info('GEO analytics handler started', { projectId });
+  await runGeoAnalyticsJob(job as unknown as Job<{ projectId: string }>);
+  logger.info('GEO analytics handler completed', { projectId });
 }
 
 async function handleGscMonitor(job: Job<PipelineJobData>): Promise<void> {
-  const { projectId, step } = job.data;
-  await markStepRunning(projectId, step);
-  // TODO: extract to workers/jobs/gsc-monitor.job.ts
-  logger.debug('STUB: gsc-monitor', { projectId });
-  await markStepCompleted(projectId, step);
+  const { projectId } = job.data;
+  logger.info('GSC monitor handler started', { projectId });
+  await runGscMonitorJob(job as unknown as Job<{ projectId: string }>);
+  logger.info('GSC monitor handler completed', { projectId });
 }
 
 // ── Step dispatcher ────────────────────────────────────────────────────────

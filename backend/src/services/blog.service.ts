@@ -1,4 +1,4 @@
-import { Blog, Keyword, Project, OrganizationMember } from '../models';
+import { Blog, Project, OrganizationMember, type IBlog } from '../models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { seoPipelineQueue } from '../workers/seo-pipeline.worker';
 import { QUEUE_NAMES, JOB_RETRY_CONFIG, JOB_PRIORITY } from '../constants/seo-pipeline.constants';
@@ -182,5 +182,3 @@ export const blogService = {
   },
 };
 
-// local type alias to avoid import cycle
-type IBlog = { status: 'draft' | 'ready' | 'published' | 'archived' };

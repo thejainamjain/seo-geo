@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { geoHandler } from '../../handlers/geo.handler';
-import { requireAuth } from '../../middleware/auth';
+import { geoHandler } from '@/handlers/geo.handler';
+import { requireAuth } from '@/middleware/auth';
 
 const router = Router({ mergeParams: true });
 

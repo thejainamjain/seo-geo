@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { knowledgeHandler } from '../../handlers/knowledge.handler';
-import { requireAuth } from '../../middleware/auth';
+import { knowledgeHandler } from '@/handlers/knowledge.handler';
+import { requireAuth } from '@/middleware/auth';
 
 const router  = Router({ mergeParams: true });
 const upload  = multer({

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { toolsHandler } from '../../handlers/tools.handler';
-import { validate } from '../../middleware/validate';
+import { toolsHandler } from '@/handlers/tools.handler';
+import { validate } from '@/middleware/validate';
 
 const router = Router();
 

@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { cmsHandler } from '../../handlers/cms.handler';
-import { requireAuth } from '../../middleware/auth';
-import { validate } from '../../middleware/validate';
+import { cmsHandler } from '@/handlers/cms.handler';
+import { requireAuth } from '@/middleware/auth';
+import { validate } from '@/middleware/validate';
 
 const router = Router({ mergeParams: true });
 

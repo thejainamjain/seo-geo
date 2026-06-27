@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { gscHandler } from '../../handlers/gsc.handler';
-import { requireAuth } from '../../middleware/auth';
-import { validate } from '../../middleware/validate';
+import { gscHandler } from '@/handlers/gsc.handler';
+import { requireAuth } from '@/middleware/auth';
+import { validate } from '@/middleware/validate';
 
 const router = Router({ mergeParams: true });
 

@@ -124,7 +124,7 @@ function extractJson<T>(raw: string, context: string): T {
  *   - Empty response    → BullMQ retries
  *   - Invalid JSON      → BullMQ retries
  */
-async function callGemini(
+export async function callGemini(
   systemPrompt: string,
   userPrompt:   string,
   context:      string, // for logging — e.g. "business-profile:projectId"

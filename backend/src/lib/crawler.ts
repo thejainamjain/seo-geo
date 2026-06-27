@@ -1,15 +1,12 @@
 /**
- * lib/crawler.ts
- *
- * WHAT: Industry-grade crawler library shared across all pipeline jobs.
- *
  * CONSUMERS:
  *   - site-crawl.job.ts       → crawls own domain (full extract)
  *   - competitor-discovery.job.ts → crawls competitor homepages (lightweight)
  *   - serp-research.job.ts    → crawls SERP result URLs for content analysis
- *
- * WHAT THIS ADDS OVER THE OLD site-crawl.job.ts:
- *
+ *  - geo-analytics.job.ts     → crawls competitor homepages (lightweight)
+ * 
+ * WHY THIS EXISTS:
+ * 
  *   1. SITEMAP-FIRST DISCOVERY
  *      Parses /sitemap.xml and /sitemap_index.xml before link-following.
  *      Industry tools (Ahrefs, Screaming Frog) use sitemaps as primary
@@ -58,7 +55,7 @@
  *      homepage and SERP result crawling. No link-following, no Redis storage.
  *      Returns same PageData shape so downstream LLM prompts stay identical.
  *
- * WHAT WE STILL CANNOT HANDLE (unchanged from v1):
+ * WHAT WE STILL CANNOT HANDLE :
  *   - Cloudflare Enterprise bot protection
  *   - Login-gated pages (no credentials)
  *   - Sites blocking all crawlers

@@ -1,58 +1,186 @@
+import { knowledgeHandler } from './../../handlers/knowledge.handler';
 /**
- * workers/jobs/blog-generation.job.ts
+ * workers/jobs/blog-generation.job.ts  (v2 — full implementation)
  *
- * WHAT: Child job handler for blog content generation.
- *       Each job generates ONE blog post for ONE keyword.
- *       25 of these run in parallel via BullMQ FlowProducer.
+ * WHAT: Generates ONE complete blog post for ONE keyword using Gemini.
+ *       Each job is a BullMQ FlowProducer child — 25 run in parallel.
+ *
+ * WHAT CHANGED FROM v1 (stub → real):
+ *   v1: created Blog with title = keyword, no content, status = 'draft'
+ *   v2: calls generateBlogPost() → full HTML content, meta description,
+ *       SEO schema, history entry, source analysis saved on the Blog doc.
  *
  * PIPELINE POSITION: Called by BLOG_GENERATION step orchestrator.
- *                    Not a direct pipeline step — runs as FlowProducer child.
  *
- * READS:  Keyword (by keywordId)
- *         Project (by projectId — for domain/context)
- * WRITES: Blog (creates draft)
- *         Keyword (status: upcoming → draft)
+ * READS:
+ *   Keyword         → keyword string, alignmentScore, searchVolume, brief (SERP analysis)
+ *   Project         → domain (for contactUrl in prompt)
+ *   BusinessContext → full profile injected into blog generation prompt
+ *   ProjectKnowledgeFile → brand docs, pricing sheets (via knowledge-loader.ts)
  *
- * LLM CALL: Stubbed for now — content left empty, status set to draft.
- *           Real LLM call wired in lib/llm.ts session.
+ * WRITES:
+ *   Blog            → creates with full content, description, seoSchema,
+ *                     history[0] (first AI version), sourceAnalysis
+ *   Keyword         → status: upcoming → draft
  *
- * SLUG GENERATION:
- *   Derived from keyword string — lowercased, spaces → hyphens,
- *   non-alphanumeric stripped. Collisions handled by appending jobIndex.
+ * LLM CALL:
+ *   generateBlogPost() in lib/llm.ts — one call per keyword.
+ *   System prompt includes: business context, SERP brief, knowledge chunks.
+ *   Returns: title, slug, description, full HTML content, schema.
+ *
+ * SLUG STRATEGY:
+ *   LLM generates slug from keyword (better than our regex — handles edge cases).
+ *   We sanitize it and check for collisions — append jobIndex if collision.
+ *
+ * HERO IMAGE:
+ *   Placeholder {{HERO_IMAGE_URL}} is left in content intentionally.
+ *   CMS publish job (or a dedicated hero-image job) replaces it with
+ *   a real Unsplash → Cloudinary .avif URL at publish time.
+ *   This keeps blog generation fast — Unsplash API calls are slow.
+ *
+ * KNOWLEDGE CONTEXT:
+ *   Fetches ready ProjectKnowledgeFile docs, extracts their text from Cloudinary
+ *   (PDF/text/markdown), passes as knowledgeChunks to the LLM prompt.
+ *   If no knowledge files → empty string → blog generates without brand context.
+ *   Never blocks blog generation.
+ *
+ * SERP BRIEF:
+ *   Keyword.brief stores JSON-stringified SerpAnalysisLlmResponse from
+ *   serp-research.job.ts. We parse it and format it for the blog prompt.
+ *   If brief missing → empty string → blog generates without SERP context
+ *   (weaker output but still valid).
  *
  * ERROR HANDLING:
- *   - Keyword not found → throw (BullMQ retries)
- *   - Project not found → throw (BullMQ retries)
- *   - Blog already exists for keyword → skip gracefully, log warning
- *   - Slug collision → append jobIndex to guarantee uniqueness
+ *   - Keyword/Project/BusinessContext missing → throw (BullMQ retries)
+ *   - Blog already exists → skip (idempotent)
+ *   - LLM call fails → throw (BullMQ retries with exponential backoff)
+ *   - LLM returns empty content → throw (BullMQ retries)
+ *   - Slug collision → append jobIndex, proceed
+ *
+ * CONCURRENCY:
+ *   25 children run in parallel (blogWorker concurrency: 10).
+ *   Each makes one Gemini call. At 15 RPM Gemini limit, 10 parallel calls
+ *   is safe — each call takes ~3-8s so actual RPM is well under limit.
  */
 
 import type { Job } from 'bullmq';
-import { logger } from '@/open-tele';
-import { Blog } from '@/models/Blog';
-import { Keyword } from '@/models/Keyword';
-import { Project } from '@/models/Project';
+import { logger }          from '@/open-tele';
+import { Blog }            from '@/models/Blog';
+import { Keyword }         from '@/models/Keyword';
+import { Project }         from '@/models/Project';
+import { BusinessContext } from '@/models/BusinessContext';
+import { generateBlogPost } from '@/lib/llm';
+import { loadKnowledgeChunks } from '@/loaders/knowledge-loader';
 import type { BlogJobData } from '../seo-pipeline.worker';
 
-// ── Slug generation ────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const MIN_CONTENT_LENGTH = 500; // Chars — below this = LLM returned garbage
+
+// ── Slug utilities ─────────────────────────────────────────────────────────
 
 /**
- * Converts a keyword string to a URL-safe slug.
- * Example: "Best Floor Cleaner in Udaipur" → "best-floor-cleaner-in-udaipur"
- *
- * jobIndex is appended only if a blog already exists with the same slug
- * for this project (collision guard).
+ * Sanitizes an LLM-generated slug.
+ * LLM usually returns a good slug but may include uppercase or double hyphens.
  */
-function generateSlug(keyword: string, suffix?: number): string {
+function sanitizeSlug(raw: string): string {
+  return raw
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]/g, '-')  // replace non-slug chars with hyphens
+    .replace(/-+/g, '-')           // collapse multiple hyphens
+    .replace(/^-|-$/g, '')         // strip leading/trailing hyphens
+    .slice(0, 80);                 // cap length — long slugs hurt SEO
+}
+
+/**
+ * Fallback slug from keyword string if LLM doesn't return one.
+ */
+function keywordToSlug(keyword: string, suffix?: number): string {
   const base = keyword
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9\s-]/g, '')   // strip non-alphanumeric except spaces and hyphens
-    .replace(/\s+/g, '-')            // spaces → hyphens
-    .replace(/-+/g, '-')             // collapse multiple hyphens
-    .slice(0, 80);                   // cap length — long slugs hurt SEO
-
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 80);
   return suffix !== undefined ? `${base}-${suffix}` : base;
+}
+
+// ── Business context formatter ─────────────────────────────────────────────
+
+/**
+ * Formats BusinessContext into a compact string for the blog prompt.
+ * Keeps it under ~2000 chars — enough for LLM context without overwhelming it.
+ *
+ * Uses the same fields generateBlogPost() prompt expects in customerProfile param.
+ */
+function formatBusinessContext(bc: {
+  company?:     { name?: string; description?: string; targetRegions?: string[] };
+  product?:     { whatItSells?: string; keyFeatures?: string; pricingTiers?: string };
+  customers?:   { segments?: string[]; painPoints?: string; topUseCases?: string };
+  competition?: { differentiation?: string; uniqueStrengths?: string };
+  socialProof?: { caseStudies?: string };
+}): string {
+  const lines: string[] = [];
+
+  if (bc.company?.name)           lines.push(`Company: ${bc.company.name}`);
+  if (bc.company?.description)    lines.push(`About: ${bc.company.description}`);
+  if (bc.company?.targetRegions)  lines.push(`Markets: ${bc.company.targetRegions.join(', ')}`);
+  if (bc.product?.whatItSells)    lines.push(`Product: ${bc.product.whatItSells}`);
+  if (bc.product?.keyFeatures)    lines.push(`Features: ${bc.product.keyFeatures}`);
+  if (bc.product?.pricingTiers)   lines.push(`Pricing: ${bc.product.pricingTiers}`);
+  if (bc.customers?.segments)     lines.push(`Customer segments: ${bc.customers.segments.join(', ')}`);
+  if (bc.customers?.painPoints)   lines.push(`Pain points: ${bc.customers.painPoints}`);
+  if (bc.customers?.topUseCases)  lines.push(`Top use cases: ${bc.customers.topUseCases}`);
+  if (bc.competition?.differentiation) lines.push(`Differentiation: ${bc.competition.differentiation}`);
+  if (bc.competition?.uniqueStrengths) lines.push(`Strengths: ${bc.competition.uniqueStrengths}`);
+  if (bc.socialProof?.caseStudies)     lines.push(`Case studies: ${bc.socialProof.caseStudies}`);
+
+  return lines.join('\n').slice(0, 2_000);
+}
+
+// ── SERP brief formatter ───────────────────────────────────────────────────
+
+/**
+ * Formats Keyword.brief (JSON string from serp-research.job.ts) into
+ * a readable string for the blog generation prompt.
+ *
+ * Only includes relevant results — filters out irrelevant SERP entries.
+ * Caps at 1500 chars — SERP context shouldn't dominate the prompt.
+ */
+function formatSerpBrief(briefJson: string | undefined): string {
+  if (!briefJson) return '';
+
+  try {
+    const serpRelevance = JSON.parse(briefJson) as Array<{
+      title:            string;
+      link:             string;
+      topic:            string;
+      pageType:         string;
+      titleIntent:      string;
+      isRelevantToICP:  boolean;
+    }>;
+
+    if (!Array.isArray(serpRelevance) || serpRelevance.length === 0) return '';
+
+    const lines: string[] = ['Top SERP results for this keyword:'];
+
+    for (const result of serpRelevance.slice(0, 5)) {
+      // Only show results relevant to ICP — rest is noise
+      if (!result.isRelevantToICP) continue;
+      lines.push(
+        `- "${result.title}" (${result.pageType}, intent: ${result.titleIntent})\n  ${result.link}`
+      );
+    }
+
+    return lines.length > 1
+      ? lines.join('\n').slice(0, 1_500)
+      : '';
+
+  } catch {
+    return '';
+  }
 }
 
 // ── Main job handler ───────────────────────────────────────────────────────
@@ -68,7 +196,8 @@ export async function runBlogGenerationJob(job: Job<BlogJobData>): Promise<void>
     jobId: job.id,
   });
 
-  // 1. Load keyword — must exist
+  // ── 1. Load keyword ──────────────────────────────────────────────────────
+
   const keyword = await Keyword.findById(keywordId).lean();
   if (!keyword) {
     throw new Error(`Keyword not found: ${keywordId} (projectId: ${projectId})`);
@@ -77,37 +206,146 @@ export async function runBlogGenerationJob(job: Job<BlogJobData>): Promise<void>
   logger.debug('Keyword loaded', {
     projectId,
     keywordId,
-    keyword:       keyword.keyword,
+    keyword:        keyword.keyword,
     alignmentScore: keyword.alignmentScore,
     searchVolume:   keyword.searchVolume,
-    difficulty:     keyword.difficulty,
+    hasBrief:       !!keyword.brief,
   });
 
-  // 2. Load project — needed for domain context
+  // ── 2. Load project ──────────────────────────────────────────────────────
+
   const project = await Project.findById(projectId).lean();
   if (!project) {
     throw new Error(`Project not found: ${projectId}`);
   }
 
-  // 3. Guard — if blog already exists for this keyword, skip gracefully
+  const contactUrl = `https://${project.domain}/contact`;
+
+  // ── 3. Guard — blog already exists for this keyword ──────────────────────
+
   const existing = await Blog.findOne({ keywordId }).lean();
   if (existing) {
-    logger.warn('Blog already exists for keyword — skipping', {
+    logger.warn('Blog already exists for keyword — skipping (idempotent)', {
       projectId,
       keywordId,
       blogId:  String(existing._id),
       keyword: keyword.keyword,
       jobIndex,
     });
-    return; // Not an error — idempotent behaviour
+    return;
   }
 
-  // 4. Generate slug — append jobIndex if collision detected
-  let slug        = generateSlug(keyword.keyword);
+  // ── 4. Load business context ─────────────────────────────────────────────
+
+  const bc = await BusinessContext.findOne({ projectId }).lean();
+  if (!bc) {
+    throw new Error(
+      `BusinessContext not found for project ${projectId}. ` +
+      `Ensure BUSINESS_PROFILE step completed successfully.`
+    );
+  }
+
+  const customerProfile = formatBusinessContext(bc);
+
+  logger.debug('Business context formatted', {
+    projectId,
+    keywordId,
+    profileLength: customerProfile.length,
+  });
+
+  // ── 5. Load knowledge chunks (non-blocking) ──────────────────────────────
+
+  let knowledgeChunks = '';
+  try {
+    knowledgeChunks = await loadKnowledgeChunks(projectId);
+    logger.debug('Knowledge chunks loaded', {
+      projectId,
+      keywordId,
+      chunkLength: knowledgeChunks.length,
+    });
+  } catch (err) {
+    // Knowledge loading failure is non-fatal — blog generates without brand context
+    logger.warn('Knowledge chunk loading failed — continuing without knowledge context', {
+      projectId,
+      keywordId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ── 6. Format SERP brief ─────────────────────────────────────────────────
+
+  const sourceAnalysisText = formatSerpBrief(keyword.brief);
+
+  logger.debug('SERP brief formatted', {
+    projectId,
+    keywordId,
+    serpBriefLength: sourceAnalysisText.length,
+    hasBrief:        sourceAnalysisText.length > 0,
+  });
+
+  // ── 7. Call LLM — generate full blog post ───────────────────────────────
+
+  logger.info('Calling Gemini for blog generation', {
+    projectId,
+    keywordId,
+    keyword:         keyword.keyword,
+    profileLength:   customerProfile.length,
+    knowledgeLength: knowledgeChunks.length,
+    serpLength:      sourceAnalysisText.length,
+    jobIndex,
+    total,
+  });
+
+  const llmResult = await generateBlogPost(
+    keyword.keyword,
+    customerProfile,
+    sourceAnalysisText,
+    knowledgeChunks,
+    contactUrl,
+    projectId,
+    keywordId,
+  );
+
+  // ── 8. Validate LLM response ─────────────────────────────────────────────
+
+  if (!llmResult.content || llmResult.content.length < MIN_CONTENT_LENGTH) {
+    throw new Error(
+      `Blog generation returned empty or too-short content for keyword "${keyword.keyword}". ` +
+      `Got ${llmResult.content?.length ?? 0} chars, minimum is ${MIN_CONTENT_LENGTH}. ` +
+      `BullMQ will retry.`
+    );
+  }
+
+  if (!llmResult.title) {
+    throw new Error(
+      `Blog generation returned no title for keyword "${keyword.keyword}". BullMQ will retry.`
+    );
+  }
+
+  logger.info('Blog content generated by LLM', {
+    projectId,
+    keywordId,
+    keyword:         keyword.keyword,
+    titleLength:     llmResult.title.length,
+    contentLength:   llmResult.content.length,
+    descLength:      llmResult.description?.length ?? 0,
+    hasSchema:       !!llmResult.schema,
+    jobIndex,
+    total,
+  });
+
+  // ── 9. Build slug ────────────────────────────────────────────────────────
+
+  // Prefer LLM-generated slug (better quality), fall back to keyword-derived
+  let slug = llmResult.slug
+    ? sanitizeSlug(llmResult.slug)
+    : keywordToSlug(keyword.keyword);
+
+  // Collision guard — append jobIndex if slug already taken in this project
   const collision = await Blog.findOne({ projectId, slug }).lean();
   if (collision) {
-    slug = generateSlug(keyword.keyword, jobIndex);
-    logger.warn('Slug collision detected — appended jobIndex', {
+    slug = `${slug}-${jobIndex}`;
+    logger.warn('Slug collision — appended jobIndex', {
       projectId,
       keywordId,
       slug,
@@ -115,52 +353,70 @@ export async function runBlogGenerationJob(job: Job<BlogJobData>): Promise<void>
     });
   }
 
-  // 5. Create Blog document — stub (LLM content wired in lib/llm.ts session)
-  //
-  // Title uses keyword string directly for now.
-  // LLM will rewrite to: "[Number] Best [Keyword] in [Location] ([Year])"
-  // format when blog generation is fully wired.
+  // ── 10. Create Blog document ──────────────────────────────────────────────
+
   const blog = await Blog.create({
     projectId,
     keywordId,
-    title:   keyword.keyword,
+    title:       llmResult.title,
     slug,
-    status:  'draft',
-    history: [], // LLM will push first history entry when content is generated
+    description: llmResult.description ?? '',
+    content:     llmResult.content,
+    status:      'draft',
+
+    // SEO schema from LLM (Article + FAQ combined schema)
+    // Named seoSchema (NOT schema) to avoid Mongoose reserved name collision
+    seoSchema: llmResult.schema ?? null,
+
+    // Hero image is a placeholder — replaced at CMS publish time
+    // by Unsplash API → Cloudinary .avif pipeline in cms-publish.job.ts
+    heroImageUrl: null, // {{HERO_IMAGE_URL}} placeholder is inside content
+
+    // Source analysis — what SERP results informed this blog
+    // Stored for the rewrite engine to understand content provenance
+    sourceAnalysis: sourceAnalysisText
+      ? { serpBrief: sourceAnalysisText, keyword: keyword.keyword }
+      : null,
+
+    // First history entry — the initial AI-generated version
+    history: [
+      {
+        content:   llmResult.content,
+        description: llmResult.description ?? '',
+        status:    'draft',
+        writer:    'ai',
+        createdAt: new Date(),
+      },
+    ],
   });
 
-  logger.info('Blog draft created', {
+  logger.info('Blog document created', {
     projectId,
     keywordId,
-    blogId:  String(blog._id),
+    blogId:        String(blog._id),
     slug,
-    keyword: keyword.keyword,
+    keyword:       keyword.keyword,
+    contentLength: llmResult.content.length,
     jobIndex,
     total,
   });
 
-  // 6. Update keyword status: upcoming → draft
+  // ── 11. Update keyword status ─────────────────────────────────────────────
+
   await Keyword.findByIdAndUpdate(keywordId, {
     $set: { status: 'draft' },
   });
 
-  logger.info('Keyword status updated to draft', {
-    projectId,
-    keywordId,
-    keyword: keyword.keyword,
-    jobIndex,
-    total,
-  });
+  // ── 12. Update job progress ───────────────────────────────────────────────
 
-  // 7. Update job progress — visible in BullMQ dashboard
   await job.updateProgress(Math.round((jobIndex / total) * 100));
 
   logger.info('Blog generation job completed', {
     projectId,
     keywordId,
-    blogId:  String(blog._id),
+    blogId:   String(blog._id),
     slug,
-    keyword: keyword.keyword,
+    keyword:  keyword.keyword,
     jobIndex,
     total,
     progress: `${jobIndex}/${total}`,

@@ -49,10 +49,10 @@
  */
 
 import type { Job } from 'bullmq';
-import { logger }          from '../../open-tele';
-import { Project }         from '../../models/Project';
-import { BusinessContext } from '../../models/BusinessContext';
-import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '../../lib/serp';
+import { logger }          from '@/open-tele';
+import { Project }         from '@/models/Project';
+import { BusinessContext } from '@/models/BusinessContext';
+import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
 
 // ── Constants ──────────────────────────────────────────────────────────────

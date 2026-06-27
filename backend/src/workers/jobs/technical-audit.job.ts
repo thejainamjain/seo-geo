@@ -54,22 +54,22 @@
  */
 
 import type { Job } from 'bullmq';
-import { logger }          from '../../open-tele';
-import { Audit }           from '../../models/Audit';
-import { CodeChange }      from '../../models/CodeChange';
-import { FAQ }             from '../../models/FAQ';
-import { TLDR }            from '../../models/TLDR';
-import { Project }         from '../../models/Project';
-import { getAllPages }      from '../../lib/page-selector';
-import { auditPage, generateSeoScore } from '../../lib/llm';
+import { logger }          from '@/open-tele';
+import { Audit }           from '@/models/Audit';
+import { CodeChange }      from '@/models/CodeChange';
+import { FAQ }             from '@/models/FAQ';
+import { TLDR }            from '@/models/TLDR';
+import { Project }         from '@/models/Project';
+import { getAllPages }      from '@/lib/page-selector';
+import { auditPage, generateSeoScore } from '@/lib/llm';
 import type { PipelineJobData }        from '../seo-pipeline.worker';
-import type { TieredPage }             from '../../lib/page-selector';
-import type { PageAuditLlmResponse }   from '../../lib/llm';
+import type { TieredPage }             from '@/lib/page-selector';
+import type { PageAuditLlmResponse }   from '@/lib/llm';
 import {
   LLM_RATE_LIMIT,
   TECHNICAL_AUDIT_CONFIG,
   CODE_CHANGE_SEVERITY_WEIGHT,
-} from '../../constants/seo-pipeline.constants';
+} from '@/constants/seo-pipeline.constants';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 

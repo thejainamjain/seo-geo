@@ -26,13 +26,13 @@
  */
 
 import type { Job } from 'bullmq';
-import { logger }            from '../../open-tele';
-import { Project }           from '../../models/Project';
-import { BusinessContext }   from '../../models/BusinessContext';
-import { getBusinessPages }  from '../../lib/page-selector';
-import { generateCustomerProfile } from '../../lib/llm';
+import { logger }            from '@/open-tele';
+import { Project }           from '@/models/Project';
+import { BusinessContext }   from '@/models/BusinessContext';
+import { getBusinessPages }  from '@/lib/page-selector';
+import { generateCustomerProfile } from '@/lib/llm';
 import type { PipelineJobData }    from '../seo-pipeline.worker';
-import type { CustomerProfileLlmResponse } from '../../lib/llm';
+import type { CustomerProfileLlmResponse } from '@/lib/llm';
 
 // ── LLM response → BusinessContext field mapper ────────────────────────────
 

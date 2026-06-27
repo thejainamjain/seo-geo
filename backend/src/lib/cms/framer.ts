@@ -15,7 +15,7 @@
  *   The plugin webhook URL follows a predictable pattern based on projectId.
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { FramerCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const FETCH_TIMEOUT_MS = 30_000;

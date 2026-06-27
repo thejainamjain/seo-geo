@@ -13,7 +13,7 @@
  *   POST /blogs/posts → create and publish post
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { GoHighLevelCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const GHL_API_BASE     = 'https://services.leadconnectorhq.com';

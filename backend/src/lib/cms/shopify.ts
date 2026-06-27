@@ -17,7 +17,7 @@
  *   We create Articles under the first Blog found on the store.
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { ShopifyCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const SHOPIFY_API_VERSION = '2024-01';

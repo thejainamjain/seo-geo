@@ -60,14 +60,14 @@
 
 import type { Job } from 'bullmq';
 import { Types } from 'mongoose';
-import { logger }          from '../../open-tele';
-import { Project, Keyword, BusinessContext}         from '../../models';
-import { getRankedKeywords } from '../../lib/dataforseo';
-import { generateMarketSizing, scoreKeywordAlignment } from '../../lib/llm';
-import { deriveCountryCodeFromRegions } from '../../lib/serp';
+import { logger }          from '@/open-tele';
+import { Project, Keyword, BusinessContext}         from '@/models';
+import { getRankedKeywords } from '@/lib/dataforseo';
+import { generateMarketSizing, scoreKeywordAlignment } from '@/lib/llm';
+import { deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData }          from '../seo-pipeline.worker';
-import type { DataForSeoKeyword }        from '../../lib/dataforseo';
-import { LLM_RATE_LIMIT }               from '../../constants/seo-pipeline.constants';
+import type { DataForSeoKeyword }        from '@/lib/dataforseo';
+import { LLM_RATE_LIMIT }               from '@/constants/seo-pipeline.constants';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 

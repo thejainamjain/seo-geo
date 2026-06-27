@@ -46,4 +46,16 @@ export const projectHandler = {
       next(err);
     }
   },
+
+  async getBusinessContext(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessContext = await projectService.getBusinessContext(
+        req.userId,
+        req.params['projectId'] as string,
+      );
+      res.status(200).json({ businessContext });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

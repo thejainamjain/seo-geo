@@ -11,7 +11,7 @@
  * PAYLOAD SHAPE: Standard — same as what our public articles API returns.
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { CustomApiCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const FETCH_TIMEOUT_MS = 30_000;

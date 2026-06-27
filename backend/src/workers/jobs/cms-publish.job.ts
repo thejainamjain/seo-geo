@@ -38,12 +38,12 @@
  */
 
 import type { Job }      from 'bullmq';
-import { logger }        from '../../open-tele';
-import { Project }       from '../../models/Project';
-import { Blog }          from '../../models/Blog';
-import { CmsConfig }     from '../../models/CmsConfig';
-import { publishBlog }   from '../../lib/cms';
-import type { BlogPublishPayload } from '../../lib/cms';
+import { logger }        from '@/open-tele';
+import { Project }       from '@/models/Project';
+import { Blog }          from '@/models/Blog';
+import { CmsConfig }     from '@/models/CmsConfig';
+import { publishBlog }   from '@/lib/cms';
+import type { BlogPublishPayload } from '@/lib/cms';
 import type { PipelineJobData }   from '../seo-pipeline.worker';
 
 // ── Day check ─────────────────────────────────────────────────────────────

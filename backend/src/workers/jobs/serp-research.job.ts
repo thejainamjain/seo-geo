@@ -45,15 +45,15 @@
  */
 
 import type { Job } from 'bullmq';
-import { logger }          from '../../open-tele';
-import { Project }         from '../../models/Project';
-import { BusinessContext } from '../../models/BusinessContext';
-import { Keyword }         from '../../models/Keyword';
-import { searchOrganic }   from '../../lib/serp';
-import { analyzeSerpResults } from '../../lib/llm';
-import { deriveCountryCodeFromRegions } from '../../lib/serp';
+import { logger }          from '@/open-tele';
+import { Project }         from '@/models/Project';
+import { BusinessContext } from '@/models/BusinessContext';
+import { Keyword }         from '@/models/Keyword';
+import { searchOrganic }   from '@/lib/serp';
+import { analyzeSerpResults } from '@/lib/llm';
+import { deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
-import { LLM_RATE_LIMIT }  from '../../constants/seo-pipeline.constants';
+import { LLM_RATE_LIMIT }  from '@/constants/seo-pipeline.constants';
 
 // ── Main job handler ───────────────────────────────────────────────────────
 

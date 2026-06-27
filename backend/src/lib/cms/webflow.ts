@@ -17,7 +17,7 @@
  *   Standard Webflow blog template field slugs used here.
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { WebflowCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const WEBFLOW_API_BASE  = 'https://api.webflow.com/v2';

@@ -4,12 +4,12 @@
   "description": "SEO/GEO/AEO optimization SaaS backend",
   "main": "dist/app.js",
   "scripts": {
-    "dev":          "tsx --conditions=development src/app.ts",
-    "dev:worker":   "tsx --conditions=development src/worker.ts",
-    "build":        "tsc",
-    "start":        "node dist/app.js",
+    "dev": "tsx --conditions=development src/app.ts",
+    "dev:worker": "tsx --conditions=development src/worker.ts",
+    "build": "tsc",
+    "start": "node dist/app.js",
     "start:worker": "node dist/worker.js",
-    "lint":         "eslint src/**/*.ts"
+    "lint": "eslint src/**/*.ts"
   },
   "dependencies": {
     "@crawlee/playwright": "^3.17.0",
@@ -33,6 +33,7 @@
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.7.0",
+    "multer": "^2.2.0",
     "node-cron": "^3.0.3",
     "playwright": "^1.61.1",
     "robots-parser": "^3.0.1",
@@ -42,6 +43,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
     "@types/jsonwebtoken": "^9.0.7",
+    "@types/multer": "^2.1.0",
     "@types/node": "^22.7.5",
     "tsconfig-paths": "^4.2.0",
     "tsx": "^4.19.1",

@@ -1,22 +1,13 @@
 import { Queue } from 'bullmq';
 import { Project, OrganizationMember, BusinessContext } from '../models';
 import { QUEUE_NAMES } from '../constants/seo-pipeline.constants';
+import { getConnectionOptions } from '../loaders/redis';
 import { NotFoundError, ForbiddenError, ConflictError } from '../utils/errors';
 import { logger } from '../open-tele';
 
-function getPipelineQueue(): Queue {
-  const url = process.env.UPSTASH_REDIS_URL;
-  if (!url) throw new Error('UPSTASH_REDIS_URL is not defined');
-
-  return new Queue(QUEUE_NAMES.SEO_PIPELINE, {
-    connection: {
-      url,
-      maxRetriesPerRequest: null,
-      enableReadyCheck:     false,
-      tls: url.startsWith('rediss://') ? {} : undefined,
-    },
-  });
-}
+const seoPipelineQueue = new Queue(QUEUE_NAMES.SEO_PIPELINE, {
+  connection: getConnectionOptions(),
+});
 
 export const projectService = {
   async createProject(userId: string, input: {
@@ -45,8 +36,7 @@ export const projectService = {
       ownerId:        userId,
     });
 
-    const queue = getPipelineQueue();
-    const job   = await queue.add(
+    const job = await seoPipelineQueue.add(
       'SITE_CRAWL',
       {
         projectId:                 project._id.toString(),
@@ -129,4 +119,17 @@ export const projectService = {
 
     return project;
   },
+
+  async getBusinessContext(userId: string, projectId: string) {
+    logger.debug('projectService.getBusinessContext', { userId, projectId });
+
+    const project = await projectService.getProject(userId, projectId);
+
+    const businessContext = await BusinessContext.findOne({ projectId: project._id }).lean();
+    if (!businessContext) throw new NotFoundError('Business profile is being generated');
+
+    logger.info('Business context fetched', { projectId });
+    return businessContext;
+  },
+
 };

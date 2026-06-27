@@ -25,7 +25,7 @@
  *   because that's where the XML import will land.
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { WordPressCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const FETCH_TIMEOUT_MS = 30_000;

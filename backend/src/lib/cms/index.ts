@@ -25,7 +25,7 @@
  */
 
 import { decrypt }              from '../crypto';
-import { logger }               from '../../open-tele';
+import { logger }               from '@/open-tele';
 import { publishToWordPress }   from './wordpress';
 import { publishToWebflow }     from './webflow';
 import { publishToFramer }      from './framer';

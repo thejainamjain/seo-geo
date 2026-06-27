@@ -15,7 +15,7 @@
  * CORS: User must add https://rankai.ai to Sanity CORS origins.
  */
 
-import { logger } from '../../open-tele';
+import { logger } from '@/open-tele';
 import type { SanityCredentials, BlogPublishPayload, PublishResult } from './types';
 
 const FETCH_TIMEOUT_MS = 30_000;

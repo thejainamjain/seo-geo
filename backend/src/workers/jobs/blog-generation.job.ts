@@ -28,10 +28,10 @@
  */
 
 import type { Job } from 'bullmq';
-import { logger } from '../../open-tele';
-import { Blog } from '../../models/Blog';
-import { Keyword } from '../../models/Keyword';
-import { Project } from '../../models/Project';
+import { logger } from '@/open-tele';
+import { Blog } from '@/models/Blog';
+import { Keyword } from '@/models/Keyword';
+import { Project } from '@/models/Project';
 import type { BlogJobData } from '../seo-pipeline.worker';
 
 // ── Slug generation ────────────────────────────────────────────────────────

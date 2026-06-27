@@ -42,13 +42,13 @@ import { CheerioCrawler, PlaywrightCrawler, RequestQueue } from 'crawlee';
 import type { Job } from 'bullmq';
 import type { CheerioAPI } from 'cheerio';
 import type { Page } from 'playwright';
-import { logger } from '../../open-tele';
-import { getRedis } from '../../loaders/redis';
-import { Audit } from '../../models/Audit';
-import { CodeChange } from '../../models/CodeChange';
-import { FAQ } from '../../models/FAQ';
-import { TLDR } from '../../models/TLDR';
-import { Project } from '../../models/Project';
+import { logger } from '@/open-tele';
+import { getRedis } from '@/loaders/redis';
+import { Audit } from '@/models/Audit';
+import { CodeChange } from '@/models/CodeChange';
+import { FAQ } from '@/models/FAQ';
+import { TLDR } from '@/models/TLDR';
+import { Project } from '@/models/Project';
 import type { PipelineJobData } from '../seo-pipeline.worker';
 
 // ── Constants ──────────────────────────────────────────────────────────────

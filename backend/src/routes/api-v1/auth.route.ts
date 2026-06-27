@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { authHandler } from '../../handlers/auth.handler';
-import { validate } from '../../middleware/validate';
+import { authHandler } from '@/handlers/auth.handler';
+import { validate } from '@/middleware/validate';
 
 const router = Router();
 

@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { projectHandler } from '../../handlers/project.handler';
-import { requireAuth } from '../../middleware/auth';
-import { validate } from '../../middleware/validate';
+import { projectHandler } from '@/handlers/project.handler';
+import { requireAuth } from '@/middleware/auth';
+import { validate } from '@/middleware/validate';
 
 const router = Router();
 
@@ -19,9 +19,10 @@ const UpdateBusinessSchema = z.object({
 
 router.use(requireAuth);
 
-router.post('/',                          validate(CreateProjectSchema),  projectHandler.create);
-router.get('/',                                                           projectHandler.list);
-router.get('/:projectId',                                                 projectHandler.getOne);
-router.post('/:projectId/business',       validate(UpdateBusinessSchema), projectHandler.updateBusiness);
+router.post('/',validate(CreateProjectSchema),  projectHandler.create);
+router.get('/',projectHandler.list);
+router.get('/:projectId',projectHandler.getOne);
+router.post('/:projectId/business',validate(UpdateBusinessSchema), projectHandler.updateBusiness);
+router.get('/:projectId/business', projectHandler.getBusinessContext);
 
 export default router;

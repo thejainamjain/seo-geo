@@ -42,11 +42,8 @@
 
 import type { Job } from 'bullmq';
 import { logger }       from '@/open-tele';
-import { Project }      from '@/models/Project';
-import { Blog }         from '@/models/Blog';
-import { GoogleToken }  from '@/models/GoogleToken';
-import { BlogLearning } from '@/models/BlogLearning';
-import { Keyword } from '@/models/Keyword';
+import { Project, BlogLearning, Blog, GoogleToken, Keyword } from '@/models';
+import config from '@/utils/config';
 
 // ── Thresholds ─────────────────────────────────────────────────────────────
 
@@ -91,8 +88,8 @@ async function refreshAccessToken(
     body:    new URLSearchParams({
       grant_type:    'refresh_token',
       refresh_token: refreshToken,
-      client_id:     process.env.GOOGLE_CLIENT_ID     ?? '',
-      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      client_id: config.google.clientId(),
+      client_secret: config.google.clientSecret(),
     }),
   });
 

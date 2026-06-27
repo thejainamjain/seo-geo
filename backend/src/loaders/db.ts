@@ -12,10 +12,11 @@
  */
 
 import mongoose from "mongoose";
+import config from "../utils/config";
 import { logger } from "../open-tele";
 
 export async function connectDB(): Promise<void> {
-  const uri = process.env.MONGODB_URI;
+  const uri = config.mongo.uri();
   if (!uri) throw new Error("MONGODB_URI is not defined in environment");
 
   try {

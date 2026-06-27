@@ -9,13 +9,14 @@
  */
 
 import crypto from 'crypto';
+import config from '@/utils/config';
 
 const ALGORITHM  = 'aes-256-gcm';
 const IV_LENGTH  = 12; // 96 bits — recommended for GCM
 const TAG_LENGTH = 16;
 
 function getKey(): Buffer {
-  const key = process.env.ENCRYPTION_KEY;
+  const key = config.encryption.key();
   if (!key) throw new Error('ENCRYPTION_KEY is not defined');
   const buf = Buffer.from(key, 'hex');
   if (buf.length !== 32) throw new Error('ENCRYPTION_KEY must be 32 bytes (64 hex chars)');

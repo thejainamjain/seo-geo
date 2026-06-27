@@ -26,6 +26,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PROMPTS } from '../constants/llm.constants';
 import { logger } from '../open-tele';
+import config from '@/utils/config';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ let _genAI: GoogleGenerativeAI | null = null;
 
 function getGenAI(): GoogleGenerativeAI {
   if (!_genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = config.gemini.apiKey();
     if (!apiKey) throw new Error('GEMINI_API_KEY is not defined in environment');
     _genAI = new GoogleGenerativeAI(apiKey);
   }

@@ -4,9 +4,9 @@
   "description": "SEO/GEO/AEO optimization SaaS backend",
   "main": "dist/app.js",
   "scripts": {
-    "dev": "tsx --conditions=development src/app.ts",
-    "dev:worker": "tsx --conditions=development src/worker.ts",
-    "build": "tsc",
+    "dev": "tsx --conditions=development -r tsconfig-paths/register src/app.ts",
+    "dev:worker": "tsx --conditions=development -r tsconfig-paths/register src/worker.ts",
+    "build": "tsc && tsc-alias",
     "start": "node dist/app.js",
     "start:worker": "node dist/worker.js",
     "lint": "eslint src/**/*.ts"
@@ -29,6 +29,7 @@
     "bullmq": "^5.13.0",
     "cloudinary": "^2.5.0",
     "crawlee": "^3.11.0",
+    "dotenv": "^17.4.2",
     "express": "^4.21.0",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
@@ -49,6 +50,7 @@
     "@types/pdf-parse": "^1.1.5",
     "tsconfig-paths": "^4.2.0",
     "tsx": "^4.19.1",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "tsc-alias": "^1.8.10"
   }
 }

@@ -7,9 +7,10 @@
 
 import jwt from 'jsonwebtoken';
 import { UnauthorizedError } from './errors';
+import config from './config';
 
-const SECRET     = process.env.JWT_SECRET!;
-const EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '7d';
+const SECRET     = config.jwt.secret();
+const EXPIRES_IN = config.jwt.expiresIn;
 
 export interface JwtPayload {
   userId: string;

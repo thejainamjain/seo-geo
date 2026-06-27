@@ -27,6 +27,7 @@
  */
 
 import { logger } from '../open-tele';
+import config from '@/utils/config';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -58,8 +59,8 @@ export interface RankedKeywordsResult {
 // ── Auth header ────────────────────────────────────────────────────────────
 
 function getAuthHeader(): string {
-  const login    = process.env.DATAFORSEO_LOGIN;
-  const password = process.env.DATAFORSEO_PASSWORD;
+  const login    = config.dataforseo.login();
+  const password = config.dataforseo.password();
 
   if (!login || !password) {
     throw new Error('DATAFORSEO_LOGIN or DATAFORSEO_PASSWORD not defined in environment');

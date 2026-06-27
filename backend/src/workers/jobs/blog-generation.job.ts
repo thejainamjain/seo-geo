@@ -70,7 +70,7 @@ import { Keyword }         from '@/models/Keyword';
 import { Project }         from '@/models/Project';
 import { BusinessContext } from '@/models/BusinessContext';
 import { generateBlogPost } from '@/lib/llm';
-import { loadKnowledgeChunks } from '@/loaders/knowledge-loader';
+import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
 import type { BlogJobData } from '../seo-pipeline.worker';
 
 // ── Constants ──────────────────────────────────────────────────────────────

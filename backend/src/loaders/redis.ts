@@ -17,6 +17,7 @@
  *   - getConnectionOptions() is for BullMQ — it creates its own managed connections
  */
 import { Redis, type RedisOptions } from 'ioredis';
+import config from '../utils/config';
 import { logger } from '../open-tele';
 
 let redisClient: Redis | null = null;
@@ -27,9 +28,7 @@ let redisClient: Redis | null = null;
  * never pass a Redis instance directly to BullMQ Queue or Worker.
  */
 export function getConnectionOptions(): RedisOptions {
-  const url = process.env.UPSTASH_REDIS_URL;
-  if (!url) throw new Error('UPSTASH_REDIS_URL is not defined');
-
+  const url = config.redis.url();
   const isTls  = url.startsWith('rediss://');
   const parsed = new URL(url);
 
@@ -49,7 +48,7 @@ export function getConnectionOptions(): RedisOptions {
  */
 export function getRedis(): Redis {
   if (!redisClient) {
-    const url = process.env.UPSTASH_REDIS_URL;
+    const url = config.redis.url();
     if (!url) throw new Error('UPSTASH_REDIS_URL is not defined');
 
     redisClient = new Redis(url, {

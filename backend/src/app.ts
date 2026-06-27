@@ -6,6 +6,7 @@ import { connectDB } from './loaders/db';
 import { getRedis } from './loaders/redis';
 import { errorHandler } from './middleware/error';
 import apiV1Routes from './routes/api-v1/index';
+import config from '@/utils/config';
 
 const app = express();
 
@@ -32,7 +33,7 @@ app.use((_req: Request, res: Response) => {
 app.use(errorHandler);
 
 async function start(): Promise<void> {
-  const PORT = process.env.PORT ?? 5000;
+  const PORT = config.port;
   try {
     await connectDB();
     getRedis();

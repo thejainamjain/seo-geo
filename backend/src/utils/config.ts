@@ -7,6 +7,7 @@
  * inside workers) are read directly from process.env at call time so they
  * can be rotated without restart.
  */
+import 'dotenv/config';
 
 function require_env(key: string): string {
   const val = process.env[key];
@@ -63,6 +64,11 @@ const config = {
     cloudName: () => require_env("CLOUDINARY_CLOUD_NAME"),
     apiKey: () => require_env("CLOUDINARY_API_KEY"),
     apiSecret: () => require_env("CLOUDINARY_API_SECRET"),
+  },
+
+  google: {
+    clientId:     () => require_env('GOOGLE_CLIENT_ID'),
+    clientSecret: () => require_env('GOOGLE_CLIENT_SECRET'),
   },
 
   unsplash: {

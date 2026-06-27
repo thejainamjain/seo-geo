@@ -23,6 +23,7 @@
  */
 
 import { logger } from '../open-tele';
+import config from '@/utils/config';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -90,7 +91,7 @@ async function fetchSerp(
   params:  Record<string, string>,
   context: string, // for logging — e.g. "competitor-discovery:projectId"
 ): Promise<Record<string, unknown>> {
-  const apiKey = process.env.SERPAPI_KEY;
+  const apiKey = config.serpapi.apiKey();
   if (!apiKey) {
     throw new Error('SERPAPI_KEY is not defined in environment');
   }

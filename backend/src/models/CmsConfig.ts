@@ -116,6 +116,4 @@ const CmsConfigSchema = new Schema<ICmsConfig>(
   { timestamps: true }
 );
 
-CmsConfigSchema.index({ projectId: 1 });
-
 export const CmsConfig = mongoose.model<ICmsConfig>("CmsConfig", CmsConfigSchema);

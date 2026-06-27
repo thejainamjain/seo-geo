@@ -101,8 +101,6 @@ const BusinessContextSchema = new Schema<IBusinessContext>(
   { timestamps: true }
 );
 
-BusinessContextSchema.index({ projectId: 1 });
-
 export const BusinessContext = mongoose.model<IBusinessContext>(
   "BusinessContext",
   BusinessContextSchema

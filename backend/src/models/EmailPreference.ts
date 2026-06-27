@@ -47,7 +47,6 @@ const EmailPreferenceSchema = new Schema<IEmailPreference>(
   { timestamps: true }
 );
 
-EmailPreferenceSchema.index({ userId: 1 });
 EmailPreferenceSchema.index({ isSubscribedWeeklyReport: 1 }); // Weekly report job
 EmailPreferenceSchema.index({ isSubscribedMarketing: 1 });    // Marketing campaigns
 

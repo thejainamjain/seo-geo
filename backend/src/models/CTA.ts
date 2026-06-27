@@ -110,8 +110,6 @@ const ProjectCtaFormSchema = new Schema<IProjectCtaForm>(
   { timestamps: true }
 );
 
-ProjectCtaFormSchema.index({ projectId: 1 });
-
 export const ProjectCtaForm = mongoose.model<IProjectCtaForm>(
   "ProjectCtaForm",
   ProjectCtaFormSchema

@@ -1,15 +1,14 @@
 import { initOtel, logger } from './open-tele';
 initOtel();
-
 import express, { Request, Response, NextFunction } from 'express';
 import { connectDB } from './loaders/db';
-import { getRedis } from './loaders/redis';
+import { getRedis, closeRedis } from './loaders/redis';
 import { errorHandler } from './middleware/error';
 import apiV1Routes from './routes/api-v1/index';
 import config from '@/utils/config';
+import mongoose from 'mongoose';
 
 const app = express();
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -23,14 +22,22 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 app.use('/api/v1', apiV1Routes);
-// Routes mounted here as built
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
 });
 
-// MUST be last
 app.use(errorHandler);
+
+async function shutdown(signal: string): Promise<void> {
+  logger.info(`${signal} received. Shutting down...`);
+  await closeRedis();
+  await mongoose.connection.close();
+  process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 async function start(): Promise<void> {
   const PORT = config.port;
@@ -47,5 +54,4 @@ async function start(): Promise<void> {
 }
 
 start();
-
 export default app;

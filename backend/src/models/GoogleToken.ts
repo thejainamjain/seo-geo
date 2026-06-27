@@ -43,7 +43,6 @@ const GoogleTokenSchema = new Schema<IGoogleToken>(
   { timestamps: true }
 );
 
-GoogleTokenSchema.index({ projectId: 1 });
 GoogleTokenSchema.index({ expiryDate: 1 }); // Background job queries: "tokens expiring soon"
 
 export const GoogleToken = mongoose.model<IGoogleToken>("GoogleToken", GoogleTokenSchema);

@@ -1,0 +1,11 @@
+node_modules
+src
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.git
+.gitignore
+README.md
+ecosystem.config.js

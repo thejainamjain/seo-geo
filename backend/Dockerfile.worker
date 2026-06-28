@@ -1,0 +1,24 @@
+FROM node:20-alpine
+
+# Playwright needs these for Chromium (crawler uses it for JS-rendered sites)
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY dist/ ./dist/
+
+# No EXPOSE — worker doesn't serve HTTP
+
+CMD ["node", "dist/worker.js"]

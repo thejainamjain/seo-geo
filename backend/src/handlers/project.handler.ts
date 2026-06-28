@@ -95,7 +95,6 @@ export const projectHandler = {
       const result = await projectService.startPipeline(
         req.userId,
         req.params['projectId'] as string,
-        req.body,
       );
       res.status(200).json(result);
     } catch (err) {

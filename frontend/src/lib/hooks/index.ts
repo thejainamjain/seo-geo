@@ -1,9 +1,9 @@
 // lib/hooks/index.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/stores/auth.store';
 import { useRouter } from 'next/navigation';
-import type { BlogStatus, PipelineStep } from '@/types/api';
+import type { BlogStatus, PipelineStep, CmsConnectPayload, CmsUpdatePayload } from '@/types/api';
+import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, cmsApi } from '@/lib/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -200,5 +200,60 @@ export function useGeoRuns(projectId: string) {
     queryKey: ['geo', projectId],
     queryFn:  () => geoApi.runs(projectId),
     enabled:  !!projectId,
+  });
+}
+
+// ── CMS ───────────────────────────────────────────────────────────────────────
+ 
+export function useCmsConfig(projectId: string) {
+  return useQuery({
+    queryKey: ['cms', projectId],
+    queryFn:  async () => {
+      try {
+        return await cmsApi.get(projectId);
+      } catch (err: unknown) {
+        // Backend throws 404 when no CmsConfig document exists yet (new project).
+        // Treat this as "not connected" rather than an error state.
+        const status = (err as { response?: { status?: number } }).response?.status;
+        if (status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: !!projectId,
+  });
+}
+ 
+export function useConnectCms(projectId: string) {
+  const queryClient = useQueryClient();
+ 
+  return useMutation({
+    mutationFn: (payload: CmsConnectPayload) => cmsApi.connect(projectId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cms', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
+  });
+}
+ 
+export function useUpdateCms(projectId: string) {
+  const queryClient = useQueryClient();
+ 
+  return useMutation({
+    mutationFn: (payload: CmsUpdatePayload) => cmsApi.update(projectId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cms', projectId] });
+    },
+  });
+}
+ 
+export function useDisconnectCms(projectId: string) {
+  const queryClient = useQueryClient();
+ 
+  return useMutation({
+    mutationFn: () => cmsApi.disconnect(projectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cms', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
   });
 }

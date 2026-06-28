@@ -12,7 +12,12 @@ import type {
   Audit,
   Keyword,
   GeoRun,
-  BusinessContext, SaveOnboardingStepResult, StartPipelineResult } from '@/types/api';
+  BusinessContext, 
+  SaveOnboardingStepResult, 
+  StartPipelineResult, 
+  CmsConfig, 
+  CmsConnectPayload, 
+  CmsUpdatePayload } from '@/types/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -96,4 +101,33 @@ export const keywordsApi = {
 export const geoApi = {
   runs: (projectId: string) =>
     apiClient.get<GeoRun[]>(`/projects/${projectId}/geo`).then(r => r.data),
+};
+
+
+// ── CMS ───────────────────────────────────────────────────────────────────────
+ 
+export const cmsApi = {
+  // GET /projects/:projectId/cms  →  { cmsConfig: CmsConfig }
+  get: (projectId: string) =>
+    apiClient
+      .get<{ cmsConfig: CmsConfig }>(`/projects/${projectId}/cms`)
+      .then(r => r.data.cmsConfig),
+ 
+  // POST /projects/:projectId/cms/connect  →  { cmsConfig: CmsConfig }
+  connect: (projectId: string, payload: CmsConnectPayload) =>
+    apiClient
+      .post<{ cmsConfig: CmsConfig }>(`/projects/${projectId}/cms/connect`, payload)
+      .then(r => r.data.cmsConfig),
+ 
+  // PATCH /projects/:projectId/cms  →  { cmsConfig: CmsConfig }
+  update: (projectId: string, payload: CmsUpdatePayload) =>
+    apiClient
+      .patch<{ cmsConfig: CmsConfig }>(`/projects/${projectId}/cms`, payload)
+      .then(r => r.data.cmsConfig),
+ 
+  // DELETE /projects/:projectId/cms/disconnect  →  { message: string }
+  disconnect: (projectId: string) =>
+    apiClient
+      .delete<{ message: string }>(`/projects/${projectId}/cms/disconnect`)
+      .then(r => r.data),
 };

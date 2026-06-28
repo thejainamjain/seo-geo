@@ -235,3 +235,30 @@ export interface StartPipelineResult {
   projectId: string;
   jobId:     string | undefined;
 }
+
+// ── CMS ───────────────────────────────────────────────────────────────────────
+ 
+export interface CmsConfig {
+  _id:                         string;
+  projectId:                   string;
+  cmsType?:                    string;   // undefined = not connected
+  blogPostPath:                string;   // default "blog"
+  autoPublish:                 boolean;
+  allowedPublishDays:          number[]; // 1–6, never 0
+  publishHourUtc:              number;
+  stripTitleAndHeroFromApiBody: boolean;
+  createdAt:                   string;
+  updatedAt:                   string;
+}
+ 
+export interface CmsConnectPayload {
+  cmsType:      string;
+  credentials:  Record<string, string>;
+  blogPostPath?: string;
+}
+ 
+export interface CmsUpdatePayload {
+  autoPublish?:        boolean;
+  allowedPublishDays?: number[];
+  blogPostPath?:       string;
+}

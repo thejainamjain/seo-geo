@@ -1,4 +1,3 @@
-// lib/utils/pipeline.ts
 import type { PipelineStep, PipelineStepStatus } from '@/types/api';
 
 export const STEP_META: Record<PipelineStep, { label: string; description: string }> = {
@@ -7,9 +6,6 @@ export const STEP_META: Record<PipelineStep, { label: string; description: strin
   TECHNICAL_AUDIT:      { label: 'Technical Audit',      description: 'Generating SEO fixes for every page' },
   COMPETITOR_DISCOVERY: { label: 'Competitor Discovery', description: 'Finding who ranks for your keywords' },
   KEYWORD_RESEARCH:     { label: 'Keyword Research',     description: 'Researching and scoring 260 keywords' },
-  SERP_RESEARCH:        { label: 'SERP Research',        description: 'Analyzing what already ranks' },
-  BLOG_GENERATION:      { label: 'Blog Generation',      description: 'Writing 25 SEO-optimized blog posts' },
-  CMS_PUBLISH:          { label: 'CMS Publish',          description: 'Publishing content to your CMS' },
 };
 
 export const PIPELINE_SEQUENCE: PipelineStep[] = [
@@ -18,9 +14,6 @@ export const PIPELINE_SEQUENCE: PipelineStep[] = [
   'TECHNICAL_AUDIT',
   'COMPETITOR_DISCOVERY',
   'KEYWORD_RESEARCH',
-  'SERP_RESEARCH',
-  'BLOG_GENERATION',
-  'CMS_PUBLISH',
 ];
 
 export function getStatusColor(status: PipelineStepStatus): string {

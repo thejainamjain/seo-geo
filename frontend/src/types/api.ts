@@ -23,10 +23,7 @@ export type PipelineStep =
   | 'BUSINESS_PROFILE'
   | 'TECHNICAL_AUDIT'
   | 'COMPETITOR_DISCOVERY'
-  | 'KEYWORD_RESEARCH'
-  | 'SERP_RESEARCH'
-  | 'BLOG_GENERATION'
-  | 'CMS_PUBLISH';
+  | 'KEYWORD_RESEARCH';
 
 export interface PipelineStepState {
   step:        PipelineStep;

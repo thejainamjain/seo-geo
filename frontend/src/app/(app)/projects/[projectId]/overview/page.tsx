@@ -143,8 +143,8 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
         <div className="mt-4 p-4 border border-green-500/20 bg-green-500/5 rounded-lg">
           <p className="text-sm font-medium text-green-500">Pipeline complete</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Your site has been crawled, audited, and blog posts have been generated.
-            Check the Keywords & Blogs and Technical SEO tabs.
+            Your site has been crawled, audited, and keywords have been researched.
+            Head to Keywords to start generating content.
           </p>
         </div>
       )}

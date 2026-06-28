@@ -12,14 +12,12 @@ import { formatNumber } from '@/lib/utils/format';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import type { Blog, Keyword } from '@/types/api';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function BlogStatusBadge({ status }: { status: string }) {
   const map: Record<string, 'default' | 'secondary' | 'outline'> = {
-    published: 'default',
-    ready:     'secondary',
-    draft:     'outline',
-    archived:  'outline',
+    published:  'default',
+    ready:      'secondary',
+    draft:      'outline',
+    archived:   'outline',
   };
   return (
     <Badge variant={map[status] ?? 'outline'} className="capitalize text-xs">
@@ -28,64 +26,48 @@ function BlogStatusBadge({ status }: { status: string }) {
   );
 }
 
-// ── Ready tab — blogs with status "ready" or "published" ─────────────────────
-// Shows: keyword, search volume, blog title, status, view + mark-as-ready action
-
-function ReadyTable({
+function BlogsTable({
   blogs,
-  keywords,
+  kwMap,
   projectId,
+  showMarkReady,
 }: {
-  blogs: Blog[];
-  keywords: Keyword[];
-  projectId: string;
+  blogs:         Blog[];
+  kwMap:         Map<string, Keyword>;
+  projectId:     string;
+  showMarkReady: boolean;
 }) {
-  // Build keyword lookup map: keywordId → Keyword
-  const kwMap = new Map<string, Keyword>(keywords.map(k => [k._id, k]));
   const updateStatus = useUpdateBlogStatus(projectId);
 
-  // Ready tab shows blogs that have been drafted or are ready/published
-  const readyBlogs = blogs.filter(b => ['draft', 'ready', 'published'].includes(b.status));
-
-  if (readyBlogs.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-8 text-center">
-        No blogs ready yet. Pipeline must complete blog generation first.
-      </p>
-    );
-  }
+  if (blogs.length === 0) return null;
 
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-[28%]">Keyword</TableHead>
+          <TableHead className="w-[25%]">Keyword</TableHead>
           <TableHead>Volume</TableHead>
-          <TableHead className="w-[28%]">Title</TableHead>
+          <TableHead className="w-[30%]">Title</TableHead>
           <TableHead>Status</TableHead>
-          <TableHead>View</TableHead>
-          <TableHead />
+          <TableHead>Live</TableHead>
+          {showMarkReady && <TableHead />}
         </TableRow>
       </TableHeader>
       <TableBody>
-        {readyBlogs.map(blog => {
-          const kw = blog.keywordId ? kwMap.get(blog.keywordId) : undefined;
-          const isMarking =
-            updateStatus.isPending && updateStatus.variables?.blogId === blog._id;
+        {blogs.map(blog => {
+          const kw        = blog.keywordId ? kwMap.get(blog.keywordId) : undefined;
+          const isMarking = updateStatus.isPending && updateStatus.variables?.blogId === blog._id;
 
           return (
             <TableRow key={blog._id}>
-              {/* Keyword */}
               <TableCell className="text-sm">
                 {kw?.keyword ?? <span className="text-muted-foreground italic">—</span>}
               </TableCell>
 
-              {/* Search volume */}
               <TableCell className="text-sm text-muted-foreground">
                 {kw ? `${formatNumber(kw.searchVolume)}/mo` : '—'}
               </TableCell>
 
-              {/* Blog title */}
               <TableCell>
                 <Link
                   href={`/projects/${projectId}/blogs/${blog._id}`}
@@ -95,12 +77,10 @@ function ReadyTable({
                 </Link>
               </TableCell>
 
-              {/* Status badge */}
               <TableCell>
                 <BlogStatusBadge status={blog.status} />
               </TableCell>
 
-              {/* View live link */}
               <TableCell>
                 {blog.publishedUrl ? (
                   <a
@@ -116,25 +96,22 @@ function ReadyTable({
                 )}
               </TableCell>
 
-              {/* Mark as ready action — only shown for drafts */}
-              <TableCell className="text-right">
-                {blog.status === 'draft' && (
+              {showMarkReady && (
+                <TableCell className="text-right">
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs"
                     disabled={isMarking}
-                    onClick={() =>
-                      updateStatus.mutate({ blogId: blog._id, status: 'ready' })
-                    }
+                    onClick={() => updateStatus.mutate({ blogId: blog._id, status: 'ready' })}
                   >
                     {isMarking
                       ? <Loader2 className="h-3 w-3 animate-spin" />
                       : 'Mark as ready'
                     }
                   </Button>
-                )}
-              </TableCell>
+                </TableCell>
+              )}
             </TableRow>
           );
         })}
@@ -142,52 +119,6 @@ function ReadyTable({
     </Table>
   );
 }
-
-// ── Upcoming tab — keywords with no blog yet ──────────────────────────────────
-
-function UpcomingTable({ keywords }: { keywords: Keyword[] }) {
-  // Upcoming = keywords with status "upcoming" (no blog generated yet)
-  const upcomingKws = keywords.filter(k => k.status === 'upcoming');
-
-  if (upcomingKws.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-8 text-center">
-        No upcoming keywords queued for content creation.
-      </p>
-    );
-  }
-
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[40%]">Keyword</TableHead>
-          <TableHead>Volume</TableHead>
-          <TableHead>Title</TableHead>
-          <TableHead>Status</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {upcomingKws.map(kw => (
-          <TableRow key={kw._id}>
-            <TableCell className="text-sm font-medium">{kw.keyword}</TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {formatNumber(kw.searchVolume)}/mo
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground italic">TBD</TableCell>
-            <TableCell>
-              <Badge variant="outline" className="text-xs capitalize">
-                {kw.status}
-              </Badge>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function BlogsPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
@@ -197,18 +128,20 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
 
   const isLoading = kwLoading || blLoading;
 
-  const totalKeywords      = keywords?.length ?? 0;
-  const totalBlogs         = blogs?.length ?? 0;
-  const readyToPublish     = blogs?.filter(b => b.status === 'ready').length ?? 0;
-  const upcomingCount      = keywords?.filter(k => k.status === 'upcoming').length ?? 0;
-  const readyBlogsCount    = blogs?.filter(b => ['draft', 'ready', 'published'].includes(b.status)).length ?? 0;
+  const kwMap = new Map<string, Keyword>(
+    (keywords ?? []).map(k => [k._id, k])
+  );
+
+  const draftBlogs     = blogs?.filter(b => b.status === 'draft')     ?? [];
+  const readyBlogs     = blogs?.filter(b => b.status === 'ready')     ?? [];
+  const publishedBlogs = blogs?.filter(b => b.status === 'published') ?? [];
 
   return (
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold">Blogs</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          AI-generated blog posts for your keywords, ready to review and publish
+          AI-generated blog posts — review drafts, approve for publishing
         </p>
       </div>
 
@@ -220,9 +153,9 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
       ) : (
         <div className="grid grid-cols-3 gap-4 mb-8">
           {[
-            { label: 'Total keywords',      value: totalKeywords,  sub: 'Researched for your domain' },
-            { label: 'Pages created',       value: totalBlogs,     sub: 'AI-generated posts' },
-            { label: 'Ready to publish',    value: readyToPublish, sub: 'Approved and waiting' },
+            { label: 'Draft',      value: draftBlogs.length,     sub: 'Awaiting your review' },
+            { label: 'Ready',      value: readyBlogs.length,     sub: 'Approved, waiting to publish' },
+            { label: 'Published',  value: publishedBlogs.length, sub: 'Live on your site' },
           ].map(({ label, value, sub }) => (
             <div key={label} className="border border-border rounded-lg p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
@@ -233,27 +166,67 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
         </div>
       )}
 
-      <Tabs defaultValue="ready">
+      <Tabs defaultValue="draft">
         <TabsList className="mb-4">
-          <TabsTrigger value="ready">
-            Ready {!isLoading && readyBlogsCount > 0 ? `(${readyBlogsCount})` : ''}
+          <TabsTrigger value="draft">
+            Draft {!isLoading && draftBlogs.length > 0 ? `(${draftBlogs.length})` : ''}
           </TabsTrigger>
-          <TabsTrigger value="upcoming">
-            Upcoming {!isLoading && upcomingCount > 0 ? `(${upcomingCount})` : ''}
+          <TabsTrigger value="ready">
+            Ready {!isLoading && readyBlogs.length > 0 ? `(${readyBlogs.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="published">
+            Published {!isLoading && publishedBlogs.length > 0 ? `(${publishedBlogs.length})` : ''}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="ready">
+        <TabsContent value="draft">
           {isLoading && <Skeleton className="h-64 w-full" />}
-          {!isLoading && blogs && keywords && (
-            <ReadyTable blogs={blogs} keywords={keywords} projectId={projectId} />
+          {!isLoading && draftBlogs.length === 0 && (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No drafts yet. Go to Keywords and click Generate on a keyword to create a blog post.
+            </p>
+          )}
+          {!isLoading && draftBlogs.length > 0 && (
+            <BlogsTable
+              blogs={draftBlogs}
+              kwMap={kwMap}
+              projectId={projectId}
+              showMarkReady
+            />
           )}
         </TabsContent>
 
-        <TabsContent value="upcoming">
+        <TabsContent value="ready">
           {isLoading && <Skeleton className="h-64 w-full" />}
-          {!isLoading && keywords && (
-            <UpcomingTable keywords={keywords} />
+          {!isLoading && readyBlogs.length === 0 && (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No blogs ready to publish yet. Review drafts and mark them as ready.
+            </p>
+          )}
+          {!isLoading && readyBlogs.length > 0 && (
+            <BlogsTable
+              blogs={readyBlogs}
+              kwMap={kwMap}
+              projectId={projectId}
+              showMarkReady={false}
+            />
+          )}
+        </TabsContent>
+
+        <TabsContent value="published">
+          {isLoading && <Skeleton className="h-64 w-full" />}
+          {!isLoading && publishedBlogs.length === 0 && (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No published blogs yet. Connect a CMS in Settings to enable auto-publish.
+            </p>
+          )}
+          {!isLoading && publishedBlogs.length > 0 && (
+            <BlogsTable
+              blogs={publishedBlogs}
+              kwMap={kwMap}
+              projectId={projectId}
+              showMarkReady={false}
+            />
           )}
         </TabsContent>
       </Tabs>

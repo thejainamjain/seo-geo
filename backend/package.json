@@ -9,7 +9,8 @@
     "build": "tsc && tsc-alias",
     "start": "node dist/app.js",
     "start:worker": "node dist/worker.js",
-    "lint": "eslint src/**/*.ts"
+    "lint": "eslint src/**/*.ts",
+    "dev:all": "concurrently --names API,WORKER --prefix-colors cyan,yellow 'npm run dev' 'npm run dev:worker'"
   },
   "dependencies": {
     "@crawlee/playwright": "^3.17.0",
@@ -50,6 +51,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^22.7.5",
     "@types/pdf-parse": "^1.1.5",
+    "concurrently": "^10.0.3",
     "tsc-alias": "^1.8.10",
     "tsconfig-paths": "^4.2.0",
     "tsx": "^4.19.1",

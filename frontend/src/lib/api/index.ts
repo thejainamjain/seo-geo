@@ -28,7 +28,7 @@ export const authApi = {
 
 export const projectsApi = {
   list: () =>
-    apiClient.get<Project[]>('/projects').then(r => r.data),
+  apiClient.get<{ projects: Project[] }>('/projects').then(r => r.data.projects),
 
   get: (projectId: string) =>
     apiClient.get<Project>(`/projects/${projectId}`).then(r => r.data),

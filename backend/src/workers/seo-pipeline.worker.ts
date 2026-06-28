@@ -159,6 +159,23 @@ async function markStepCompleted(projectId: string, step: PipelineStep): Promise
     return;
   }
 
+  // After BUSINESS_PROFILE: pause pipeline and wait for user to complete onboarding wizard.
+  // Frontend polls pipeline status — when BUSINESS_PROFILE is COMPLETED and
+  // pipeline.status is PENDING, it shows the pre-filled wizard.
+  // resumeAfterOnboarding() in project.service.ts enqueues TECHNICAL_AUDIT when user is done.
+  if (step === PIPELINE_STEP.BUSINESS_PROFILE) {
+    await Project.findByIdAndUpdate(projectId, {
+      $set: {
+        'pipeline.status':      'PENDING',
+        'pipeline.currentStep': null,
+      },
+    });
+    logger.info('Pipeline paused after BUSINESS_PROFILE — waiting for onboarding completion', {
+      projectId,
+    });
+    return;
+  }
+
   // Skip enqueuing next step for BLOG_GENERATION —
   // CMS_PUBLISH is enqueued by QueueEvents when all blog children complete.
   if (step === PIPELINE_STEP.BLOG_GENERATION) {

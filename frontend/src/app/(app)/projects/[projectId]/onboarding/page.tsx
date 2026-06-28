@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useBusinessContext, useSaveOnboardingStep, useStartPipeline } from '@/lib/hooks';
+import { pipelineApi } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -50,10 +52,8 @@ function TagInput({
       <div className="flex gap-2">
         <Input
           value={input}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); add(); }
-          }}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
           placeholder={placeholder}
           className="flex-1"
         />
@@ -79,13 +79,7 @@ function TagInput({
 
 // ── Step components ────────────────────────────────────────────────────────
 
-function Step1({
-  data,
-  onChange,
-}: {
-  data: Record<string, unknown>;
-  onChange: (d: Record<string, unknown>) => void;
-}) {
+function Step1({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
   const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
   return (
     <div className="space-y-5">
@@ -94,7 +88,7 @@ function Step1({
         <Input
           placeholder="Acme Inc."
           value={(data.name as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('name', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)}
         />
       </div>
       <div className="space-y-1.5">
@@ -102,7 +96,7 @@ function Step1({
         <Input
           placeholder="https://acme.com"
           value={(data.website as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('website', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('website', e.target.value)}
         />
       </div>
       <div className="space-y-1.5">
@@ -110,7 +104,7 @@ function Step1({
         <Input
           placeholder="e.g. United States, English"
           value={(data.targetRegions as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('targetRegions', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('targetRegions', e.target.value)}
         />
         <p className="text-xs text-muted-foreground">Primary markets your business targets</p>
       </div>
@@ -119,7 +113,7 @@ function Step1({
         <Textarea
           placeholder="What does your company do in 2–3 sentences?"
           value={(data.description as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('description', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('description', e.target.value)}
           rows={3}
         />
       </div>
@@ -127,13 +121,7 @@ function Step1({
   );
 }
 
-function Step2({
-  data,
-  onChange,
-}: {
-  data: Record<string, unknown>;
-  onChange: (d: Record<string, unknown>) => void;
-}) {
+function Step2({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
   const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
   return (
     <div className="space-y-5">
@@ -142,7 +130,7 @@ function Step2({
         <Textarea
           placeholder="Describe your main product or service offering"
           value={(data.whatItSells as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('whatItSells', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('whatItSells', e.target.value)}
           rows={3}
         />
       </div>
@@ -151,16 +139,16 @@ function Step2({
         <Textarea
           placeholder="List the main features and what they mean for customers"
           value={(data.keyFeatures as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('keyFeatures', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('keyFeatures', e.target.value)}
           rows={4}
         />
       </div>
       <div className="space-y-1.5">
         <Label>Product tiers and inclusions</Label>
         <Textarea
-          placeholder="Describe your pricing tiers or plan inclusions (or write 'Not applicable')"
+          placeholder="Describe your pricing tiers or plan inclusions"
           value={(data.pricingTiers as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('pricingTiers', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('pricingTiers', e.target.value)}
           rows={2}
         />
       </div>
@@ -170,7 +158,7 @@ function Step2({
           <Input
             placeholder="e.g. 14-day free trial"
             value={(data.freeTrialAvailable as string) ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('freeTrialAvailable', e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('freeTrialAvailable', e.target.value)}
           />
         </div>
         <div className="space-y-1.5">
@@ -178,7 +166,7 @@ function Step2({
           <Input
             placeholder="e.g. $2,400/year"
             value={(data.lifetimeValuePerClient as string) ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('lifetimeValuePerClient', e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('lifetimeValuePerClient', e.target.value)}
           />
         </div>
       </div>
@@ -186,13 +174,7 @@ function Step2({
   );
 }
 
-function Step3({
-  data,
-  onChange,
-}: {
-  data: Record<string, unknown>;
-  onChange: (d: Record<string, unknown>) => void;
-}) {
+function Step3({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
   const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
   return (
     <div className="space-y-5">
@@ -210,25 +192,25 @@ function Step3({
         <Textarea
           placeholder="What problems do your customers face that you solve?"
           value={(data.painPoints as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('painPoints', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('painPoints', e.target.value)}
           rows={4}
         />
       </div>
       <div className="space-y-1.5">
         <Label>Keywords they talk about</Label>
         <Textarea
-          placeholder="Words and phrases your customers use when searching or talking about this problem"
+          placeholder="Words and phrases your customers use when searching"
           value={(data.keywordsTheyUse as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('keywordsTheyUse', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('keywordsTheyUse', e.target.value)}
           rows={3}
         />
       </div>
       <div className="space-y-1.5">
         <Label>Top use cases to rank for</Label>
         <Textarea
-          placeholder="What jobs do customers hire you for? What tasks do they complete with your product?"
+          placeholder="What jobs do customers hire you for?"
           value={(data.topUseCases as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('topUseCases', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('topUseCases', e.target.value)}
           rows={3}
         />
       </div>
@@ -236,13 +218,7 @@ function Step3({
   );
 }
 
-function Step4({
-  data,
-  onChange,
-}: {
-  data: Record<string, unknown>;
-  onChange: (d: Record<string, unknown>) => void;
-}) {
+function Step4({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
   const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
   return (
     <div className="space-y-5">
@@ -260,16 +236,16 @@ function Step4({
         <Textarea
           placeholder="How do you differ from those competitors?"
           value={(data.differentiation as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('differentiation', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('differentiation', e.target.value)}
           rows={3}
         />
       </div>
       <div className="space-y-1.5">
         <Label>Unique strengths</Label>
         <Textarea
-          placeholder="What can only you claim? Speed, price, niche expertise, integrations…"
+          placeholder="What can only you claim?"
           value={(data.uniqueStrengths as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('uniqueStrengths', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('uniqueStrengths', e.target.value)}
           rows={3}
         />
       </div>
@@ -278,16 +254,16 @@ function Step4({
         <Textarea
           placeholder="What do you deliberately not do or not be best at?"
           value={(data.tradeOffs as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('tradeOffs', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('tradeOffs', e.target.value)}
           rows={2}
         />
       </div>
       <div className="space-y-1.5">
         <Label>Proof</Label>
         <Textarea
-          placeholder="Claims you can back up — customer count, years in business, certifications, etc."
+          placeholder="Claims you can back up — customer count, years in business, certifications"
           value={(data.proof as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('proof', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('proof', e.target.value)}
           rows={2}
         />
       </div>
@@ -295,13 +271,7 @@ function Step4({
   );
 }
 
-function Step5({
-  data,
-  onChange,
-}: {
-  data: Record<string, unknown>;
-  onChange: (d: Record<string, unknown>) => void;
-}) {
+function Step5({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
   const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
   return (
     <div className="space-y-5">
@@ -310,7 +280,7 @@ function Step5({
         <Textarea
           placeholder="Named client results, before/after metrics, success stories"
           value={(data.caseStudies as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('caseStudies', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('caseStudies', e.target.value)}
           rows={3}
         />
       </div>
@@ -319,7 +289,7 @@ function Step5({
         <Textarea
           placeholder="Reddit threads, forum posts, Google reviews, news mentions about you"
           value={(data.organicDiscussions as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('organicDiscussions', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('organicDiscussions', e.target.value)}
           rows={3}
         />
       </div>
@@ -328,7 +298,7 @@ function Step5({
         <Textarea
           placeholder="Active platforms, follower counts, engagement level"
           value={(data.socialMediaPresence as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set('socialMediaPresence', e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('socialMediaPresence', e.target.value)}
           rows={3}
         />
       </div>
@@ -339,12 +309,43 @@ function Step5({
 // ── Step titles ────────────────────────────────────────────────────────────
 
 const STEP_META = {
-  1: { title: 'Company details',            subtitle: 'Confirm your company basics and target regions or languages' },
-  2: { title: 'Product & pricing',          subtitle: 'Capture what you sell, how it works, and how it\'s priced' },
-  3: { title: 'Target customers',           subtitle: 'Describe your audience and the queries they care about' },
+  1: { title: 'Company details',               subtitle: 'Confirm your company basics and target regions or languages' },
+  2: { title: 'Product & pricing',             subtitle: "Capture what you sell, how it works, and how it's priced" },
+  3: { title: 'Target customers',              subtitle: 'Describe your audience and the queries they care about' },
   4: { title: 'Competitors & differentiation', subtitle: 'Share your competitive landscape and how you win' },
-  5: { title: 'Social proof & trust',       subtitle: 'Add proof points and public signals that build credibility' },
+  5: { title: 'Social proof & trust',          subtitle: 'Add proof points and public signals that build credibility' },
 } as const;
+
+// ── Loading screen ─────────────────────────────────────────────────────────
+
+function AnalysingScreen() {
+  const messages = [
+    'Crawling your website…',
+    'Reading your pages…',
+    'Building your business profile…',
+    'Almost ready…',
+  ];
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setMsgIndex(i => (i + 1) % messages.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-5">
+      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="text-center space-y-1">
+        <p className="text-sm font-medium">{messages[msgIndex]}</p>
+        <p className="text-xs text-muted-foreground">
+          We&apos;re analysing your site. Takes 1–2 minutes.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 // ── Main page ──────────────────────────────────────────────────────────────
 
@@ -353,50 +354,52 @@ export default function OnboardingPage() {
   const router    = useRouter();
   const projectId = params.projectId as string;
 
+  // Poll pipeline status until BUSINESS_PROFILE is complete
+  const { data: pipelineStatus } = useQuery({
+    queryKey:        ['pipeline', projectId],
+    queryFn:         () => pipelineApi.status(projectId),
+    enabled:         !!projectId,
+    refetchInterval: (query) => {
+      const bp = query.state.data?.steps?.find((s: { step: string }) => s.step === 'BUSINESS_PROFILE');
+      return bp?.status === 'COMPLETED' ? false : 3_000;
+    },
+  });
+
+  const bpDone = pipelineStatus?.steps?.find(
+    (s: { step: string; status: string }) => s.step === 'BUSINESS_PROFILE'
+  )?.status === 'COMPLETED';
+
   const { data: businessContextData, isLoading: isLoadingContext } = useBusinessContext(projectId);
-  const saveStep    = useSaveOnboardingStep(projectId);
+  const saveStep      = useSaveOnboardingStep(projectId);
   const startPipeline = useStartPipeline(projectId);
 
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [stepData, setStepData] = useState<Record<number, Record<string, unknown>>>({
     1: {}, 2: {}, 3: {}, 4: {}, 5: {},
   });
+  const [prefilled, setPrefilled] = useState(false);
 
-  // Pre-fill from existing BusinessContext (edit mode)
+  // Pre-fill from BusinessContext once BP is done
   useEffect(() => {
-    if (!businessContextData) return;
+    if (!businessContextData || prefilled) return;
     const bc = businessContextData;
     setStepData({
-      1: (bc.company   as Record<string, unknown>) ?? {},
-      2: (bc.product   as Record<string, unknown>) ?? {},
-      3: (bc.customers as Record<string, unknown>) ?? {},
+      1: (bc.company     as Record<string, unknown>) ?? {},
+      2: (bc.product     as Record<string, unknown>) ?? {},
+      3: (bc.customers   as Record<string, unknown>) ?? {},
       4: (bc.competition as Record<string, unknown>) ?? {},
       5: (bc.socialProof as Record<string, unknown>) ?? {},
     });
-    // Jump to first incomplete step
-    const completed = bc.completedSteps ?? [];
-    const firstIncomplete = ([1, 2, 3, 4, 5] as const).find(s => !completed.includes(s));
-    if (firstIncomplete) setCurrentStep(firstIncomplete);
-  }, [businessContextData]);
+    setPrefilled(true);
+  }, [businessContextData, prefilled]);
 
   const handleContinue = async () => {
-    await saveStep.mutateAsync({
-      step: currentStep,
-      data: stepData[currentStep],
-    });
-
-    if (currentStep < 5) {
-      setCurrentStep((currentStep + 1) as 1 | 2 | 3 | 4 | 5);
-    }
+    await saveStep.mutateAsync({ step: currentStep, data: stepData[currentStep] });
+    if (currentStep < 5) setCurrentStep((currentStep + 1) as 1 | 2 | 3 | 4 | 5);
   };
 
   const handleComplete = async () => {
-    // Save step 5 first
-    await saveStep.mutateAsync({
-      step: 5,
-      data: stepData[5],
-    });
-    // Then start pipeline
+    await saveStep.mutateAsync({ step: 5, data: stepData[5] });
     await startPipeline.mutateAsync();
     router.push(`/projects/${projectId}/overview`);
   };
@@ -405,55 +408,45 @@ export default function OnboardingPage() {
     if (currentStep > 1) setCurrentStep((currentStep - 1) as 1 | 2 | 3 | 4 | 5);
   };
 
-  const meta      = STEP_META[currentStep];
-  const isSaving  = saveStep.isPending;
-  const isLast    = currentStep === 5;
-  const error     = saveStep.error ?? startPipeline.error;
+  const meta     = STEP_META[currentStep];
+  const isSaving = saveStep.isPending;
+  const isLast   = currentStep === 5;
+  const error    = saveStep.error ?? startPipeline.error;
 
-  if (isLoadingContext) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
+  // Show loading until BUSINESS_PROFILE completes
+  if (!bpDone || isLoadingContext) {
+    return <AnalysingScreen />;
   }
 
   return (
     <div className="min-h-screen bg-background">
+
       {/* Step progress bar */}
       <div className="border-b border-border">
         <div className="max-w-2xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-0">
+          <div className="flex items-center">
             {STEPS.map((step, i) => {
               const isActive    = step.number === currentStep;
               const isCompleted = step.number < currentStep;
               return (
-                <div key={step.number} className="flex items-center gap-0">
+                <div key={step.number} className="flex items-center">
                   <div className="flex items-center gap-2">
-                    <div
-                      className={cn(
-                        'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors',
-                        isActive    && 'bg-foreground text-background',
-                        isCompleted && 'bg-foreground text-background',
-                        !isActive && !isCompleted && 'border border-border text-muted-foreground',
-                      )}
-                    >
+                    <div className={cn(
+                      'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors',
+                      (isActive || isCompleted) ? 'bg-foreground text-background' : 'border border-border text-muted-foreground',
+                    )}>
                       {step.number}
                     </div>
-                    <span
-                      className={cn(
-                        'text-sm transition-colors',
-                        isActive    && 'text-foreground font-medium',
-                        isCompleted && 'text-foreground',
-                        !isActive && !isCompleted && 'text-muted-foreground',
-                      )}
-                    >
+                    <span className={cn(
+                      'text-sm transition-colors',
+                      isActive    && 'text-foreground font-medium',
+                      isCompleted && 'text-foreground',
+                      !isActive && !isCompleted && 'text-muted-foreground',
+                    )}>
                       {step.label}
                     </span>
                   </div>
-                  {i < STEPS.length - 1 && (
-                    <div className="w-8 h-px bg-border mx-3" />
-                  )}
+                  {i < STEPS.length - 1 && <div className="w-8 h-px bg-border mx-3" />}
                 </div>
               );
             })}
@@ -461,9 +454,16 @@ export default function OnboardingPage() {
         </div>
       </div>
 
+      {/* AI pre-fill notice */}
+      <div className="max-w-2xl mx-auto px-6 pt-6">
+        <div className="text-xs text-muted-foreground bg-accent/50 border border-border rounded-md px-3 py-2">
+          ✦ Fields pre-filled by AI from your website. Review and edit anything that needs updating.
+        </div>
+      </div>
+
       {/* Form area */}
-      <div className="max-w-2xl mx-auto px-6 py-10">
-        <div className="mb-8 text-center">
+      <div className="max-w-2xl mx-auto px-6 py-6">
+        <div className="mb-6 text-center">
           <h1 className="text-xl font-semibold">{meta.title}</h1>
           <p className="text-sm text-muted-foreground mt-1">{meta.subtitle}</p>
         </div>
@@ -478,71 +478,28 @@ export default function OnboardingPage() {
             </Alert>
           )}
 
-          {currentStep === 1 && (
-            <Step1
-              data={stepData[1]}
-              onChange={d => setStepData(prev => ({ ...prev, 1: d }))}
-            />
-          )}
-          {currentStep === 2 && (
-            <Step2
-              data={stepData[2]}
-              onChange={d => setStepData(prev => ({ ...prev, 2: d }))}
-            />
-          )}
-          {currentStep === 3 && (
-            <Step3
-              data={stepData[3]}
-              onChange={d => setStepData(prev => ({ ...prev, 3: d }))}
-            />
-          )}
-          {currentStep === 4 && (
-            <Step4
-              data={stepData[4]}
-              onChange={d => setStepData(prev => ({ ...prev, 4: d }))}
-            />
-          )}
-          {currentStep === 5 && (
-            <Step5
-              data={stepData[5]}
-              onChange={d => setStepData(prev => ({ ...prev, 5: d }))}
-            />
-          )}
+          {currentStep === 1 && <Step1 data={stepData[1]} onChange={d => setStepData(p => ({ ...p, 1: d }))} />}
+          {currentStep === 2 && <Step2 data={stepData[2]} onChange={d => setStepData(p => ({ ...p, 2: d }))} />}
+          {currentStep === 3 && <Step3 data={stepData[3]} onChange={d => setStepData(p => ({ ...p, 3: d }))} />}
+          {currentStep === 4 && <Step4 data={stepData[4]} onChange={d => setStepData(p => ({ ...p, 4: d }))} />}
+          {currentStep === 5 && <Step5 data={stepData[5]} onChange={d => setStepData(p => ({ ...p, 5: d }))} />}
 
-          {/* Nav buttons */}
           <div className="flex items-center justify-between pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleBack}
-              disabled={currentStep === 1 || isSaving}
-            >
+            <Button type="button" variant="outline" onClick={handleBack} disabled={currentStep === 1 || isSaving}>
               Back
             </Button>
 
             {isLast ? (
-              <Button
-                type="button"
-                onClick={handleComplete}
-                disabled={isSaving || startPipeline.isPending}
-              >
-                {(isSaving || startPipeline.isPending) ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Starting…</>
-                ) : (
-                  'Complete & start pipeline'
-                )}
+              <Button type="button" onClick={handleComplete} disabled={isSaving || startPipeline.isPending}>
+                {(isSaving || startPipeline.isPending)
+                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Starting…</>
+                  : 'Looks good — start pipeline'}
               </Button>
             ) : (
-              <Button
-                type="button"
-                onClick={handleContinue}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
-                ) : (
-                  'Continue'
-                )}
+              <Button type="button" onClick={handleContinue} disabled={isSaving}>
+                {isSaving
+                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
+                  : 'Continue'}
               </Button>
             )}
           </div>

@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
 import { Project, OrganizationMember, BusinessContext } from '../models';
-import { QUEUE_NAMES } from '../constants/seo-pipeline.constants';
+import { QUEUE_NAMES, JOB_RETRY_CONFIG, JOB_PRIORITY, PIPELINE_STEP } from '../constants/seo-pipeline.constants';
 import { getConnectionOptions } from '../loaders/redis';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../utils/errors';
 import { logger } from '../open-tele';
@@ -9,45 +9,8 @@ const seoPipelineQueue = new Queue(QUEUE_NAMES.SEO_PIPELINE, {
   connection: getConnectionOptions(),
 });
 
-// ── Step data shapes (mirror BusinessContext model exactly) ────────────────
+// ── Step data shapes ───────────────────────────────────────────────────────
 
-interface StepData {
-  1: {
-    name?: string;
-    website?: string;
-    description?: string;
-    targetRegions?: string[];
-    primaryLanguage?: string;
-    howDidYouHearAboutUs?: string;
-  };
-  2: {
-    whatItSells?: string;
-    keyFeatures?: string;
-    pricingTiers?: string;
-    freeTrialAvailable?: boolean;
-    lifetimeValuePerClient?: string;
-  };
-  3: {
-    segments?: string[];
-    painPoints?: string;
-    keywordsTheyUse?: string;
-    topUseCases?: string;
-  };
-  4: {
-    mainCompetitors?: string[];
-    differentiation?: string;
-    uniqueStrengths?: string;
-    tradeOffs?: string;
-    proof?: string;
-  };
-  5: {
-    caseStudies?: string;
-    organicDiscussions?: string;
-    socialMediaPresence?: string;
-  };
-}
-
-// Map step number → BusinessContext field name
 const STEP_FIELD_MAP: Record<number, string> = {
   1: 'company',
   2: 'product',
@@ -77,17 +40,44 @@ export const projectService = {
     });
     if (existing) throw new ConflictError('Domain');
 
-    // Create project — pipeline does NOT start here.
-    // Pipeline starts only after onboarding wizard is complete.
     const project = await Project.create({
       domain,
       organizationId: membership.organizationId,
       ownerId:        userId,
     });
 
-    logger.info('Project created (pipeline not started yet)', {
+    // Start pipeline immediately — SITE_CRAWL + BUSINESS_PROFILE will run.
+    // Pipeline pauses automatically after BUSINESS_PROFILE (see seo-pipeline.worker.ts).
+    // User fills onboarding wizard, then calls resumeAfterOnboarding to continue.
+    const job = await seoPipelineQueue.add(
+      PIPELINE_STEP.SITE_CRAWL,
+      {
+        projectId:                 project._id.toString(),
+        step:                      PIPELINE_STEP.SITE_CRAWL,
+        domain,
+        keywordPrimaryCountryCode: input.keywordPrimaryCountryCode ?? 'usa',
+      },
+      {
+        attempts: JOB_RETRY_CONFIG.SITE_CRAWL.attempts,
+        backoff:  { type: 'exponential', delay: JOB_RETRY_CONFIG.SITE_CRAWL.backoffDelay },
+        jobId:    `site-crawl-${project._id.toString()}`,
+        priority: JOB_PRIORITY.SITE_CRAWL,
+      },
+    );
+
+    await Project.findByIdAndUpdate(project._id, {
+      'pipeline.jobId':                      job.id,
+      'pipeline.status':                     'RUNNING',
+      'pipeline.startedAt':                  new Date(),
+      'pipeline.currentStep':                PIPELINE_STEP.SITE_CRAWL,
+      'pipeline.steps.SITE_CRAWL.status':    'RUNNING',
+      'pipeline.steps.SITE_CRAWL.startedAt': new Date(),
+    });
+
+    logger.info('Project created + SITE_CRAWL enqueued', {
       projectId: project._id.toString(),
       domain,
+      jobId:     String(job.id),
     });
 
     return { project };
@@ -122,14 +112,13 @@ export const projectService = {
   /**
    * Save a single onboarding wizard step.
    * Step 1 → company, Step 2 → product, etc.
-   * Marks step complete in completedSteps[].
-   * On step 5: also sets project.isOnboardingComplete = true.
+   * On step 5: sets project.isOnboardingComplete = true.
    */
   async saveOnboardingStep(
     userId:    string,
     projectId: string,
     step:      1 | 2 | 3 | 4 | 5,
-    data:      StepData[typeof step],
+    data:      Record<string, unknown>,
   ) {
     logger.debug('projectService.saveOnboardingStep', { userId, projectId, step });
 
@@ -141,8 +130,8 @@ export const projectService = {
     await BusinessContext.findOneAndUpdate(
       { projectId: project._id },
       {
-        [field]:       data,
-        $addToSet:     { completedSteps: step },
+        [field]:   data,
+        $addToSet: { completedSteps: step },
       },
       { upsert: true, new: true },
     );
@@ -156,60 +145,57 @@ export const projectService = {
 
     logger.info('Onboarding step saved', { projectId, step });
 
-    const updatedProject = await Project.findById(project._id).lean();
-    const businessContext = await BusinessContext.findOne({ projectId: project._id }).lean();
+    const updatedProject     = await Project.findById(project._id).lean();
+    const businessContext    = await BusinessContext.findOne({ projectId: project._id }).lean();
 
     return { project: updatedProject, businessContext };
   },
 
   /**
-   * Start the pipeline after onboarding is complete.
-   * Called by the "Start pipeline" button at end of wizard.
-   * Guards: onboarding must be complete, pipeline must not already be running.
+   * Resume pipeline from TECHNICAL_AUDIT after user completes onboarding wizard.
+   * Guards: onboarding must be complete, BUSINESS_PROFILE must be done.
    */
-  async startPipeline(
-    userId:    string,
-    projectId: string,
-    input: { keywordPrimaryCountryCode?: string } = {},
-  ) {
-    logger.debug('projectService.startPipeline', { userId, projectId });
+  async resumeAfterOnboarding(userId: string, projectId: string) {
+    logger.debug('projectService.resumeAfterOnboarding', { userId, projectId });
 
     const project = await projectService.getProject(userId, projectId);
 
     if (!project.isOnboardingComplete) {
-      throw new ValidationError('Complete the onboarding wizard before starting the pipeline.');
+      throw new ValidationError('Complete the onboarding wizard before continuing.');
     }
 
-    if (project.pipeline.status === 'RUNNING') {
-      throw new ValidationError('Pipeline is already running.');
+    const bpStatus = project.pipeline.steps[PIPELINE_STEP.BUSINESS_PROFILE]?.status;
+    if (bpStatus !== 'COMPLETED') {
+      throw new ValidationError('Business profile is still being generated. Please wait.');
     }
+
+    const taStatus = project.pipeline.steps[PIPELINE_STEP.TECHNICAL_AUDIT]?.status;
+    if (taStatus === 'RUNNING' || taStatus === 'COMPLETED') {
+      throw new ValidationError('Pipeline is already running or completed past this point.');
+    }
+
+    const retryConfig = JOB_RETRY_CONFIG[PIPELINE_STEP.TECHNICAL_AUDIT];
+    const priority    = JOB_PRIORITY[PIPELINE_STEP.TECHNICAL_AUDIT as keyof typeof JOB_PRIORITY] ?? 3;
 
     const job = await seoPipelineQueue.add(
-      'SITE_CRAWL',
+      PIPELINE_STEP.TECHNICAL_AUDIT,
+      { projectId: project._id.toString(), step: PIPELINE_STEP.TECHNICAL_AUDIT },
       {
-        projectId:                 project._id.toString(),
-        domain:                    project.domain,
-        keywordPrimaryCountryCode: input.keywordPrimaryCountryCode ?? 'usa',
-      },
-      {
-        attempts: 3,
-        backoff:  { type: 'exponential', delay: 5000 },
-        jobId:    `site-crawl-${project._id.toString()}`,
+        priority,
+        attempts: retryConfig.attempts,
+        backoff:  { type: 'exponential', delay: retryConfig.backoffDelay },
       },
     );
 
     await Project.findByIdAndUpdate(project._id, {
-      'pipeline.jobId':                      job.id,
-      'pipeline.status':                     'RUNNING',
-      'pipeline.startedAt':                  new Date(),
-      'pipeline.currentStep':                'SITE_CRAWL',
-      'pipeline.steps.SITE_CRAWL.status':    'RUNNING',
-      'pipeline.steps.SITE_CRAWL.startedAt': new Date(),
+      'pipeline.status':                            'RUNNING',
+      'pipeline.currentStep':                       PIPELINE_STEP.TECHNICAL_AUDIT,
+      'pipeline.steps.TECHNICAL_AUDIT.status':      'RUNNING',
+      'pipeline.steps.TECHNICAL_AUDIT.startedAt':   new Date(),
     });
 
-    logger.info('Pipeline started', {
+    logger.info('Pipeline resumed from TECHNICAL_AUDIT after onboarding', {
       projectId: project._id.toString(),
-      domain:    project.domain,
       jobId:     String(job.id),
     });
 
@@ -230,7 +216,7 @@ export const projectService = {
     return businessContext ?? null;
   },
 
-  // Legacy — kept so existing code doesn't break. New wizard uses saveOnboardingStep.
+  // Legacy — kept for backward compat
   async updateBusiness(userId: string, projectId: string, input: {
     domainDescription:    string;
     oldDomainDescription: string;
@@ -249,8 +235,11 @@ export const projectService = {
       { upsert: true, new: true },
     );
 
-    logger.info('Business context updated (legacy)', { projectId });
-
     return project;
+  },
+
+  // Legacy — kept so route doesn't break
+  async startPipeline(userId: string, projectId: string) {
+    return projectService.resumeAfterOnboarding(userId, projectId);
   },
 };

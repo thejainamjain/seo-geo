@@ -92,15 +92,15 @@ const REGION_TO_COUNTRY: Array<{ pattern: RegExp; code: string }> = [
  *   4. Cap at MAX_KEYWORD_LEN chars
  *   5. Return null if nothing useful found
  */
-function extractFirstKeyword(raw: string | undefined): string | null {
-  if (!raw || raw.trim().length === 0) return null;
+function extractFirstKeyword(raw: string | string[] | undefined): string | null {
+  if (!raw) return null;
+  // Normalize array — LLM returns arrays despite string instructions
+  const str = Array.isArray(raw) ? (raw[0] ?? '') : raw;
+  if (typeof str !== 'string' || str.trim().length === 0) return null;
 
-  const candidates = raw
+  const candidates = str
     .split(/[\n,]+/)
-    .map(s => s
-      .replace(/^[-•*\d.)\s]+/, '') // strip bullets, dashes, numbered lists
-      .trim()
-    )
+    .map(s => s.replace(/^[-•*\d.)\s]+/, '').trim())
     .filter(s => s.length > 3 && s.length <= MAX_KEYWORD_LEN);
 
   return candidates[0] ?? null;

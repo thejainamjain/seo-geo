@@ -34,6 +34,30 @@ import { generateCustomerProfile } from '@/lib/llm';
 import type { PipelineJobData }    from '../seo-pipeline.worker';
 import type { CustomerProfileLlmResponse } from '@/lib/llm';
 
+/**
+ * Normalizes any LLM output to a plain string.
+ * LLMs ignore "string" type hints when descriptions imply lists or objects.
+ * Arrays of strings → newline-joined.
+ * Arrays of objects → each object JSON.stringified, newline-joined.
+ * Objects → JSON.stringified.
+ * Primitives → String().
+ */
+function normalizeToString(val: unknown): string | undefined {
+  if (val === null || val === undefined) return undefined;
+  if (typeof val === 'string') return val.trim() || undefined;
+  if (typeof val === 'boolean') return String(val);
+  if (typeof val === 'number') return String(val);
+  if (Array.isArray(val)) {
+    const joined = val
+      .map(v => (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)))
+      .filter(Boolean)
+      .join('\n');
+    return joined || undefined;
+  }
+  if (typeof val === 'object') return JSON.stringify(val);
+  return String(val);
+}
+
 // ── LLM response → BusinessContext field mapper ────────────────────────────
 
 /**
@@ -108,19 +132,20 @@ function mapLlmResponseToBusinessContext(
       targetRegions,
       description:     llm.ProductOrService?.WhatTheBusinessSells,
     },
-    product: {
-      whatItSells:          llm.ProductOrService?.WhatTheBusinessSells,
-      keyFeatures:          llm.ProductOrService?.KeyFeaturesAndBenefits,
-      pricingTiers:         llm.ProductOrService?.ProductTiersAndInclusions,
-      freeTrialAvailable:   llm.ProductOrService?.FreeTrialOrDemoAvailability
-                              ?.toLowerCase().includes('yes') ?? false,
-      lifetimeValuePerClient: llm.ProductOrService?.TotalLifetimeValuePerClient,
-    },
     customers: {
       segments,
-      painPoints:   llm.TargetCustomers?.CustomerPainPoints,
-      keywordsTheyUse: llm.TargetCustomers?.KeywordsTheyTalkAbout,
-      topUseCases:  llm.TargetCustomers?.TopUseCasesYouWantToRankFor,
+      painPoints:      normalizeToString(llm.TargetCustomers?.CustomerPainPoints),
+      keywordsTheyUse: normalizeToString(llm.TargetCustomers?.KeywordsTheyTalkAbout),
+      topUseCases:     normalizeToString(llm.TargetCustomers?.TopUseCasesYouWantToRankFor),
+    },
+    product: {
+      whatItSells:            normalizeToString(llm.ProductOrService?.WhatTheBusinessSells),
+      keyFeatures:            normalizeToString(llm.ProductOrService?.KeyFeaturesAndBenefits),
+      pricingTiers:           normalizeToString(llm.ProductOrService?.ProductTiersAndInclusions),
+      freeTrialAvailable:     typeof llm.ProductOrService?.FreeTrialOrDemoAvailability === 'string'
+                                ? llm.ProductOrService.FreeTrialOrDemoAvailability.toLowerCase().includes('yes')
+                                : false,
+      lifetimeValuePerClient: normalizeToString(llm.ProductOrService?.TotalLifetimeValuePerClient),
     },
     competition: {
       mainCompetitors:  competitorList,

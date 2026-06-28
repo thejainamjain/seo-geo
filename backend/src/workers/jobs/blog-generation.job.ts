@@ -1,4 +1,3 @@
-import { knowledgeHandler } from './../../handlers/knowledge.handler';
 /**
  * workers/jobs/blog-generation.job.ts  (v2 — full implementation)
  *
@@ -72,6 +71,7 @@ import { BusinessContext } from '@/models/BusinessContext';
 import { generateBlogPost } from '@/lib/llm';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
 import type { BlogJobData } from '../seo-pipeline.worker';
+import { formatBusinessContext } from '@/lib/business-context-formatter';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -105,39 +105,6 @@ function keywordToSlug(keyword: string, suffix?: number): string {
     .replace(/-+/g, '-')
     .slice(0, 80);
   return suffix !== undefined ? `${base}-${suffix}` : base;
-}
-
-// ── Business context formatter ─────────────────────────────────────────────
-
-/**
- * Formats BusinessContext into a compact string for the blog prompt.
- * Keeps it under ~2000 chars — enough for LLM context without overwhelming it.
- *
- * Uses the same fields generateBlogPost() prompt expects in customerProfile param.
- */
-function formatBusinessContext(bc: {
-  company?:     { name?: string; description?: string; targetRegions?: string[] };
-  product?:     { whatItSells?: string; keyFeatures?: string; pricingTiers?: string };
-  customers?:   { segments?: string[]; painPoints?: string; topUseCases?: string };
-  competition?: { differentiation?: string; uniqueStrengths?: string };
-  socialProof?: { caseStudies?: string };
-}): string {
-  const lines: string[] = [];
-
-  if (bc.company?.name)           lines.push(`Company: ${bc.company.name}`);
-  if (bc.company?.description)    lines.push(`About: ${bc.company.description}`);
-  if (bc.company?.targetRegions)  lines.push(`Markets: ${bc.company.targetRegions.join(', ')}`);
-  if (bc.product?.whatItSells)    lines.push(`Product: ${bc.product.whatItSells}`);
-  if (bc.product?.keyFeatures)    lines.push(`Features: ${bc.product.keyFeatures}`);
-  if (bc.product?.pricingTiers)   lines.push(`Pricing: ${bc.product.pricingTiers}`);
-  if (bc.customers?.segments)     lines.push(`Customer segments: ${bc.customers.segments.join(', ')}`);
-  if (bc.customers?.painPoints)   lines.push(`Pain points: ${bc.customers.painPoints}`);
-  if (bc.customers?.topUseCases)  lines.push(`Top use cases: ${bc.customers.topUseCases}`);
-  if (bc.competition?.differentiation) lines.push(`Differentiation: ${bc.competition.differentiation}`);
-  if (bc.competition?.uniqueStrengths) lines.push(`Strengths: ${bc.competition.uniqueStrengths}`);
-  if (bc.socialProof?.caseStudies)     lines.push(`Case studies: ${bc.socialProof.caseStudies}`);
-
-  return lines.join('\n').slice(0, 2_000);
 }
 
 // ── SERP brief formatter ───────────────────────────────────────────────────

@@ -98,38 +98,41 @@ Schema:
 
   CUSTOMER_PROFILE_SYSTEM: `You are a senior business strategist. Analyze this website deeply and return a comprehensive customer profile JSON object. Return ONLY valid JSON, no markdown, no explanation.
 
-Schema:
-{
-  "CompanyName": "string",
-  "Website": "string",
-  "TargetRegionsOrLanguages": "string",
-  "ProductOrService": {
-    "WhatTheBusinessSells": "string",
-    "KeyFeaturesAndBenefits": "bullet points: feature + benefit",
-    "ProductTiersAndInclusions": "Plan name, Benefits, Price, Billing",
-    "FreeTrialOrDemoAvailability": "Yes/No and duration",
-    "TotalLifetimeValuePerClient": "string"
-  },
-  "TargetCustomers": {
-    "CustomerSegments": "max 10 segments",
-    "CustomerPainPoints": "max 10 pain points",
-    "KeywordsTheyTalkAbout": "max 10 keywords",
-    "TopUseCasesYouWantToRankFor": "max 10 use cases"
-  },
-  "CompetitorsAndDifferentiation": {
-    "MainCompetitors": "max 10 with links",
-    "Differentiation": "string",
-    "UniqueStrengths": "string",
-    "Proof": "benchmarks, certifications",
-    "TradeOffsYouAccept": "string"
-  },
-  "SocialProofAndTrust": {
-    "CaseStudies": "title, client, problem, solution, results, link",
-    "OrganicDiscussions": "Reddit/forums/review threads",
-    "SocialMediaPresence": "platforms, handles, followers, engagement"
-  },
-  "confirmedAtEnd": null
-}`,
+  CRITICAL: Every single value in the JSON must be a plain string. No arrays. No objects. No nested structures anywhere.
+  Use newlines within strings to separate multiple items (e.g. "item1\nitem2\nitem3").
+  For pricing: write as plain text like "Free plan: basic features. Pro: $29/mo with advanced features."
+
+  Schema:
+  {
+    "CompanyName": "string",
+    "Website": "string",
+    "TargetRegionsOrLanguages": "comma-separated string e.g. India, United States",
+    "ProductOrService": {
+      "WhatTheBusinessSells": "one sentence string",
+      "KeyFeaturesAndBenefits": "newline-separated string e.g. Feature 1: benefit\nFeature 2: benefit",
+      "ProductTiersAndInclusions": "plain text string e.g. Free: basic access. Pro: $29/mo full access.",
+      "FreeTrialOrDemoAvailability": "string e.g. Yes, 14-day free trial",
+      "TotalLifetimeValuePerClient": "string"
+    },
+    "TargetCustomers": {
+      "CustomerSegments": "newline-separated string e.g. Freelancers\nSmall business owners\nEntrepreneurs",
+      "CustomerPainPoints": "newline-separated string e.g. Finding clients\nHigh commission fees",
+      "KeywordsTheyTalkAbout": "newline-separated string e.g. freelancing\ndesign tools\nportfolio",
+      "TopUseCasesYouWantToRankFor": "newline-separated string e.g. freelance platform\ncommission-free work"
+    },
+    "CompetitorsAndDifferentiation": {
+      "MainCompetitors": "newline-separated string of domains e.g. upwork.com\nfiverr.com\ntoptal.com",
+      "Differentiation": "string",
+      "UniqueStrengths": "string",
+      "Proof": "string",
+      "TradeOffsYouAccept": "string"
+    },
+    "SocialProofAndTrust": {
+      "CaseStudies": "string",
+      "OrganicDiscussions": "string",
+      "SocialMediaPresence": "string"
+    }
+  }`,
 
   CUSTOMER_PROFILE_USER: (url: string, crawledContent: string) =>
   `Website URL: ${url}\nCrawled content:\n${crawledContent.slice(0, 12000)}`,

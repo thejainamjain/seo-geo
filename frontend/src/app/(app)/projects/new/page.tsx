@@ -76,7 +76,7 @@ export default function NewProjectPage() {
 
           <CardFooter>
             <Button type="submit" className="w-full" disabled={createProject.isPending}>
-              {createProject.isPending ? 'Starting pipeline…' : 'Start optimization'}
+              {createProject.isPending ? 'Creating project…' : 'Start optimization'}
             </Button>
           </CardFooter>
         </form>

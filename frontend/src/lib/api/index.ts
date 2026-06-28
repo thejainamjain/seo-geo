@@ -12,7 +12,7 @@ import type {
   Audit,
   Keyword,
   GeoRun,
-} from '@/types/api';
+  BusinessContext, SaveOnboardingStepResult, StartPipelineResult } from '@/types/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +34,19 @@ export const projectsApi = {
     apiClient.get<Project>(`/projects/${projectId}`).then(r => r.data),
 
   create: (domain: string) =>
-    apiClient.post<Project>('/projects', { domain }).then(r => r.data),
+    apiClient.post<{ project: Project }>('/projects', { domain }).then(r => r.data.project),
+
+  getBusinessContext: (projectId: string) =>
+    apiClient.get<{ businessContext: BusinessContext | null }>(`/projects/${projectId}/business`)
+      .then(r => r.data.businessContext),
+
+  saveOnboardingStep: (projectId: string, step: 1|2|3|4|5, data: Record<string, unknown>) =>
+    apiClient.post<SaveOnboardingStepResult>(`/projects/${projectId}/onboarding/step`, { step, data })
+      .then(r => r.data),
+
+  startPipeline: (projectId: string) =>
+    apiClient.post<StartPipelineResult>(`/projects/${projectId}/pipeline/start`)
+      .then(r => r.data),
 };
 
 // ── Pipeline ──────────────────────────────────────────────────────────────

@@ -62,6 +62,39 @@ export function useProject(projectId: string) {
   });
 }
 
+export function useBusinessContext(projectId: string) {
+  return useQuery({
+    queryKey: ['businessContext', projectId],
+    queryFn:  () => projectsApi.getBusinessContext(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+export function useSaveOnboardingStep(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ step, data }: { step: 1|2|3|4|5; data: Record<string, unknown> }) =>
+      projectsApi.saveOnboardingStep(projectId, step, data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['businessContext', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
+  });
+}
+
+export function useStartPipeline(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => projectsApi.startPipeline(projectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['pipeline', projectId] });
+    },
+  });
+}
+
 export function useCreateProject() {
   const queryClient = useQueryClient();
   const router      = useRouter();
@@ -70,7 +103,8 @@ export function useCreateProject() {
     mutationFn: (domain: string) => projectsApi.create(domain),
     onSuccess: (project) => {
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
-      router.push(`/projects/${project._id}/overview`);
+      // Redirect to onboarding wizard instead of overview
+      router.push(`/projects/${project._id}/onboarding`);
     },
   });
 }

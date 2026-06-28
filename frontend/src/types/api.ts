@@ -181,3 +181,57 @@ export interface PaginatedResponse<T> {
   page:  number;
   limit: number;
 }
+
+// ── BusinessContext ───────────────────────────────────────────────────────
+// Add this to src/types/api.ts
+
+export interface BusinessContext {
+  _id:        string;
+  projectId:  string;
+  completedSteps: number[];
+  company?: {
+    name?:            string;
+    website?:         string;
+    description?:     string;
+    targetRegions?:   string[];
+    primaryLanguage?: string;
+    howDidYouHearAboutUs?: string;
+  };
+  product?: {
+    whatItSells?:           string;
+    keyFeatures?:           string;
+    pricingTiers?:          string;
+    freeTrialAvailable?:    boolean | string;
+    lifetimeValuePerClient?: string;
+  };
+  customers?: {
+    segments?:       string[];
+    painPoints?:     string;
+    keywordsTheyUse?: string;
+    topUseCases?:    string;
+  };
+  competition?: {
+    mainCompetitors?: string[];
+    differentiation?: string;
+    uniqueStrengths?: string;
+    tradeOffs?:       string;
+    proof?:           string;
+  };
+  socialProof?: {
+    caseStudies?:         string;
+    organicDiscussions?:  string;
+    socialMediaPresence?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveOnboardingStepResult {
+  project:         Project;
+  businessContext: BusinessContext;
+}
+
+export interface StartPipelineResult {
+  projectId: string;
+  jobId:     string | undefined;
+}

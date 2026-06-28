@@ -1,6 +1,7 @@
 import { initOtel, logger } from './open-tele';
 initOtel();
 import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
 import { connectDB } from './loaders/db';
 import { getRedis, closeRedis } from './loaders/redis';
 import { errorHandler } from './middleware/error';
@@ -10,6 +11,10 @@ import mongoose from 'mongoose';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+app.use(cors({
+  origin: ['http://localhost:3001', 'http://localhost:3000'],
+  credentials: true,
+}));
 app.use(express.urlencoded({ extended: true }));
 
 app.use((req: Request, _res: Response, next: NextFunction) => {

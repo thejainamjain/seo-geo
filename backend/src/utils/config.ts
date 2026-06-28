@@ -51,6 +51,10 @@ const config = {
     apiKey: () => require_env("GEMINI_API_KEY"),
   },
 
+  groq: {
+    apiKey: () => require_env("GROQ_API_KEY"),
+  },
+
   serpapi: {
     apiKey: () => require_env("SERPAPI_KEY"),
   },

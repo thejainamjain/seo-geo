@@ -28,16 +28,19 @@ import { PROMPTS } from '../constants/llm.constants';
 import { logger } from '../open-tele';
 import config from '@/utils/config';
 import { getRedis } from '../loaders/redis';
+import Groq from 'groq-sdk';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const GEMINI_MODEL = 'gemini-2.0-flash';
+const GROQ_MODEL   = 'llama-3.3-70b-versatile';
 
 // ── Gemini client (lazy singleton) ────────────────────────────────────────
 // Lazy so we don't crash at import time if key is missing —
 // crash happens at first call with a clear error message.
 
 let _genAI: GoogleGenerativeAI | null = null;
+
 
 function getGenAI(): GoogleGenerativeAI {
   if (!_genAI) {
@@ -46,6 +49,17 @@ function getGenAI(): GoogleGenerativeAI {
     _genAI = new GoogleGenerativeAI(apiKey);
   }
   return _genAI;
+}
+
+let _groq: Groq | null = null;
+
+function getGroq(): Groq {
+  if (!_groq) {
+    const apiKey = config.groq.apiKey();
+    if (!apiKey) throw new Error('GROQ_API_KEY is not defined in environment');
+    _groq = new Groq({ apiKey });
+  }
+  return _groq;
 }
 
 // ── Global LLM rate limiter ────────────────────────────────────────────────
@@ -59,36 +73,22 @@ function getGenAI(): GoogleGenerativeAI {
  *
  * Redis commands per Gemini call: 2 (INCR + EXPIRE on first call per minute).
  */
-async function waitForRateLimit(): Promise<void> {
-  const redis  = getRedis();
-  const MAX_RPM = 14;
+async function waitForRateLimit(provider: 'gemini' | 'groq'): Promise<void> {
+  const redis = getRedis();
+  // Gemini free: 14 RPM (buffer from 15). Groq free: 28 RPM (buffer from 30).
+  const MAX_RPM = provider === 'groq' ? 28 : 14;
 
   while (true) {
     const minute = Math.floor(Date.now() / 60_000);
-    const key    = `llm:rpm:${minute}`;
+    const key    = `llm:rpm:${provider}:${minute}`;
 
     const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, 60);
 
-    if (count === 1) {
-      // First call this minute — set expiry
-      await redis.expire(key, 60);
-    }
+    if (count <= MAX_RPM) return;
 
-    if (count <= MAX_RPM) {
-      // Slot available — proceed
-      return;
-    }
-
-    // Over limit — decrement (we didn't actually use this slot) and wait
     await redis.decr(key);
-
-    logger.warn('LLM rate limit reached — waiting for next window', {
-      count,
-      MAX_RPM,
-      key,
-      waitMs: 2_000,
-    });
-
+    logger.warn('LLM rate limit reached — waiting', { provider, count, MAX_RPM, waitMs: 2_000 });
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
 }
@@ -178,7 +178,7 @@ export async function callGemini(
 ): Promise<string> {
   const startedAt = Date.now();
   // Enforce global RPM limit across all workers
-  await waitForRateLimit();
+  await waitForRateLimit('gemini')
   logger.debug('Gemini call started', {
     context,
     model:            GEMINI_MODEL,
@@ -223,24 +223,74 @@ export async function callGemini(
 
   } catch (err) {
     const durationMs = Date.now() - startedAt;
-
-    // Classify error for logging — rate limit vs server error vs other
-    const message = err instanceof Error ? err.message : String(err);
+    const message     = err instanceof Error ? err.message : String(err);
     const isRateLimit   = message.includes('429') || message.toLowerCase().includes('rate limit');
     const isServerError = message.includes('500') || message.includes('503');
 
     logger.error(
       err instanceof Error ? err : new Error(message),
-      {
-        context,
-        model:      GEMINI_MODEL,
-        durationMs,
-        isRateLimit,
-        isServerError,
-      },
+      { context, model: GEMINI_MODEL, durationMs, isRateLimit, isServerError },
     );
 
-    // Rethrow — BullMQ handles retry with exponential backoff
+    // On rate limit → try Groq immediately instead of burning a BullMQ retry
+    if (isRateLimit) {
+      logger.warn('Gemini rate limited — falling back to Groq', { context });
+      return callGroq(systemPrompt, userPrompt, context);
+    }
+
+    throw err;
+  }
+}
+
+async function callGroq(
+  systemPrompt: string,
+  userPrompt:   string,
+  context:      string,
+): Promise<string> {
+  const startedAt = Date.now();
+  await waitForRateLimit('groq');
+
+  logger.debug('Groq call started', {
+    context,
+    model:           GROQ_MODEL,
+    systemPromptLen: systemPrompt.length,
+    userPromptLen:   userPrompt.length,
+  });
+
+  try {
+    const groq = getGroq();
+    const completion = await groq.chat.completions.create({
+      model:    GROQ_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt   },
+      ],
+      temperature: 0.3,
+    });
+
+    const text = completion.choices[0]?.message?.content ?? '';
+
+    if (!text || text.trim().length === 0) {
+      throw new Error(`Groq returned empty response. Context: ${context}`);
+    }
+
+    logger.info('Groq call completed', {
+      context,
+      model:     GROQ_MODEL,
+      durationMs: Date.now() - startedAt,
+      outputLen:  text.length,
+    });
+
+    return text;
+
+  } catch (err) {
+    const message     = err instanceof Error ? err.message : String(err);
+    const isRateLimit = message.includes('429') || message.toLowerCase().includes('rate limit');
+
+    logger.error(
+      err instanceof Error ? err : new Error(message),
+      { context, model: GROQ_MODEL, durationMs: Date.now() - startedAt, isRateLimit },
+    );
     throw err;
   }
 }

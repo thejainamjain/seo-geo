@@ -410,10 +410,7 @@ async function runCheerioCrawler(
         },
       });
 
-      // FIX: Check isJsRendered on rawBodyText (BEFORE nav/header/footer stripped)
-      // Old check ran on stripped textContent — small sites with nav-heavy content
-      // would be falsely flagged as JS-rendered.
-      if (isJsRendered(rawBodyText)) {
+      if (isJsRendered(rawBodyText, $)) {
         jsRenderedUrls.push(normUrl);
         return;
       }

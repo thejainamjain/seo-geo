@@ -720,7 +720,7 @@ export default function SettingsPage({ params }: { params: Promise<{ projectId: 
   if (isLoading) return <div className="p-8"><Skeleton className="h-64 w-full" /></div>;
   if (!project)  return <div className="p-8"><p className="text-sm text-muted-foreground">Project not found.</p></div>;
 
-  const domain = project.domain.replace(/^https?:\/\//, '');
+  const domain = project?.domain?.replace(/^https?:\/\//, '') ?? '';
 
   return (
     <div className="p-8 max-w-3xl">

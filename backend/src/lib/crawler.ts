@@ -572,8 +572,16 @@ export function isBotBlocked(statusCode: number): boolean {
  * If raw body has content but stripped body doesn't, it's a content
  * structure issue — not a JS-rendering issue — so Cheerio result is fine.
  */
-export function isJsRendered(rawBodyText: string): boolean {
-  return rawBodyText.trim().length < MIN_BODY_LENGTH;
+export function isJsRendered(visibleBodyText: string, $?: CheerioAPI): boolean {
+  if (visibleBodyText.trim().length < MIN_BODY_LENGTH) return true;
+  // Secondary: SPA root with very little visible content
+  if ($ && visibleBodyText.trim().length < 500) {
+    const hasSpaRoot = $('body').find(
+      '#root, #app, #__next, #gatsby-focus-wrapper, [data-reactroot]'
+    ).length > 0;
+    if (hasSpaRoot) return true;
+  }
+  return false;
 }
 
 export function countWords(text: string): number {
@@ -644,11 +652,15 @@ export function extractFromCheerio(
   const structuredData = extractStructuredData($);
   const hasSchema = structuredData.length > 0;
 
-  // Capture raw body text BEFORE stripping — used for isJsRendered() check
+  // Strip scripts/styles first to get true visible text for JS-render detection.
+  // $('body').text() includes <script> content — a React bundle easily adds
+  // 900+ chars making the page look content-rich when the body is actually empty.
+  $('script, style, noscript, iframe').remove();
   const rawBodyText = $('body').text().replace(/\s+/g, ' ').trim();
 
-  // Strip noise elements before extracting LLM-bound textContent
-  $('script, style, nav, footer, header, noscript, iframe').remove();
+  // Now also strip nav/header/footer for the LLM-bound textContent
+  $('nav, footer, header').remove();
+
   const textContent = $('body').text()
     .replace(/\s+/g, ' ')
     .trim()
@@ -772,7 +784,7 @@ export async function crawlSinglePage(
   const depth = getUrlDepth(finalUrl);
   const hasRedirectChain = chain.length > 0;
 
-  if (isJsRendered(rawBodyText)) {
+  if (isJsRendered(rawBodyText, $)) {
     logger.debug('Single page crawl — JS-rendered, returning Cheerio partial', { url });
   }
 

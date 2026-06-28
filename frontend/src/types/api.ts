@@ -135,7 +135,7 @@ export interface Audit {
 
 // ── Keyword ───────────────────────────────────────────────────────────────
 
-export type KeywordStatus = 'upcoming' | 'draft' | 'published';
+export type KeywordStatus = 'upcoming' | 'generating' | 'draft' | 'ready' | 'published';
 
 export interface Keyword {
   _id:            string;

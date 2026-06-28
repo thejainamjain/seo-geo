@@ -106,6 +106,11 @@ export const auditApi = {
 export const keywordsApi = {
   list: (projectId: string) =>
     apiClient.get<{ keywords: Keyword[] }>(`/projects/${projectId}/keywords`).then(r => r.data.keywords),
+
+  generate: (projectId: string, keywordId: string) =>
+  apiClient.post<{ status: string; keywordId: string }>(
+    `/projects/${projectId}/keywords/${keywordId}/generate`
+  ).then(r => r.data),
 };
 
 // ── GEO ───────────────────────────────────────────────────────────────────

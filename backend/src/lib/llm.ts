@@ -27,6 +27,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PROMPTS } from '../constants/llm.constants';
 import { logger } from '../open-tele';
 import config from '@/utils/config';
+import { getRedis } from '../loaders/redis';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -45,6 +46,51 @@ function getGenAI(): GoogleGenerativeAI {
     _genAI = new GoogleGenerativeAI(apiKey);
   }
   return _genAI;
+}
+
+// ── Global LLM rate limiter ────────────────────────────────────────────────
+/**
+ * Enforces a global 14 RPM ceiling across ALL worker processes.
+ * Uses a Redis sliding window counter keyed by current minute.
+ * Blocks (polls every 2s) until a slot is available.
+ *
+ * Key: llm:rpm:{minute} — auto-expires after 60s, no cleanup needed.
+ * Limit: 14 (not 15) — 1 call buffer for safety.
+ *
+ * Redis commands per Gemini call: 2 (INCR + EXPIRE on first call per minute).
+ */
+async function waitForRateLimit(): Promise<void> {
+  const redis  = getRedis();
+  const MAX_RPM = 14;
+
+  while (true) {
+    const minute = Math.floor(Date.now() / 60_000);
+    const key    = `llm:rpm:${minute}`;
+
+    const count = await redis.incr(key);
+
+    if (count === 1) {
+      // First call this minute — set expiry
+      await redis.expire(key, 60);
+    }
+
+    if (count <= MAX_RPM) {
+      // Slot available — proceed
+      return;
+    }
+
+    // Over limit — decrement (we didn't actually use this slot) and wait
+    await redis.decr(key);
+
+    logger.warn('LLM rate limit reached — waiting for next window', {
+      count,
+      MAX_RPM,
+      key,
+      waitMs: 2_000,
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+  }
 }
 
 // ── JSON extraction ────────────────────────────────────────────────────────
@@ -131,7 +177,8 @@ export async function callGemini(
   context:      string, // for logging — e.g. "business-profile:projectId"
 ): Promise<string> {
   const startedAt = Date.now();
-
+  // Enforce global RPM limit across all workers
+  await waitForRateLimit();
   logger.debug('Gemini call started', {
     context,
     model:            GEMINI_MODEL,

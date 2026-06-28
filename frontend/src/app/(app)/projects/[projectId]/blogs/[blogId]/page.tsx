@@ -121,7 +121,7 @@ export default function BlogDetailPage({
         <TabsList className="mb-6">
           <TabsTrigger value="content">Content</TabsTrigger>
           <TabsTrigger value="history">
-            History ({blog.history.length})
+            History ({(blog.history ?? []).length})
           </TabsTrigger>
         </TabsList>
 
@@ -147,10 +147,10 @@ export default function BlogDetailPage({
         {/* History tab */}
         <TabsContent value="history">
           <div className="space-y-4">
-            {blog.history.length === 0 && (
+            {(blog.history ?? []).length === 0 && (
               <p className="text-sm text-muted-foreground">No history entries yet.</p>
             )}
-            {[...blog.history].reverse().map((entry, idx) => (
+            {[...(blog.history ?? [])].reverse().map((entry, idx) => (
               <div key={entry._id} className="border border-border rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">

@@ -193,6 +193,17 @@ export function useKeywords(projectId: string) {
   });
 }
 
+export function useGenerateContent(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (keywordId: string) => keywordsApi.generate(projectId, keywordId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['keywords', projectId] });
+    },
+  });
+}
+
 // ── GEO ───────────────────────────────────────────────────────────────────
 
 export function useGeoRuns(projectId: string) {

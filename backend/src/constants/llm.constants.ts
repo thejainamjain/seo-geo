@@ -164,36 +164,6 @@ Schema:
   MARKET_SIZING_USER: (domainDescription: string, country: string) =>
     `Business profile:\n${domainDescription}\n\nPrimary market country: ${country}\n\nGenerate 20 target keywords with realistic search volumes and difficulty scores.`,
 
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // TECHNICAL AUDIT — PAGE AUDIT PROMPT
-  //
-  // ONE call per page. LLM receives:
-  //   - Page URL, title, description, textContent (capped 8000 chars)
-  //   - Exact list of what is missing/broken (derived from pending CodeChanges)
-  //   - Image srcs that need alt text (only the ones missing alt)
-  //
-  // LLM returns ONLY what was requested — nothing more.
-  // Fields not in `needs` are omitted from the response entirely.
-  //
-  // WHY ONE CALL PER PAGE:
-  //   LLM has full page context once → coherent output.
-  //   title/description/OG/schema all reference the same page content.
-  //   Generating them separately would produce inconsistent output.
-  //
-  // OUTPUT SCHEMA (all fields optional — only present if requested):
-  // {
-  //   "title":         "optimized <title> tag content",
-  //   "description":   "optimized meta description content",
-  //   "ogTitle":       "og:title content",
-  //   "ogDescription": "og:description content",
-  //   "altTexts":      { "<img-src>": "descriptive alt text" },
-  //   "schema":        { "@context": "...", "@type": "...", ... },
-  //   "faqQuestions":  [{ "question": "...", "answer": "..." }],
-  //   "tldrText":      "2-3 sentence summary"
-  // }
-  // ─────────────────────────────────────────────────────────────────────────
-
   PAGE_AUDIT_SYSTEM: `You are a technical SEO specialist. You will receive a webpage's content and a list of what needs to be fixed or generated. Return ONLY a valid JSON object with exactly the fields requested. No markdown, no explanation, no extra fields.
 
 Rules:

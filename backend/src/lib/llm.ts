@@ -12,7 +12,7 @@
  *   - Rate limit (429) and server errors (5xx) throw so BullMQ retries
  *   - API key validated at call time — clear error if missing
  *
- * GEMINI MODEL: gemini-1.5-flash
+ * GEMINI MODEL: gemini-2.0-flash
  *   - Free tier: 15 RPM, 1M tokens/day
  *   - Fast enough for pipeline use — not gemini-pro (slower, costs more)
  *
@@ -30,7 +30,7 @@ import config from '@/utils/config';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const GEMINI_MODEL = 'gemini-1.5-flash';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 // ── Gemini client (lazy singleton) ────────────────────────────────────────
 // Lazy so we don't crash at import time if key is missing —

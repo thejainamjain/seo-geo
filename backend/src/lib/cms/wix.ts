@@ -21,17 +21,17 @@ async function wixFetch(
   path:    string,
   method:  string,
   apiKey:  string,
+  siteId:  string,
   body?:   unknown,
   context?: string,
 ): Promise<Record<string, unknown>> {
   const url = `${WIX_API_BASE}${path}`;
-
   const response = await fetch(url, {
     method,
     headers: {
       'Authorization': apiKey,
       'Content-Type':  'application/json',
-      'wix-site-id':   '', // populated per-request if needed
+      'wix-site-id':   siteId,
     },
     body:   body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -64,6 +64,7 @@ export async function publishToWix(
     '/posts',
     'POST',
     creds.apiKey,
+    creds.siteId,
     {
       post: {
         title:               payload.title,
@@ -88,7 +89,7 @@ export async function publishToWix(
   logger.debug('Wix draft created', { context, postId });
 
   // 2. Publish the draft
-  await wixFetch(`/posts/${postId}/publish`, 'POST', creds.apiKey, {}, context);
+  await wixFetch(`/posts/${postId}/publish`, 'POST', creds.apiKey,creds.siteId , {}, context);
 
   const publishedUrl = `https://${payload.domain}/${payload.blogPostPath}/${payload.slug}`;
 

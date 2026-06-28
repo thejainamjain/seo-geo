@@ -154,43 +154,6 @@ function extractCoreKeyword(
   return fromDomain;
 }
 
-// ── Country code derivation ────────────────────────────────────────────────
-
-/**
- * Derives a SerpAPI country code from BusinessContext.company.targetRegions.
- * Falls back to 'us' if no match found.
- *
- * Example: ["Udaipur, Rajasthan, India"] → 'in'
- */
-function deriveCountryCode(
-  targetRegions: string[] | undefined,
-  projectId:     string,
-): string {
-  if (!targetRegions || targetRegions.length === 0) {
-    logger.debug('No target regions — defaulting to us', { projectId });
-    return 'us';
-  }
-
-  const regionText = targetRegions.join(' ');
-
-  for (const { pattern, code } of REGION_TO_COUNTRY) {
-    if (pattern.test(regionText)) {
-      logger.debug('Country code derived from target regions', {
-        projectId,
-        regionText,
-        countryCode: code,
-      });
-      return code;
-    }
-  }
-
-  logger.warn('Could not derive country code from target regions — defaulting to us', {
-    projectId,
-    targetRegions,
-  });
-  return 'us';
-}
-
 // ── Main job handler ───────────────────────────────────────────────────────
 
 export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Promise<void> {

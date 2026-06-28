@@ -1,14 +1,8 @@
-import { Blog, Project, OrganizationMember, type IBlog } from '../models';
+import { Blog, Project, OrganizationMember, Keyword, type IBlog } from '../models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
-import { seoPipelineQueue } from '../workers/seo-pipeline.worker';
-import { QUEUE_NAMES, JOB_RETRY_CONFIG, JOB_PRIORITY } from '../constants/seo-pipeline.constants';
-import { Queue } from 'bullmq';
-import { getConnectionOptions } from '../loaders/redis';
+import { publishBlog as cmsPushBlog, type BlogPublishPayload } from '../lib/cms';
+import { CmsConfig } from '../models/CmsConfig';
 import { logger } from '../open-tele';
-
-const cmsPublishQueue = new Queue(QUEUE_NAMES.PUBLISH, {
-  connection: getConnectionOptions(),
-});
 
 async function assertProjectAccess(userId: string, projectId: string) {
   const project = await Project.findById(projectId);
@@ -76,10 +70,6 @@ export const blogService = {
     const blog = await Blog.findOne({ _id: blogId, projectId });
     if (!blog) throw new NotFoundError('Blog');
 
-    if (input.content) {
-      logger.debug('Blog content update', { projectId, blogId, contentLength: input.content.length });
-    }
-
     const allowedStatuses = ['draft', 'ready', 'published', 'archived'];
     if (input.status && !allowedStatuses.includes(input.status)) {
       throw new ValidationError(`Invalid status: ${input.status}`);
@@ -94,11 +84,11 @@ export const blogService = {
         $push: {
           history: {
             $each: [{
-              content:   input.content,
+              content:     input.content,
               description: input.description ?? blog.description,
-              status:    (input.status ?? blog.status) as IBlog['status'],
-              writer:    'user',
-              createdAt: new Date(),
+              status:      (input.status ?? blog.status) as IBlog['status'],
+              writer:      'user',
+              createdAt:   new Date(),
             }],
             $slice: -50,
           },
@@ -115,7 +105,7 @@ export const blogService = {
   async publishBlog(userId: string, projectId: string, blogId: string) {
     logger.debug('blogService.publishBlog', { userId, projectId, blogId });
 
-    await assertProjectAccess(userId, projectId);
+    const project = await assertProjectAccess(userId, projectId);
 
     const blog = await Blog.findOne({ _id: blogId, projectId });
     if (!blog) throw new NotFoundError('Blog');
@@ -130,18 +120,65 @@ export const blogService = {
       throw new ValidationError('Cannot publish an archived blog');
     }
 
-    await cmsPublishQueue.add(
-      'CMS_PUBLISH',
-      { projectId, blogId },
-      {
-        attempts: JOB_RETRY_CONFIG.CMS_PUBLISH.attempts,
-        backoff:  { type: 'exponential', delay: JOB_RETRY_CONFIG.CMS_PUBLISH.backoffDelay },
-        priority: JOB_PRIORITY.CMS_PUBLISH,
-        jobId:    `cms-publish-manual-${blogId}`,
-      },
-    );
+    // Load CMS config — must be connected to publish
+    const cmsConfig = await CmsConfig.findOne({ projectId })
+      .select('+encryptedCredentials')
+      .lean();
 
-    logger.info('Blog publish job enqueued', { projectId, blogId });
+    if (!cmsConfig || !cmsConfig.cmsType || !cmsConfig.encryptedCredentials) {
+      throw new ValidationError('No CMS connected — connect a CMS in Settings to publish');
+    }
+
+    const payload: BlogPublishPayload = {
+      blogId,
+      title:        blog.title,
+      slug:         blog.slug,
+      description:  blog.description ?? '',
+      content:      blog.content     ?? '',
+      heroImageUrl: blog.heroImageUrl,
+      seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
+      blogPostPath: cmsConfig.blogPostPath,
+      domain:       project.domain,
+    };
+
+    const result = await cmsPushBlog(cmsConfig, payload, projectId);
+
+    if (!result.success) {
+      throw new ValidationError(result.error ?? 'CMS publish failed');
+    }
+
+    const now = new Date();
+    blog.status           = 'published';
+    blog.cmsReference     = result.cmsReference;
+    blog.publishedUrl     = result.publishedUrl;
+    blog.publishedDate    = now;
+    blog.publishedContent = blog.content;
+
+    await Blog.findByIdAndUpdate(blogId, {
+      $push: {
+        history: {
+          $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
+          $slice: -50,
+        },
+      },
+    });
+
+    await blog.save();
+
+    // Update keyword status if linked
+    if (blog.keywordId) {
+      await Keyword.findByIdAndUpdate(blog.keywordId, {
+        $set: { status: 'published' },
+      });
+    }
+
+    logger.info('Blog published to CMS', {
+      projectId,
+      blogId,
+      cmsType:      cmsConfig.cmsType,
+      publishedUrl: result.publishedUrl,
+    });
+
     return blog;
   },
 
@@ -181,4 +218,3 @@ export const blogService = {
     return blog;
   },
 };
-

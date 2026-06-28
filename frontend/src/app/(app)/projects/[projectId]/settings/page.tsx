@@ -289,6 +289,7 @@ function ShopifyForm({ onConnect, isPending, error }: FormProps) {
 
 function WixForm({ onConnect, isPending, error }: FormProps) {
   const [apiKey, setApiKey] = useState('');
+  const [siteId, setSiteId] = useState('');
 
   return (
     <>
@@ -307,17 +308,24 @@ function WixForm({ onConnect, isPending, error }: FormProps) {
         ]} />
       </StepBlock>
 
-      <StepBlock n={3} title="Connect API Key" done>
-        <p className="text-sm text-muted-foreground mb-3">
-          Enter your Wix API key below to complete the connection
-        </p>
+      <StepBlock n={3} title="Get Site ID">
+        <InstructionList items={[
+          'Go to your Wix dashboard',
+          'Click on your site name — the URL contains your site ID',
+          'It looks like: manage.wix.com/dashboard/{siteId}/...',
+        ]} />
+        <FormField label="Wix Site ID" id="wix-site" placeholder="Wix Site ID"
+          value={siteId} onChange={setSiteId} />
+      </StepBlock>
+
+      <StepBlock n={4} title="Connect API Key" done>
         <FormField label="Wix API Key" id="wix-key" placeholder="Wix API Key"
           type="password" value={apiKey} onChange={setApiKey} />
         {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
         <Button
           className="mt-4 w-full"
-          onClick={() => onConnect({ credentials: { apiKey } })}
-          disabled={isPending || !apiKey}
+          onClick={() => onConnect({ credentials: { apiKey, siteId } })}
+          disabled={isPending || !apiKey || !siteId}
         >
           {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Connect

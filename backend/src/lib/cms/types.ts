@@ -26,6 +26,7 @@ export interface FramerCredentials {
 
 export interface WixCredentials {
   apiKey: string;
+  siteId: string;
 }
 
 export interface ShopifyCredentials {

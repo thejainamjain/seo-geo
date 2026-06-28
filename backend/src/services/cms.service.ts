@@ -12,7 +12,7 @@ const REQUIRED_CREDENTIAL_FIELDS: Record<string, string[]> = {
   wordpress:    ['siteUrl', 'username', 'applicationPassword'],
   webflow:      ['apiToken', 'collectionId'],
   framer:       ['projectId'],
-  wix:          ['apiKey'],
+  wix: ['apiKey', 'siteId'],
   shopify:      ['storeName', 'clientId', 'clientSecret'],
   sanity:       ['projectId', 'datasetName', 'apiToken'],
   squarespace:  ['dashboardUrl'],

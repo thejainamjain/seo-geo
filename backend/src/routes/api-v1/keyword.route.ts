@@ -15,5 +15,6 @@ const AddKeywordSchema = z.object({
 router.get('/', keywordHandler.list);
 router.post('/',validate(AddKeywordSchema),keywordHandler.add);
 router.delete('/:keywordId',keywordHandler.remove);
+router.post('/:keywordId/generate', keywordHandler.generate);
 
 export default router;

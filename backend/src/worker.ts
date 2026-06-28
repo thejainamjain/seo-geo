@@ -30,9 +30,9 @@ import { connectDB }    from './loaders/db';
 import { getRedis, closeRedis } from './loaders/redis';
 import {
   createSeoPipelineWorker,
-  createBlogWorker,
-  createBlogQueueEvents,
 } from './workers/seo-pipeline.worker';
+import { createContentGenerationWorker } from './workers/content-generation.worker';
+
 
 async function start(): Promise<void> {
   try {
@@ -43,12 +43,11 @@ async function start(): Promise<void> {
 
     // Start all workers
     const seoPipelineWorker = createSeoPipelineWorker();
-    const blogWorker        = createBlogWorker();
-    const blogQueueEvents   = createBlogQueueEvents();
+    const contentGenerationWorker = createContentGenerationWorker();
 
     logger.info('All workers started', {
       context: 'worker.boot',
-      workers: ['seoPipelineWorker', 'blogWorker', 'blogQueueEvents'],
+      workers: ['seoPipelineWorker', 'blogWorker', 'contentGenerationWorker'],
     });
 
     // ── Graceful shutdown ────────────────────────────────────────────────
@@ -65,11 +64,8 @@ async function start(): Promise<void> {
         await seoPipelineWorker.close();
         logger.info('SEO pipeline worker closed', { context: 'worker.shutdown' });
 
-        await blogWorker.close();
-        logger.info('Blog worker closed', { context: 'worker.shutdown' });
-
-        await blogQueueEvents.close();
-        logger.info('Blog QueueEvents closed', { context: 'worker.shutdown' });
+        await contentGenerationWorker.close();
+        logger.info('Content generation worker closed', { context: 'worker.shutdown' });
 
         await closeRedis();
         await shutdownOtel();

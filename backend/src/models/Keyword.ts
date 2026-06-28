@@ -13,8 +13,12 @@
  * Embedding in Project would make these queries painful and the array
  * grows unboundedly.
  *
- * LIFECYCLE: upcoming → draft (Blog being written) → ready (Blog done)
- *            → published (Blog live on site)
+ * LIFECYCLE:
+ *   upcoming   → keyword discovered, no content started
+ *   generating → user clicked Generate — SERP + blog LLM calls in progress
+ *   draft      → blog written by AI, awaiting review
+ *   ready      → blog approved, ready to publish
+ *   published  → blog live on CMS
  *
  * DATA SOURCES:
  *   DataForSEO — search volume, difficulty, CPC (use Sandbox in dev — free)
@@ -22,24 +26,25 @@
  *   AI         — relevance scoring, keyword pillar grouping
  */
 
-import mongoose, { Document, Schema, Types } from "mongoose";
+import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IKeyword extends Document {
   projectId: Types.ObjectId;
 
-  keyword: string;
-  searchVolume?: number;    // Monthly searches from DataForSEO
-  difficulty?: number;      // 0–100 SEO difficulty score
-  cpc?: number;             // Cost per click in USD (DataForSEO)
+  keyword:       string;
+  searchVolume?: number;   // Monthly searches from DataForSEO
+  difficulty?:   number;   // 0–100 SEO difficulty score
+  cpc?:          number;   // Cost per click in USD (DataForSEO)
 
   /**
    * Lifecycle status:
-   * upcoming   → Queued, no Blog started yet
-   * draft      → Blog is being written by AI
-   * ready      → Blog written, awaiting user review / publish
+   * upcoming   → Queued, no content started yet
+   * generating → Generate button clicked — SERP + blog in progress
+   * draft      → Blog written by AI, awaiting user review
+   * ready      → Blog approved, awaiting publish
    * published  → Blog is live on the site
    */
-  status: "upcoming" | "draft" | "ready" | "published";
+  status: 'upcoming' | 'generating' | 'draft' | 'ready' | 'published';
 
   /** Which week in the content calendar this keyword is scheduled for */
   weekNumber?: number;
@@ -57,7 +62,7 @@ export interface IKeyword extends Document {
   relevanceReason?: string;
 
   /** What type of page should target this keyword */
-  pageType?: "blog" | "landing_page" | "product" | "comparison";
+  pageType?: 'blog' | 'landing_page' | 'product' | 'comparison';
 
   /**
    * How this keyword was discovered:
@@ -66,12 +71,12 @@ export interface IKeyword extends Document {
    * "gsc_import"   → imported from Google Search Console
    * "dataforseo"   → from DataForSEO keyword research
    */
-  source: "ai_suggested" | "user_added" | "gsc_import" | "dataforseo";
+  source: 'ai_suggested' | 'user_added' | 'gsc_import' | 'dataforseo';
 
   /** Alignment score: how well this keyword matches the business (0–100) */
   alignmentScore?: number;
 
-  /** AI-generated content brief for this keyword */
+  /** AI-generated content brief for this keyword (JSON string from SERP analysis) */
   brief?: string;
 
   createdAt: Date;
@@ -80,38 +85,39 @@ export interface IKeyword extends Document {
 
 const KeywordSchema = new Schema<IKeyword>(
   {
-    projectId: { type: Schema.Types.ObjectId, ref: "Project", required: true },
-    keyword: { type: String, required: true, trim: true },
+    projectId:    { type: Schema.Types.ObjectId, ref: 'Project', required: true },
+    keyword:      { type: String, required: true, trim: true },
     searchVolume: { type: Number },
-    difficulty: { type: Number, min: 0, max: 100 },
-    cpc: { type: Number },
+    difficulty:   { type: Number, min: 0, max: 100 },
+    cpc:          { type: Number },
     status: {
-      type: String,
-      enum: ["upcoming", "draft", "ready", "published"],
-      default: "upcoming",
+      type:    String,
+      enum:    ['upcoming', 'generating', 'draft', 'ready', 'published'],
+      default: 'upcoming',
     },
     weekNumber: { type: Number },
-    startDate: { type: Date },
-    pillar: { type: String },
+    startDate:  { type: Date },
+    pillar:     { type: String },
     relevanceReason: { type: String },
     pageType: {
-      type: String,
-      enum: ["blog", "landing_page", "product", "comparison"],
-      default: "blog",
+      type:    String,
+      enum:    ['blog', 'landing_page', 'product', 'comparison'],
+      default: 'blog',
     },
     source: {
-      type: String,
-      enum: ["ai_suggested", "user_added", "gsc_import", "dataforseo"],
-      default: "ai_suggested",
+      type:    String,
+      enum:    ['ai_suggested', 'user_added', 'gsc_import', 'dataforseo'],
+      default: 'ai_suggested',
     },
     alignmentScore: { type: Number, min: 0, max: 100 },
-    brief: { type: String },
+    brief:          { type: String },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 KeywordSchema.index({ projectId: 1, status: 1 });
 KeywordSchema.index({ projectId: 1, weekNumber: 1 });
 KeywordSchema.index({ projectId: 1, pillar: 1 });
 
-export const Keyword = mongoose.model<IKeyword>("Keyword", KeywordSchema);
+export const Keyword = mongoose.model<IKeyword>('Keyword', KeywordSchema);
+

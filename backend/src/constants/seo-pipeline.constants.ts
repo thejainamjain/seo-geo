@@ -13,18 +13,21 @@ export const PIPELINE_STEP = {
 
 export type PipelineStep = typeof PIPELINE_STEP[keyof typeof PIPELINE_STEP]
 
+/**
+ * PIPELINE_SEQUENCE defines the linear auto-chained steps.
+ *
+ * SERP_RESEARCH, BLOG_GENERATION, CMS_PUBLISH are intentionally removed.
+ * They now run on-demand per keyword via the content-generation worker.
+ * See: src/workers/jobs/content-generation.job.ts
+ * Triggered by: POST /api/v1/projects/:projectId/keywords/:keywordId/generate
+ */
 export const PIPELINE_SEQUENCE: PipelineStep[] = [
   'SITE_CRAWL',
   'BUSINESS_PROFILE',
   'TECHNICAL_AUDIT',
   'COMPETITOR_DISCOVERY',
   'KEYWORD_RESEARCH',
-  'SERP_RESEARCH',
-  'BLOG_GENERATION',
-  'CMS_PUBLISH',
-  // GEO_ANALYTICS and GSC_MONITOR are NOT linear pipeline steps.
-  // They are recurring cron jobs registered after CMS_PUBLISH completes.
-  // See: handleCmsPublish in seo-pipeline.worker.ts
+  // Pipeline ends here. User triggers content generation per keyword.
 ]
 
 export const PIPELINE_STEP_STATUS = {
@@ -52,11 +55,12 @@ export const CMS_PLATFORMS = {
 } as const
 
 export const QUEUE_NAMES = {
-  SEO_PIPELINE:    'seo-pipeline',
-  BLOG_GENERATION: 'seo-blog-generation',
-  GEO_ANALYTICS:   'seo-geo-analytics',
-  GSC_MONITOR:     'seo-gsc-monitor',
-  PUBLISH:         'seo-publish',         // Separate cron-triggered publish queue (Mon–Sat 5PM UTC)
+  SEO_PIPELINE:        'seo-pipeline',
+  BLOG_GENERATION:     'seo-blog-generation',
+  GEO_ANALYTICS:       'seo-geo-analytics',
+  GSC_MONITOR:         'seo-gsc-monitor',
+  PUBLISH:             'seo-publish',
+  CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
 } as const
 
 export const CODE_CHANGE_TYPE = {
@@ -104,6 +108,7 @@ export const JOB_PRIORITY = {
   GEO_ANALYTICS:        4,
   GSC_MONITOR:          4,
   BLOG_GENERATION:      5,
+  CONTENT_GENERATION:   3,  // on-demand — treat same priority as pipeline steps
 } as const satisfies Record<string, number>
 
 /**
@@ -122,6 +127,7 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   CMS_PUBLISH:          { attempts: 3,  backoffDelay: 20_000 },
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
+  CONTENT_GENERATION:   { attempts: 3,  backoffDelay: 15_000 },
 }
 
 /**

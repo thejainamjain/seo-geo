@@ -1,6 +1,14 @@
 import { Keyword, Blog, Project, OrganizationMember } from '../models';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../utils/errors';
 import { logger } from '../open-tele';
+import { Queue } from 'bullmq';
+import { getConnectionOptions } from '../loaders/redis';
+import { QUEUE_NAMES, JOB_RETRY_CONFIG } from '../constants/seo-pipeline.constants';
+
+const contentGenerationQueue = new Queue(
+  QUEUE_NAMES.CONTENT_GENERATION,
+  { connection: getConnectionOptions() },
+);
 
 async function assertProjectAccess(userId: string, projectId: string) {
   const project = await Project.findById(projectId);
@@ -63,6 +71,36 @@ export const keywordService = {
 
     logger.info('Keyword added', { projectId, keywordId: String(keyword._id) });
     return keyword;
+  },
+
+   async generateContent(userId: string, projectId: string, keywordId: string) {
+    logger.debug('keywordService.generateContent', { userId, projectId, keywordId });
+
+    await assertProjectAccess(userId, projectId);
+
+    const keyword = await Keyword.findOne({ _id: keywordId, projectId });
+    if (!keyword) throw new NotFoundError('Keyword');
+
+    if (keyword.status !== 'upcoming') {
+      throw new ValidationError(
+        `Keyword is already ${keyword.status} — cannot generate content again`,
+      );
+    }
+
+    const retryConfig = JOB_RETRY_CONFIG['CONTENT_GENERATION']!;
+
+    await contentGenerationQueue.add(
+      'content-generation',
+      { projectId, keywordId },
+      {
+        attempts: retryConfig.attempts,
+        backoff:  { type: 'exponential', delay: retryConfig.backoffDelay },
+      },
+    );
+
+    logger.info('Content generation job queued', { projectId, keywordId });
+
+    return { status: 'generating', keywordId };
   },
 
   async deleteKeyword(userId: string, projectId: string, keywordId: string) {

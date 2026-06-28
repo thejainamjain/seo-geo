@@ -1,8 +1,7 @@
 /**
- *
  * WHAT: Crawls all pages of a project's domain with a three-pass strategy.
  *
- *   Pass 0 — Sitemap discovery (NEW)
+ *   Pass 0 — Sitemap discovery
  *     Parses sitemap.xml / sitemap_index.xml BEFORE link-following.
  *     Seeds the request queue with all sitemap URLs (100% coverage of
  *     pages the site wants indexed). Link-following catches everything else.
@@ -17,28 +16,25 @@
  *       - Scores URL crawl priority (sitemap + depth + inlinks)
  *
  *   Pass 2 — PlaywrightCrawler (JS-heavy pages only)
- *      enriches with redirect chain data
- *     and performance metrics captured from Playwright response.
+ *       - Uses page.content() + Cheerio (NOT page.evaluate — see crawler.ts)
+ *       - Also enqueues internal links found on JS pages for full discovery
  *
- *    TYPES DETECTED:
- *   'broken_link'     — Internal link returning 4xx/5xx
- *   'redirect_chain'  — Page has >1 redirect hop before reaching content
- *   'thin_content'    — Page has <300 words of text
- *   'page_speed'      — Page took >3 seconds to respond
+ * TYPES DETECTED:
+ *   'broken_link'        — Internal link returning 4xx/5xx
+ *   'redirect_chain'     — Page has >1 redirect hop before reaching content
+ *   'thin_content'       — Page has <300 words of text
+ *   'page_speed'         — Page took >3 seconds to respond
  *   'non_self_canonical' — Canonical tag points to a different URL
- *   'missing_h1'      — Page has no <h1> tag
- *   'schema_invalid'  — Schema markup present but missing required fields
+ *   'missing_h1'         — Page has no <h1> tag
+ *   'schema_invalid'     — Schema markup present but missing required fields
  *
  * REDIS CONTRACT (unchanged — downstream jobs unaffected):
  *   crawl:{projectId}:page:{base64url} → { url, title, textContent }  TTL 24hr
  *   crawl:{projectId}:urls             → JSON string[]                 TTL 24hr
  *
- * NEW REDIS KEYS (for future analytics dashboard):
- *   crawl:{projectId}:meta:{base64url} → PageMetadata (perf + signals) TTL 24hr
- *
  * PIPELINE POSITION: Step 1 of 9 (unchanged)
  * READS:  Project.domain
- * WRITES: Audit, CodeChange, FAQ, TLDR (same models, new types added)
+ * WRITES: Audit, CodeChange, FAQ, TLDR
  */
 
 import { CheerioCrawler, PlaywrightCrawler, RequestQueue } from 'crawlee';
@@ -53,21 +49,19 @@ import { Project }    from '@/models/Project';
 import {
   fetchRobotsTxt,
   discoverSitemapUrls,
-  followRedirectChain,
   checkBrokenLinks,
   extractFromCheerio,
   extractFromPlaywright,
   scoreCrawlPriority,
+  normalizeUrl,
+  isSameDomain,
   isAssetUrl,
   isAuthGated,
   isBotBlocked,
   isJsRendered,
-  countWords,
   getUrlDepth,
   CRAWLER_UA,
-  MIN_BODY_LENGTH,
   REQUEST_DELAY_MS,
-  MAX_REDIRECT_HOPS,
   SLOW_PAGE_MS,
   THIN_CONTENT_WORDS,
   MAX_PAGE_SIZE_BYTES,
@@ -78,47 +72,31 @@ import type { PipelineJobData } from '../seo-pipeline.worker';
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const MAX_CRAWL_PAGES         = parseInt(process.env.MAX_CRAWL_PAGES ?? '50', 10);
-const REDIS_TTL_SECS          = 60 * 60 * 24;   // 24 hours
+const REDIS_TTL_SECS          = 60 * 60 * 24;  // 24 hours
 const CHEERIO_TIMEOUT_SECS    = 30;
 const PLAYWRIGHT_TIMEOUT_SECS = 60;
-const CHECK_BROKEN_LINKS      = process.env.CHECK_BROKEN_LINKS !== 'false'; // opt-out via env
+const CHECK_BROKEN_LINKS      = process.env.CHECK_BROKEN_LINKS !== 'false';
 
 // ── Redis key helpers ──────────────────────────────────────────────────────
 
-function redisPageKey(projectId: string, url: string): string {
-  return `crawl:${projectId}:page:${Buffer.from(url).toString('base64')}`;
+/**
+ * FIX: Keys now use normalised URL (www stripped, trailing slash removed).
+ * Old code used raw URL — www.domain.com and domain.com got different keys,
+ * causing duplicate content stored and duplicate entries in crawledUrls list.
+ */
+function redisPageKey(projectId: string, url: string, domain: string): string {
+  return `crawl:${projectId}:page:${Buffer.from(normalizeUrl(url, domain)).toString('base64')}`;
 }
 
 function redisUrlsKey(projectId: string): string {
   return `crawl:${projectId}:urls`;
 }
 
-// New: stores PageData metadata (perf signals) for analytics dashboard
-function redisMetaKey(projectId: string, url: string): string {
-  return `crawl:${projectId}:meta:${Buffer.from(url).toString('base64')}`;
+function redisMetaKey(projectId: string, url: string, domain: string): string {
+  return `crawl:${projectId}:meta:${Buffer.from(normalizeUrl(url, domain)).toString('base64')}`;
 }
 
-// ── Inlink counter ─────────────────────────────────────────────────────────
-
-/**
- * Builds inlink count map from all crawled pages' link lists.
- * Used by crawl budget scorer to prioritize pages linked from many places.
- *
- * Example: /pricing linked from 40 pages → crawl first, it's important.
- */
-function buildInlinkCounts(pages: PageData[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const page of pages) {
-    for (const link of page.links) {
-      if (!link.isExternal) {
-        counts.set(link.href, (counts.get(link.href) ?? 0) + 1);
-      }
-    }
-  }
-  return counts;
-}
-
-// ── CodeChange detection  ──────────────────────────────────
+// ── CodeChange detection ───────────────────────────────────────────────────
 
 function detectCodeChanges(
   page:      PageData,
@@ -231,7 +209,7 @@ function detectCodeChanges(
       type:    'thin_content',
       status:  'pending',
       oldHtml: `<!-- Page has only ${page.wordCount} words (minimum: ${THIN_CONTENT_WORDS}) -->`,
-      newHtml: '', // LLM generates content expansion suggestions
+      newHtml: '',
       htmlAttributes: { wordCount: String(page.wordCount) },
     });
   }
@@ -267,7 +245,7 @@ function detectCodeChanges(
       type:    'missing_h1',
       status:  'pending',
       oldHtml: `<!-- No <h1> tag found on this page -->`,
-      newHtml: '', // LLM generates H1 suggestion
+      newHtml: '',
     });
   }
 
@@ -303,7 +281,7 @@ function detectCodeChanges(
         type:    'schema_invalid',
         status:  'pending',
         oldHtml: `<script type="application/ld+json">${JSON.stringify(raw)}</script>`,
-        newHtml: '', // LLM generates corrected schema
+        newHtml: '',
         htmlAttributes: {
           schemaType:    schema.type,
           missingFields: missingFields.join(', '),
@@ -327,7 +305,7 @@ function detectCodeChanges(
   return changes;
 }
 
-// ── Pass 1: CheerioCrawler ────────────────────────────────────────────
+// ── Pass 1: CheerioCrawler ─────────────────────────────────────────────────
 
 async function runCheerioCrawler(
   baseUrl:     string,
@@ -342,14 +320,17 @@ async function runCheerioCrawler(
   skippedUrls:    Array<{ url: string; reason: string }>;
   inlinkCounts:   Map<string, number>;
 }> {
-  const crawledPages:   PageData[]                              = [];
-  const jsRenderedUrls: string[]                                = [];
-  const skippedUrls:    Array<{ url: string; reason: string }>  = [];
-  const inlinkCounts:   Map<string, number>                     = new Map();
+  const crawledPages:   PageData[]                             = [];
+  const jsRenderedUrls: string[]                               = [];
+  const skippedUrls:    Array<{ url: string; reason: string }> = [];
+  const inlinkCounts:   Map<string, number>                    = new Map();
+
+  // Track normalised URLs we've already crawled to skip duplicates
+  const crawledNormalized = new Set<string>();
 
   const requestQueue = await RequestQueue.open(`cheerio-${projectId}-${auditId}`);
 
-  // Seed with sitemap URLs first (sorted by crawl priority)
+  // Seed with sitemap URLs (already normalised in discoverSitemapUrls)
   const sitemapArr = [...sitemapUrls];
   if (sitemapArr.length > 0) {
     // Sort by depth (shallower = higher priority)
@@ -379,10 +360,17 @@ async function runCheerioCrawler(
 
     requestHandler: async ({ $, request, enqueueLinks, response }) => {
       const url         = request.url;
+      const normUrl     = normalizeUrl(url, domain);
       const statusCode  = response?.statusCode ?? 0;
       const fromSitemap = (request.userData?.['fromSitemap'] as boolean) ?? false;
 
-      // Bot protection check
+      // FIX: Skip if we already crawled the normalised version of this URL
+      // (handles www vs non-www duplicates)
+      if (crawledNormalized.has(normUrl)) {
+        logger.debug('Skipping duplicate URL (normalised)', { url, normUrl });
+        return;
+      }
+
       if (isBotBlocked(statusCode)) {
         skippedUrls.push({ url, reason: `Bot blocked — HTTP ${statusCode}` });
         return;
@@ -390,6 +378,7 @@ async function runCheerioCrawler(
 
       // Auth-gated check
       const rawText = $('body').text();
+
       if (isAuthGated(url, rawText)) {
         skippedUrls.push({ url, reason: 'Auth-gated page — login required' });
         return;
@@ -401,38 +390,59 @@ async function runCheerioCrawler(
         return;
       }
 
-      const extracted = extractFromCheerio($, url, domain);
+      const extracted = extractFromCheerio($, normUrl, domain);
+      const { rawBodyText, ...pageFields } = extracted;
 
-      // Detect JS-rendered pages
-      if (isJsRendered(extracted.textContent)) {
-        jsRenderedUrls.push(url);
+      // FIX: Always enqueue links BEFORE the isJsRendered early return.
+      // Old code returned early and never called enqueueLinks, so pages
+      // only reachable via links from JS-rendered pages were never discovered.
+      await enqueueLinks({
+        strategy: 'all',  // FIX: 'same-domain' in Crawlee treats www as different domain
+        transformRequestFunction: (req) => {
+          // Manually filter to same domain (handles www normalisation)
+          if (!isSameDomain(req.url, domain)) return false;
+          if (isAssetUrl(req.url)) return false;
+          if (!robots.isAllowed(req.url)) return false;
+          const score = scoreCrawlPriority(req.url, baseUrl, sitemapUrls, inlinkCounts);
+          if (crawledPages.length > MAX_CRAWL_PAGES * 0.8 && score < 10) return false;
+          req.userData = { fromSitemap: sitemapUrls.has(normalizeUrl(req.url, domain)) };
+          return req;
+        },
+      });
+
+      // FIX: Check isJsRendered on rawBodyText (BEFORE nav/header/footer stripped)
+      // Old check ran on stripped textContent — small sites with nav-heavy content
+      // would be falsely flagged as JS-rendered.
+      if (isJsRendered(rawBodyText)) {
+        jsRenderedUrls.push(normUrl);
         return;
       }
 
-      // Track inlinks from this page
-      for (const link of extracted.links) {
+      // Mark as crawled AFTER the JS-render check
+      crawledNormalized.add(normUrl);
+
+      // Track inlinks
+      for (const link of pageFields.links) {
         if (!link.isExternal) {
-          inlinkCounts.set(link.href, (inlinkCounts.get(link.href) ?? 0) + 1);
+          const normLink = normalizeUrl(link.href, domain);
+          inlinkCounts.set(normLink, (inlinkCounts.get(normLink) ?? 0) + 1);
         }
       }
 
       // Broken link check (async, runs after extraction)
       let brokenLinks: PageData['brokenLinks'] = [];
       if (CHECK_BROKEN_LINKS) {
-        brokenLinks = await checkBrokenLinks(extracted.links, baseUrl);
+        brokenLinks = await checkBrokenLinks(pageFields.links, baseUrl);
         if (brokenLinks.length > 0) {
-          logger.debug('Broken links found', { projectId, url, count: brokenLinks.length });
+          logger.debug('Broken links found', { projectId, url: normUrl, count: brokenLinks.length });
         }
       }
 
-      // Follow redirect chain to get performance data
-      // Note: CheerioCrawler doesn't expose redirect chain natively.
-      // We make a separate lightweight HEAD request to measure response time.
       let responseTimeMs = 0;
       let pageSizeBytes  = 0;
       let redirectChain: PageData['redirectChain'] = [];
       let hasRedirectChain = false;
-      let finalUrl = url;
+      let finalUrl = normUrl;
 
       try {
         const start = Date.now();
@@ -443,20 +453,20 @@ async function runCheerioCrawler(
           signal:   AbortSignal.timeout(10_000),
         });
         responseTimeMs = Date.now() - start;
-        finalUrl       = headRes.url; // final URL after redirects
+        finalUrl       = normalizeUrl(headRes.url, domain);
         pageSizeBytes  = parseInt(headRes.headers.get('content-length') ?? '0', 10);
 
-        // Simple redirect detection: if finalUrl !== url, there was a redirect
-        if (finalUrl !== url) {
+        if (finalUrl !== normUrl) {
           hasRedirectChain = true;
-          redirectChain    = [{ url, statusCode: 301 }]; // simplified — exact hops need followRedirectChain
+          redirectChain    = [{ url: normUrl, statusCode: 301 }];
         }
       } catch {
-        // HEAD failed — non-critical, use defaults
+        // HEAD failed — non-critical
       }
 
       crawledPages.push({
-        ...extracted,
+        ...pageFields,
+        url:             normUrl,
         finalUrl,
         statusCode,
         renderedBy:      'cheerio',
@@ -464,28 +474,15 @@ async function runCheerioCrawler(
         hasRedirectChain,
         responseTimeMs,
         pageSizeBytes,
-        depth:           getUrlDepth(url),
-        inlinkCount:     0,  // Filled after all pages crawled
+        depth:           getUrlDepth(normUrl),
+        inlinkCount:     0,
         fromSitemap,
         brokenLinks,
       });
 
-      logger.debug('Page crawled via Cheerio', { projectId, url, responseTimeMs });
+      logger.debug('Page crawled via Cheerio', { projectId, url: normUrl, responseTimeMs });
 
       await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY_MS));
-
-      await enqueueLinks({
-        strategy: 'same-domain',
-        transformRequestFunction: (req) => {
-          if (isAssetUrl(req.url)) return false;
-          if (!robots.isAllowed(req.url)) return false;
-          // Score and skip low-priority URLs if we're near the cap
-          const score = scoreCrawlPriority(req.url, baseUrl, sitemapUrls, inlinkCounts);
-          if (crawledPages.length > MAX_CRAWL_PAGES * 0.8 && score < 10) return false;
-          req.userData = { fromSitemap: sitemapUrls.has(req.url) };
-          return req;
-        },
-      });
     },
 
     failedRequestHandler: async ({ request, error }) => {
@@ -498,7 +495,7 @@ async function runCheerioCrawler(
 
   await crawler.run();
 
-  // Back-fill inlink counts on all crawled pages
+  // Back-fill inlink counts
   for (const page of crawledPages) {
     page.inlinkCount = inlinkCounts.get(page.url) ?? 0;
   }
@@ -506,7 +503,7 @@ async function runCheerioCrawler(
   return { crawledPages, jsRenderedUrls, skippedUrls, inlinkCounts };
 }
 
-// ── Pass 2: PlaywrightCrawler ─────────────────────────────────────────
+// ── Pass 2: PlaywrightCrawler ──────────────────────────────────────────────
 
 async function runPlaywrightCrawler(
   jsRenderedUrls: string[],
@@ -528,10 +525,11 @@ async function runPlaywrightCrawler(
 
   const crawledPages: PageData[]                             = [];
   const skippedUrls:  Array<{ url: string; reason: string }> = [];
+  const crawledNormalized = new Set<string>();
 
   const requestQueue = await RequestQueue.open(`playwright-${projectId}-${auditId}`);
   for (const url of jsRenderedUrls) {
-    await requestQueue.addRequest({ url });
+    await requestQueue.addRequest({ url, userData: { fromSitemap: sitemapUrls.has(url) } });
   }
 
   const crawler = new PlaywrightCrawler({
@@ -546,9 +544,16 @@ async function runPlaywrightCrawler(
       },
     },
 
-    requestHandler: async ({ page, request, response }) => {
+    requestHandler: async ({ page, request, response, enqueueLinks }) => {
       const url        = request.url;
+      const normUrl    = normalizeUrl(url, domain);
       const statusCode = response?.status() ?? 0;
+      const fromSitemap = (request.userData?.['fromSitemap'] as boolean) ?? false;
+
+      if (crawledNormalized.has(normUrl)) {
+        logger.debug('Playwright: skipping duplicate URL', { url, normUrl });
+        return;
+      }
 
       if (isBotBlocked(statusCode)) {
         skippedUrls.push({ url, reason: `Bot blocked — HTTP ${statusCode} (Playwright)` });
@@ -561,38 +566,58 @@ async function runPlaywrightCrawler(
 
       try {
         const startTime = Date.now();
-        const extracted = await extractFromPlaywright(page, url, domain);
+
+        // FIX: extractFromPlaywright now uses page.content() + Cheerio internally.
+        // No more page.evaluate() — no more __name ReferenceError.
+        const { rawBodyText, ...extracted } = await extractFromPlaywright(page, normUrl, domain);
         const responseTimeMs = Date.now() - startTime;
 
-        if (isJsRendered(extracted.textContent)) {
-          skippedUrls.push({ url, reason: 'Empty after Playwright — likely bot-protected' });
+        // FIX: Enqueue internal links found on JS-rendered pages so we discover
+        // pages that are only reachable via JS-rendered pages.
+        await enqueueLinks({
+          strategy: 'all',
+          transformRequestFunction: (req) => {
+            if (!isSameDomain(req.url, domain)) return false;
+            if (isAssetUrl(req.url)) return false;
+            if (!robots.isAllowed(req.url)) return false;
+            req.userData = { fromSitemap: sitemapUrls.has(normalizeUrl(req.url, domain)) };
+            return req;
+          },
+        });
+
+        if (isJsRendered(rawBodyText)) {
+          skippedUrls.push({ url: normUrl, reason: 'Empty after Playwright — likely bot-protected' });
           return;
         }
 
-        // Playwright exposes final URL after redirects
-        const finalUrl = page.url();
-        const hasRedirectChain = finalUrl !== url;
+        crawledNormalized.add(normUrl);
+
+        const finalUrl = normalizeUrl(page.url(), domain);
+        const hasRedirectChain = finalUrl !== normUrl;
 
         crawledPages.push({
           ...extracted,
+          url:             normUrl,
           finalUrl,
           statusCode,
           renderedBy:      'playwright',
-          redirectChain:   hasRedirectChain ? [{ url, statusCode: 301 }] : [],
+          redirectChain:   hasRedirectChain ? [{ url: normUrl, statusCode: 301 }] : [],
           hasRedirectChain,
           responseTimeMs,
-          pageSizeBytes:   0, // Not easily available via Playwright
-          depth:           getUrlDepth(url),
-          inlinkCount:     inlinkCounts.get(url) ?? 0,
-          fromSitemap:     sitemapUrls.has(url),
-          brokenLinks:     [], // Skip broken link check for JS pages (too slow)
+          pageSizeBytes:   0,
+          depth:           getUrlDepth(normUrl),
+          inlinkCount:     inlinkCounts.get(normUrl) ?? 0,
+          fromSitemap,
+          brokenLinks:     [],
         });
+
+        logger.debug('Page crawled via Playwright', { projectId, url: normUrl, responseTimeMs });
 
         await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY_MS));
 
       } catch (err) {
         skippedUrls.push({
-          url,
+          url:    normUrl,
           reason: `Playwright extraction failed: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
@@ -639,17 +664,13 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     // 3. Fetch robots.txt
     const robots = await fetchRobotsTxt(baseUrl);
 
-    // 4. PASS 0 — Sitemap discovery (NEW)
-    //    Runs before any crawling. Seeds queue with 100% of indexable URLs.
-    const sitemapUrlList = await discoverSitemapUrls(baseUrl);
+    // Pass 0 — Sitemap discovery (URLs are normalised inside discoverSitemapUrls)
+    const sitemapUrlList = await discoverSitemapUrls(baseUrl, domain);
     const sitemapUrls    = new Set(sitemapUrlList);
 
-    logger.info('Sitemap discovery complete', {
-      projectId,
-      sitemapUrlCount: sitemapUrls.size,
-    });
+    logger.info('Sitemap discovery complete', { projectId, sitemapUrlCount: sitemapUrls.size });
 
-    // 5. PASS 1 — Cheerio
+    // Pass 1 — Cheerio
     const cheerioResult = await runCheerioCrawler(
       baseUrl, domain, robots, sitemapUrls, projectId, auditId,
     );
@@ -661,7 +682,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       skipped:    cheerioResult.skippedUrls.length,
     });
 
-    // 6. PASS 2 — Playwright (JS-rendered only)
+    // Pass 2 — Playwright (JS-rendered only)
     const playwrightResult = await runPlaywrightCrawler(
       cheerioResult.jsRenderedUrls,
       domain,
@@ -678,36 +699,44 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       skipped: playwrightResult.skippedUrls.length,
     });
 
-    // 7. Merge results
-    const allPages: PageData[] = [
-      ...cheerioResult.crawledPages,
-      ...playwrightResult.crawledPages,
-    ];
+    // Merge and deduplicate by normalised URL
+    // FIX: Cheerio result takes priority over Playwright for same URL.
+    // If both crawled the same page, keep Cheerio version (more reliable).
+    const pagesByNormUrl = new Map<string, PageData>();
+
+    for (const page of cheerioResult.crawledPages) {
+      pagesByNormUrl.set(normalizeUrl(page.url, domain), page);
+    }
+    for (const page of playwrightResult.crawledPages) {
+      const key = normalizeUrl(page.url, domain);
+      if (!pagesByNormUrl.has(key)) {
+        pagesByNormUrl.set(key, page);
+      }
+    }
+
+    const allPages = [...pagesByNormUrl.values()];
     const allSkipped: Array<{ url: string; reason: string }> = [
       ...cheerioResult.skippedUrls,
       ...playwrightResult.skippedUrls,
     ];
-    const crawledUrls: string[] = allPages.map(p => p.url);
 
     if (allPages.length === 0) {
       throw new Error(
         `No pages crawled for ${domain}. ` +
-        `Skipped: ${allSkipped.map(s => `${s.url} (${s.reason})`).join(', ')}`
+        `Skipped: ${allSkipped.map(s => `${s.url} (${s.reason})`).join(', ')}`,
       );
     }
 
-    // 8. Store page text in Redis 
+    // Store in Redis — keys use normalised URL, no duplicates
     const redisPipeline = redis.pipeline();
     for (const page of allPages) {
-      // Existing key: text content for LLM jobs
       redisPipeline.setex(
-        redisPageKey(projectId, page.url),
+        redisPageKey(projectId, page.url, domain),
         REDIS_TTL_SECS,
         JSON.stringify({ url: page.url, title: page.title, textContent: page.textContent }),
       );
-      // New key: performance metadata for analytics dashboard
       redisPipeline.setex(
-        redisMetaKey(projectId, page.url),
+        redisMetaKey(projectId, page.url, domain),
         REDIS_TTL_SECS,
         JSON.stringify({
           url:              page.url,
@@ -723,12 +752,14 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
           redirectChain:    page.redirectChain,
           isCanonicalSelf:  page.isCanonicalSelf,
           hasSchema:        page.hasSchema,
-          structuredData:   page.structuredData.map(s => ({ type: s.type })), // type only — save space
+          structuredData:   page.structuredData.map(s => ({ type: s.type })),
           brokenLinkCount:  page.brokenLinks.length,
           renderedBy:       page.renderedBy,
         }),
       );
     }
+
+    const crawledUrls = allPages.map(p => p.url);
     redisPipeline.setex(
       redisUrlsKey(projectId),
       REDIS_TTL_SECS,
@@ -738,7 +769,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
 
     logger.info('Pages stored in Redis', { projectId, count: allPages.length });
 
-    // 9. Create CodeChange records 
+    // CodeChange detection
     const allCodeChanges = allPages.flatMap(page =>
       detectCodeChanges(page, projectId, auditId),
     );
@@ -757,7 +788,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       });
     }
 
-    // 10. Create FAQ stubs 
+    // FAQ stubs
     const faqDocs = allPages.map(page => ({
       projectId,
       sourceUrl: page.url,
@@ -767,7 +798,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       await FAQ.insertMany(faqDocs, { ordered: false });
     }
 
-    // 11. Create TLDR stubs
+    // TLDR stubs
     const tldrDocs = allPages.map(page => ({
       projectId,
       sourceUrl: page.url,
@@ -777,7 +808,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       await TLDR.insertMany(tldrDocs, { ordered: false });
     }
 
-    // 12. Update Audit with final summary
+    // Final audit summary
     const brokenLinkCount = allPages.reduce((sum, p) => sum + p.brokenLinks.length, 0);
     const slowPageCount   = allPages.filter(p => p.responseTimeMs > SLOW_PAGE_MS).length;
     const thinPageCount   = allPages.filter(p => p.wordCount < THIN_CONTENT_WORDS && p.wordCount > 0).length;
@@ -790,12 +821,8 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
         totalPages:         allPages.length,
         totalFixes:         allCodeChanges.length,
         totalSchemas:       allPages.filter(p => p.hasSchema).length,
-        totalInternalLinks: 0, // Filled by TECHNICAL_AUDIT step
+        totalInternalLinks: 0,
         totalFaqs:          faqDocs.length,
-        // Extra signals (stored but not in IAudit interface — add when needed)
-        // brokenLinks: brokenLinkCount,
-        // slowPages:   slowPageCount,
-        // thinPages:   thinPageCount,
       },
     });
 

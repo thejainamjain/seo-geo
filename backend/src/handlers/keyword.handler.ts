@@ -56,4 +56,17 @@ export const keywordHandler = {
       next(err);
     }
   },
+
+   async generate(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await keywordService.generateContent(
+        req.userId,
+        req.params['projectId'] as string,
+        req.params['keywordId'] as string,
+      );
+      res.status(202).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
 };

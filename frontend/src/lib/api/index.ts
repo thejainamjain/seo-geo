@@ -64,19 +64,31 @@ export const pipelineApi = {
     apiClient.post<ResumeResult>(`/projects/${projectId}/pipeline/resume`, { fromStep }).then(r => r.data),
 };
 
-// ── Blogs ─────────────────────────────────────────────────────────────────
-
+// ── Blogs ─────────────────────────────────────────────────────────────────────
+ 
 export const blogsApi = {
+  // GET /projects/:projectId/blogs  →  { blogs, total, page, limit }
+  // Note: list response omits content, history, publishedContent, sourceAnalysis
   list: (projectId: string, status?: BlogStatus) =>
-    apiClient.get<Blog[]>(`/projects/${projectId}/blogs`, {
-      params: status ? { status } : undefined,
-    }).then(r => r.data),
-
+    apiClient
+      .get<{ blogs: Blog[]; total: number; page: number; limit: number }>(
+        `/projects/${projectId}/blogs`,
+        { params: status ? { status } : undefined },
+      )
+      .then(r => r.data.blogs),
+ 
+  // GET /projects/:projectId/blogs/:blogId  →  { blog: Blog }
+  // Full blog document including content and history
   get: (projectId: string, blogId: string) =>
-    apiClient.get<Blog>(`/projects/${projectId}/blogs/${blogId}`).then(r => r.data),
-
+    apiClient
+      .get<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`)
+      .then(r => r.data.blog),
+ 
+  // PATCH /projects/:projectId/blogs/:blogId  →  { blog: Blog }
   updateStatus: (projectId: string, blogId: string, status: BlogStatus) =>
-    apiClient.patch<Blog>(`/projects/${projectId}/blogs/${blogId}`, { status }).then(r => r.data),
+    apiClient
+      .patch<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`, { status })
+      .then(r => r.data.blog),
 };
 
 // ── Audit ─────────────────────────────────────────────────────────────────

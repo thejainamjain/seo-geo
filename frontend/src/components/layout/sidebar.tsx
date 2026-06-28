@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Globe,
   FileText,
+  BookOpen,
   Settings,
   LogOut,
   ChevronDown,
@@ -25,11 +26,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 const NAV_ITEMS = [
-  { label: 'Overview',        href: 'overview',  icon: LayoutDashboard },
-  { label: 'Analytics',       href: 'geo',       icon: BarChart2 },
-  { label: 'Technical SEO',   href: 'audit',     icon: ShieldCheck },
-  { label: 'Keywords & Blogs',href: 'keywords',  icon: FileText },
-  { label: 'Settings',        href: 'settings',  icon: Settings },
+  { label: 'Overview',      href: 'overview',  icon: LayoutDashboard },
+  { label: 'Analytics',     href: 'geo',       icon: BarChart2 },
+  { label: 'Technical SEO', href: 'audit',     icon: ShieldCheck },
+  { label: 'Keywords',      href: 'keywords',  icon: FileText },
+  { label: 'Blogs',         href: 'blogs',     icon: BookOpen },
+  { label: 'Settings',      href: 'settings',  icon: Settings },
 ];
 
 export function Sidebar() {
@@ -93,8 +95,9 @@ export function Sidebar() {
       <nav className="flex-1 px-3 py-2 space-y-0.5">
         {projectId ? (
           NAV_ITEMS.map(({ label, href, icon: Icon }) => {
-            const full    = `/projects/${projectId}/${href}`;
-            const active  = pathname === full || pathname.startsWith(`${full}/`);
+            const full   = `/projects/${projectId}/${href}`;
+            // blogs/[blogId] should keep "Blogs" active
+            const active = pathname === full || pathname.startsWith(`${full}/`);
             return (
               <Link
                 key={href}

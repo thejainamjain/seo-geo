@@ -81,21 +81,21 @@ export interface BlogHistoryEntry {
 }
 
 export interface Blog {
-  _id:          string;
-  projectId:    string;
-  keywordId?:   string;
-  title:        string;
-  slug:         string;
-  description?: string;
-  content?:     string;
-  status:       BlogStatus;
+  _id:           string;
+  projectId:     string;
+  keywordId?:    string;
+  title:         string;
+  slug:          string;
+  description?:  string;
+  content?:      string;   // excluded from list, present on getOne
+  status:        BlogStatus;
   heroImageUrl?: string;
   publishedUrl?: string;
   publishedDate?: string;
-  seoSchema?:   Record<string, unknown>;
-  history:      BlogHistoryEntry[];
-  createdAt:    string;
-  updatedAt:    string;
+  seoSchema?:    Record<string, unknown>;
+  history?:      BlogHistoryEntry[];  // excluded from list, present on getOne
+  createdAt:     string;
+  updatedAt:     string;
 }
 
 // ── Audit / CodeChange ────────────────────────────────────────────────────

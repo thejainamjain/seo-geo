@@ -25,8 +25,6 @@ async function start(): Promise<void> {
         'contentGenerationWorker',
         'schedulerWorker',
         'cmsPublishWorker',
-        'geoAnalyticsWorker',
-        'gscMonitorWorker',
       ],
     });
 

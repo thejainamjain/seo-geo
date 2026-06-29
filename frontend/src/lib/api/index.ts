@@ -99,10 +99,17 @@ export const blogsApi = {
 // ── Audit ─────────────────────────────────────────────────────────────────
 export const auditApi = {
   latest: (projectId: string) =>
-    apiClient.get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`).then(r => r.data.audit),
+    apiClient
+      .get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`)
+      .then(r => r.data.audit),
  
   codeChanges: (projectId: string, params?: { type?: string; status?: string }) =>
-    apiClient.get<CodeChange[]>(`/projects/${projectId}/audit/changes`, { params }).then(r => r.data),
+    apiClient
+      .get<{ codeChanges: CodeChange[]; total: number; page: number; limit: number }>(
+        `/projects/${projectId}/audit/code-changes`,
+        { params },
+      )
+      .then(r => r.data.codeChanges),
  
   faqs: (projectId: string) =>
     apiClient
@@ -114,7 +121,6 @@ export const auditApi = {
       .get<{ tldrs: TLDR[]; total: number }>(`/projects/${projectId}/audit/tldrs`)
       .then(r => r.data.tldrs),
 };
-
 // ── Keywords ──────────────────────────────────────────────────────────────
 
 export const keywordsApi = {
@@ -128,10 +134,11 @@ export const keywordsApi = {
 };
 
 // ── GEO ───────────────────────────────────────────────────────────────────
-
 export const geoApi = {
   runs: (projectId: string) =>
-    apiClient.get<GeoRun[]>(`/projects/${projectId}/geo`).then(r => r.data),
+    apiClient
+      .get<{ runs: GeoRun[] }>(`/projects/${projectId}/geo`)
+      .then(r => r.data.runs),
 };
 
 

@@ -14,8 +14,16 @@
  *         CmsConfig (cmsType + encryptedCredentials + schedule)
  *         Project (domain)
  * WRITES: Blog (status → 'published', cmsReference, publishedUrl,
- *               publishedDate, publishedContent)
+ *               publishedDate, publishedContent, heroImageUrl)
  *         Keyword (status → 'published')
+ *
+ * HERO IMAGE FLOW:
+ *   1. fetchHeroImageUrl(keyword) → Unsplash CDN URL (or null if fetch fails)
+ *   2. URL is passed as heroImageUrl in BlogPublishPayload
+ *   3. Each CMS publisher handles upload/attachment in its own way:
+ *      - WordPress: uploads to media library → sets featured_media
+ *      - Others: embeds URL directly in content or CMS fields
+ *   Hero image failure is non-fatal — publish continues without it.
  *
  * DAY + HOUR CHECK:
  *   Publishing only runs on allowedPublishDays at or after publishHourUtc.
@@ -30,12 +38,13 @@
  *   Safe to retry.
  */
 
-import { logger }      from '@/open-tele';
-import { Project }     from '@/models/Project';
-import { Blog }        from '@/models/Blog';
-import { Keyword }     from '@/models/Keyword';
-import { CmsConfig }   from '@/models/CmsConfig';
-import { publishBlog } from '@/lib/cms';
+import { logger }             from '@/open-tele';
+import { Project }            from '@/models/Project';
+import { Blog }               from '@/models/Blog';
+import { Keyword }            from '@/models/Keyword';
+import { CmsConfig }          from '@/models/CmsConfig';
+import { publishBlog }        from '@/lib/cms';
+import { fetchHeroImageUrl }  from '@/lib/unsplash';
 import type { BlogPublishPayload } from '@/lib/cms';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -101,7 +110,7 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
     return;
   }
 
-  // 6. Load all ready blogs
+  // 6. Load all ready blogs (with their keyword for image search)
   const blogs = await Blog.find({ projectId, status: 'ready' })
     .sort({ createdAt: 1 }) // oldest first — publish in creation order
     .lean();
@@ -125,13 +134,28 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
     const blogId  = String(blog._id);
     const context = `cms-publish-cron:${projectId}:${blogId}`;
 
+    // ── 7a. Resolve hero image ─────────────────────────────────────────────
+    // Use existing heroImageUrl if already set (e.g. manually assigned),
+    // otherwise fetch from Unsplash using the blog title as the search query.
+    // Falls back to null — publish continues without hero image.
+
+    let heroImageUrl: string | null = blog.heroImageUrl ?? null;
+
+    if (!heroImageUrl) {
+      // Prefer the blog title for image search — more specific than keyword string
+      const imageQuery = blog.title ?? 'business technology';
+      heroImageUrl = await fetchHeroImageUrl(imageQuery, context);
+    }
+
+    // ── 7b. Build publish payload ──────────────────────────────────────────
+
     const payload: BlogPublishPayload = {
       blogId,
       title:        blog.title,
       slug:         blog.slug,
       description:  blog.description ?? '',
       content:      blog.content     ?? '',
-      heroImageUrl: blog.heroImageUrl,
+      heroImageUrl: heroImageUrl ?? undefined,
       seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
       blogPostPath: cmsConfig.blogPostPath,
       domain:       project.domain,
@@ -149,6 +173,7 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
       await Blog.findByIdAndUpdate(blogId, {
         $set: {
           status:           'published',
+          heroImageUrl:     heroImageUrl,   // persist resolved URL for future reference
           cmsReference:     result.cmsReference,
           publishedUrl:     result.publishedUrl,
           publishedDate:    now,
@@ -174,9 +199,10 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
       logger.info('Blog published via cron', {
         context,
         blogId,
-        title:        blog.title,
-        publishedUrl: result.publishedUrl,
-        cmsType:      cmsConfig.cmsType,
+        title:           blog.title,
+        publishedUrl:    result.publishedUrl,
+        cmsType:         cmsConfig.cmsType,
+        hasHeroImage:    !!heroImageUrl,
       });
 
     } catch (err) {

@@ -32,7 +32,6 @@ import { Worker, Queue, type Job } from 'bullmq';
 import { logger } from '../open-tele';
 import { getConnectionOptions } from '../loaders/redis';
 import { Project } from '../models/Project';
-import { Keyword } from '../models/Keyword';
 import {
   QUEUE_NAMES,
   PIPELINE_STEP,
@@ -46,8 +45,6 @@ import { runBusinessProfileJob }  from './jobs/business-profile.job';
 import { runTechnicalAuditJob } from './jobs/technical-audit.job';
 import { runCompetitorDiscoveryJob } from './jobs/competitor-discovery.job';
 import { runKeywordResearchJob }    from './jobs/keyword-research.job';
-import { runGeoAnalyticsJob } from './jobs/geo-analytics.job';
-import { runGscMonitorJob }   from './jobs/gsc-monitor.job';
 
 // ── Job data shapes ────────────────────────────────────────────────────────
 
@@ -82,22 +79,6 @@ export const blogGenerationQueue = new Queue<BlogJobData>(QUEUE_NAMES.BLOG_GENER
   },
 });
 
-export const geoAnalyticsQueue = new Queue(QUEUE_NAMES.GEO_ANALYTICS, {
-  connection:        getConnectionOptions(),
-  defaultJobOptions: {
-    removeOnComplete: { count: 50  },
-    removeOnFail:     { count: 100 },
-  },
-});
-
-export const gscMonitorQueue = new Queue(QUEUE_NAMES.GSC_MONITOR, {
-  connection:        getConnectionOptions(),
-  defaultJobOptions: {
-    removeOnComplete: { count: 50  },
-    removeOnFail:     { count: 100 },
-  },
-});
-
 // ── Pipeline step helpers ──────────────────────────────────────────────────
 
 async function markStepRunning(projectId: string, step: PipelineStep): Promise<void> {
@@ -128,7 +109,6 @@ async function markStepCompleted(projectId: string, step: PipelineStep): Promise
   const nextStep     = PIPELINE_SEQUENCE[currentIndex + 1] as PipelineStep | undefined;
 
   if (!nextStep) {
-    // Pipeline fully complete — CMS_PUBLISH was the last step
     await Project.findByIdAndUpdate(projectId, {
       $set: {
         'pipeline.status':      'COMPLETED',
@@ -226,19 +206,19 @@ async function handleKeywordResearch(job: Job<PipelineJobData>): Promise<void> {
   await markStepCompleted(projectId, step);
 }
 
-async function handleGeoAnalytics(job: Job<PipelineJobData>): Promise<void> {
-  const { projectId } = job.data;
-  logger.info('GEO analytics handler started', { projectId });
-  await runGeoAnalyticsJob(job as unknown as Job<{ projectId: string }>);
-  logger.info('GEO analytics handler completed', { projectId });
-}
+// async function handleGeoAnalytics(job: Job<PipelineJobData>): Promise<void> {
+//   const { projectId } = job.data;
+//   logger.info('GEO analytics handler started', { projectId });
+//   await runGeoAnalyticsJob(job as unknown as Job<{ projectId: string }>);
+//   logger.info('GEO analytics handler completed', { projectId });
+// }
 
-async function handleGscMonitor(job: Job<PipelineJobData>): Promise<void> {
-  const { projectId } = job.data;
-  logger.info('GSC monitor handler started', { projectId });
-  await runGscMonitorJob(job as unknown as Job<{ projectId: string }>);
-  logger.info('GSC monitor handler completed', { projectId });
-}
+// async function handleGscMonitor(job: Job<PipelineJobData>): Promise<void> {
+//   const { projectId } = job.data;
+//   logger.info('GSC monitor handler started', { projectId });
+//   await runGscMonitorJob(job as unknown as Job<{ projectId: string }>);
+//   logger.info('GSC monitor handler completed', { projectId });
+// }
 
 // ── Step dispatcher ────────────────────────────────────────────────────────
 
@@ -248,8 +228,8 @@ const STEP_HANDLERS: Partial<Record<PipelineStep, (job: Job<PipelineJobData>) =>
   [PIPELINE_STEP.TECHNICAL_AUDIT]:      handleTechnicalAudit,
   [PIPELINE_STEP.COMPETITOR_DISCOVERY]: handleCompetitorDiscovery,
   [PIPELINE_STEP.KEYWORD_RESEARCH]:     handleKeywordResearch,
-  [PIPELINE_STEP.GEO_ANALYTICS]:        handleGeoAnalytics,
-  [PIPELINE_STEP.GSC_MONITOR]:          handleGscMonitor,
+  //[PIPELINE_STEP.GEO_ANALYTICS]:        handleGeoAnalytics,
+  //[PIPELINE_STEP.GSC_MONITOR]:          handleGscMonitor,
 };
 
 // ── SEO Pipeline worker factory ────────────────────────────────────────────

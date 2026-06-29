@@ -60,6 +60,7 @@ export const QUEUE_NAMES = {
   GEO_ANALYTICS:       'seo-geo-analytics',
   GSC_MONITOR:         'seo-gsc-monitor',
   // PUBLISH:             'seo-publish',
+  CMS_PUBLISH_CRON: 'seo-cms-publish',
   CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
 } as const
 

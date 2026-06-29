@@ -12,6 +12,7 @@ import {
   Settings,
   LogOut,
   ChevronDown,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/lib/stores/auth.store';
@@ -27,6 +28,7 @@ import {
 
 const NAV_ITEMS = [
   { label: 'Overview',      href: 'overview',  icon: LayoutDashboard },
+  { label: 'Business',      href: 'business',  icon: Building2 },
   { label: 'Analytics',     href: 'geo',       icon: BarChart2 },
   { label: 'Technical SEO', href: 'audit',     icon: ShieldCheck },
   { label: 'Keywords',      href: 'keywords',  icon: FileText },
@@ -96,7 +98,6 @@ export function Sidebar() {
         {projectId ? (
           NAV_ITEMS.map(({ label, href, icon: Icon }) => {
             const full   = `/projects/${projectId}/${href}`;
-            // blogs/[blogId] should keep "Blogs" active
             const active = pathname === full || pathname.startsWith(`${full}/`);
             return (
               <Link

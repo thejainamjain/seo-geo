@@ -17,7 +17,8 @@ import type {
   StartPipelineResult, 
   CmsConfig, 
   CmsConnectPayload, 
-  CmsUpdatePayload } from '@/types/api';
+  CmsUpdatePayload, TLDR, FAQ,
+ } from '@/types/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -67,8 +68,6 @@ export const pipelineApi = {
 // ── Blogs ─────────────────────────────────────────────────────────────────────
  
 export const blogsApi = {
-  // GET /projects/:projectId/blogs  →  { blogs, total, page, limit }
-  // Note: list response omits content, history, publishedContent, sourceAnalysis
   list: (projectId: string, status?: BlogStatus) =>
     apiClient
       .get<{ blogs: Blog[]; total: number; page: number; limit: number }>(
@@ -77,28 +76,43 @@ export const blogsApi = {
       )
       .then(r => r.data.blogs),
  
-  // GET /projects/:projectId/blogs/:blogId  →  { blog: Blog }
-  // Full blog document including content and history
   get: (projectId: string, blogId: string) =>
     apiClient
       .get<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`)
       .then(r => r.data.blog),
  
-  // PATCH /projects/:projectId/blogs/:blogId  →  { blog: Blog }
   updateStatus: (projectId: string, blogId: string, status: BlogStatus) =>
     apiClient
       .patch<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`, { status })
       .then(r => r.data.blog),
+ 
+  updateContent: (
+    projectId: string,
+    blogId: string,
+    payload: { title?: string; description?: string; content?: string },
+  ) =>
+    apiClient
+      .patch<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`, payload)
+      .then(r => r.data.blog),
 };
 
 // ── Audit ─────────────────────────────────────────────────────────────────
-
 export const auditApi = {
   latest: (projectId: string) =>
     apiClient.get<Audit>(`/projects/${projectId}/audit/latest`).then(r => r.data),
-
+ 
   codeChanges: (projectId: string, params?: { type?: string; status?: string }) =>
     apiClient.get<CodeChange[]>(`/projects/${projectId}/audit/changes`, { params }).then(r => r.data),
+ 
+  faqs: (projectId: string) =>
+    apiClient
+      .get<{ faqs: FAQ[]; total: number }>(`/projects/${projectId}/audit/faqs`)
+      .then(r => r.data.faqs),
+ 
+  tldrs: (projectId: string) =>
+    apiClient
+      .get<{ tldrs: TLDR[]; total: number }>(`/projects/${projectId}/audit/tldrs`)
+      .then(r => r.data.tldrs),
 };
 
 // ── Keywords ──────────────────────────────────────────────────────────────

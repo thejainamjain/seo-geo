@@ -1,7 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import { usePipelineStatus, usePipelineResume, useProject } from '@/lib/hooks';
+import { usePipelineStatus, usePipelineResume, useProject, useLatestAudit, useKeywords } from '@/lib/hooks';
 import { STEP_META, PIPELINE_SEQUENCE, getStatusColor } from '@/lib/utils/pipeline';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +23,8 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
   const { projectId } = use(params);
   const { data: pipeline, isLoading } = usePipelineStatus(projectId);
   const { data: project }             = useProject(projectId);
+  const { data: audit }               = useLatestAudit(projectId);
+  const { data: keywords }            = useKeywords(projectId);
   const resume                        = usePipelineResume(projectId);
 
   if (isLoading) {
@@ -39,6 +41,14 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
 
   const completedCount = pipeline?.steps.filter(s => s.status === 'COMPLETED').length ?? 0;
   const totalCount     = pipeline?.steps.length ?? PIPELINE_SEQUENCE.length;
+
+  // Summary numbers — only show if data exists
+  const summaryItems = [
+    audit?.summary?.totalPages   ? { label: 'Pages crawled',      value: audit.summary.totalPages }   : null,
+    audit?.summary?.totalFixes   ? { label: 'SEO fixes found',    value: audit.summary.totalFixes }   : null,
+    audit?.summary?.score        ? { label: 'SEO score',          value: `${audit.summary.score}/100` } : null,
+    keywords?.length             ? { label: 'Keywords researched', value: keywords.length }            : null,
+  ].filter(Boolean) as { label: string; value: string | number }[];
 
   return (
     <div className="p-8 max-w-2xl mx-auto">
@@ -61,6 +71,18 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
           {project?.domain} · {completedCount}/{totalCount} steps complete
         </p>
       </div>
+
+      {/* Summary numbers — shown once pipeline has produced data */}
+      {summaryItems.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 mb-8">
+          {summaryItems.map(({ label, value }) => (
+            <div key={label} className="border border-border rounded-lg p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
+              <p className="text-2xl font-semibold mt-1">{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Resume alert */}
       {pipeline?.canResume && pipeline.status !== 'RUNNING' && (
@@ -95,9 +117,13 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
           const meta      = STEP_META[stepKey];
           const isLast    = idx === PIPELINE_SEQUENCE.length - 1;
 
+          // Show duration if completed
+          const duration = stepState?.startedAt && stepState?.completedAt
+            ? Math.round((new Date(stepState.completedAt).getTime() - new Date(stepState.startedAt).getTime()) / 1000)
+            : null;
+
           return (
             <div key={stepKey} className="flex gap-4">
-              {/* Timeline connector */}
               <div className="flex flex-col items-center">
                 <StepIcon status={status} />
                 {!isLast && (
@@ -107,26 +133,30 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
                 )}
               </div>
 
-              {/* Content */}
               <div className={`pb-6 flex-1 ${isLast ? '' : ''}`}>
                 <div className="flex items-center justify-between">
                   <p className={`text-sm font-medium ${getStatusColor(status)}`}>
                     {meta.label}
                   </p>
-                  {status === 'RUNNING' && (
-                    <span className="text-xs text-blue-500 animate-pulse">Running…</span>
-                  )}
-                  {status === 'ERRORED' && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 text-xs text-red-500 hover:text-red-400"
-                      onClick={() => resume.mutate(stepKey)}
-                      disabled={resume.isPending}
-                    >
-                      Retry from here
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {duration !== null && (
+                      <span className="text-xs text-muted-foreground">{duration}s</span>
+                    )}
+                    {status === 'RUNNING' && (
+                      <span className="text-xs text-blue-500 animate-pulse">Running…</span>
+                    )}
+                    {status === 'ERRORED' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-xs text-red-500 hover:text-red-400"
+                        onClick={() => resume.mutate(stepKey)}
+                        disabled={resume.isPending}
+                      >
+                        Retry from here
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">{meta.description}</p>
                 {stepState?.error && (
@@ -137,6 +167,27 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
           );
         })}
       </div>
+
+      {/* Integrations */}
+      {project && (
+        <div className="mt-8 border border-border rounded-lg p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Integrations</p>
+          <div className="space-y-2">
+            {[
+              { label: 'Google Search Console', connected: project.isGscConnected },
+              { label: 'CMS publishing',        connected: project.isCmsConnected },
+              { label: 'Onboarding complete',   connected: project.isOnboardingComplete },
+            ].map(({ label, connected }) => (
+              <div key={label} className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">{label}</span>
+                <span className={`text-xs ${connected ? 'text-green-500' : 'text-muted-foreground'}`}>
+                  {connected ? 'Connected' : 'Not connected'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Completion message */}
       {pipeline?.status === 'COMPLETED' && (

@@ -36,11 +36,13 @@ export function useRegister() {
 }
 
 export function useLogout() {
-  const clear  = useAuthStore(s => s.clear);
-  const router = useRouter();
+  const clear       = useAuthStore(s => s.clear);
+  const router      = useRouter();
+  const queryClient = useQueryClient();   // ← add this
 
   return () => {
     clear();
+    queryClient.clear();                  // ← wipes ALL cached query data
     router.push('/login');
   };
 }
@@ -165,6 +167,24 @@ export function useUpdateBlogStatus(projectId: string) {
   });
 }
 
+export function useUpdateBlogContent(projectId: string) {
+  const queryClient = useQueryClient();
+ 
+  return useMutation({
+    mutationFn: ({
+      blogId,
+      payload,
+    }: {
+      blogId:  string;
+      payload: { title?: string; description?: string; content?: string };
+    }) => blogsApi.updateContent(projectId, blogId, payload),
+    onSuccess: (_, { blogId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['blogs', projectId, blogId] });
+      void queryClient.invalidateQueries({ queryKey: ['blogs', projectId] });
+    },
+  });
+}
+
 // ── Audit ─────────────────────────────────────────────────────────────────
 
 export function useLatestAudit(projectId: string) {
@@ -179,6 +199,22 @@ export function useCodeChanges(projectId: string, params?: { type?: string; stat
   return useQuery({
     queryKey: ['codeChanges', projectId, params],
     queryFn:  () => auditApi.codeChanges(projectId, params),
+    enabled:  !!projectId,
+  });
+}
+
+export function useFAQs(projectId: string) {
+  return useQuery({
+    queryKey: ['faqs', projectId],
+    queryFn:  () => auditApi.faqs(projectId),
+    enabled:  !!projectId,
+  });
+}
+ 
+export function useTLDRs(projectId: string) {
+  return useQuery({
+    queryKey: ['tldrs', projectId],
+    queryFn:  () => auditApi.tldrs(projectId),
     enabled:  !!projectId,
   });
 }

@@ -265,7 +265,8 @@ async function callGroq(
         { role: 'system', content: systemPrompt },
         { role: 'user',   content: userPrompt   },
       ],
-      temperature: 0.3,
+      temperature:     0.3,
+      response_format: { type: 'json_object' },
     });
 
     const text = completion.choices[0]?.message?.content ?? '';

@@ -1,15 +1,16 @@
 'use client';
 
 import { use, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useBlog, useUpdateBlogStatus } from '@/lib/hooks';
+import { useBlog, useUpdateBlogStatus, useUpdateBlogContent } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { timeAgo } from '@/lib/utils/format';
-import { ArrowLeft, CheckCircle2, ExternalLink, Clock } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ExternalLink, Clock, Pencil, X, Save } from 'lucide-react';
 import Link from 'next/link';
 
 export default function BlogDetailPage({
@@ -18,9 +19,49 @@ export default function BlogDetailPage({
   params: Promise<{ projectId: string; blogId: string }>;
 }) {
   const { projectId, blogId } = use(params);
-  const router = useRouter();
   const { data: blog, isLoading } = useBlog(projectId, blogId);
-  const updateStatus = useUpdateBlogStatus(projectId);
+  const updateStatus  = useUpdateBlogStatus(projectId);
+  const updateContent = useUpdateBlogContent(projectId);
+
+  const [editing,      setEditing]      = useState(false);
+  const [editTitle,    setEditTitle]    = useState('');
+  const [editDesc,     setEditDesc]     = useState('');
+  const [editContent,  setEditContent]  = useState('');
+  const [saveFeedback, setSaveFeedback] = useState('');
+
+  function startEdit() {
+    if (!blog) return;
+    setEditTitle(blog.title ?? '');
+    setEditDesc(blog.description ?? '');
+    setEditContent(blog.content ?? '');
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setSaveFeedback('');
+  }
+
+  function saveEdit() {
+    if (!blog) return;
+    updateContent.mutate(
+      {
+        blogId,
+        payload: {
+          title:       editTitle       !== blog.title       ? editTitle       : undefined,
+          description: editDesc        !== blog.description ? editDesc        : undefined,
+          content:     editContent     !== blog.content     ? editContent     : undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          setSaveFeedback('Saved');
+          setTimeout(() => setSaveFeedback(''), 2500);
+        },
+      },
+    );
+  }
 
   if (isLoading) {
     return (
@@ -57,8 +98,16 @@ export default function BlogDetailPage({
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold leading-snug">{blog.title}</h1>
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <Input
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              className="text-xl font-semibold mb-2"
+            />
+          ) : (
+            <h1 className="text-xl font-semibold leading-snug">{blog.title}</h1>
+          )}
           <div className="flex items-center gap-3 mt-2">
             <Badge
               variant={
@@ -76,41 +125,74 @@ export default function BlogDetailPage({
             {wordCount > 0 && (
               <span className="text-xs text-muted-foreground">{wordCount.toLocaleString()} words</span>
             )}
+            {saveFeedback && (
+              <span className="text-xs text-green-500">{saveFeedback}</span>
+            )}
           </div>
-          {blog.description && (
-            <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{blog.description}</p>
+          {editing ? (
+            <Input
+              value={editDesc}
+              onChange={e => setEditDesc(e.target.value)}
+              className="text-sm mt-2"
+              placeholder="Meta description"
+            />
+          ) : (
+            blog.description && (
+              <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{blog.description}</p>
+            )
           )}
         </div>
 
         {/* Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          {blog.publishedUrl && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={blog.publishedUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                View live
-              </a>
-            </Button>
-          )}
-          {blog.status === 'draft' && (
-            <Button
-              size="sm"
-              onClick={() => updateStatus.mutate({ blogId, status: 'ready' })}
-              disabled={updateStatus.isPending}
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-              {updateStatus.isPending ? 'Marking ready…' : 'Mark as ready'}
-            </Button>
-          )}
-          {blog.status === 'ready' && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => updateStatus.mutate({ blogId, status: 'draft' })}
-              disabled={updateStatus.isPending}
-            >
-              Revert to draft
-            </Button>
+          {editing ? (
+            <>
+              <Button size="sm" variant="outline" onClick={cancelEdit} disabled={updateContent.isPending}>
+                <X className="h-3.5 w-3.5 mr-1.5" />
+                Cancel
+              </Button>
+              <Button size="sm" onClick={saveEdit} disabled={updateContent.isPending}>
+                <Save className="h-3.5 w-3.5 mr-1.5" />
+                {updateContent.isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </>
+          ) : (
+            <>
+              {blog.publishedUrl && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={blog.publishedUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                    View live
+                  </a>
+                </Button>
+              )}
+              {(blog.status === 'draft' || blog.status === 'ready') && (
+                <Button size="sm" variant="outline" onClick={startEdit}>
+                  <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                  Edit
+                </Button>
+              )}
+              {blog.status === 'draft' && (
+                <Button
+                  size="sm"
+                  onClick={() => updateStatus.mutate({ blogId, status: 'ready' })}
+                  disabled={updateStatus.isPending}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                  {updateStatus.isPending ? 'Marking ready…' : 'Mark as ready'}
+                </Button>
+              )}
+              {blog.status === 'ready' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => updateStatus.mutate({ blogId, status: 'draft' })}
+                  disabled={updateStatus.isPending}
+                >
+                  Revert to draft
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -127,7 +209,18 @@ export default function BlogDetailPage({
 
         {/* Content tab */}
         <TabsContent value="content">
-          {blog.content ? (
+          {editing ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Editing raw HTML. Changes are saved as a new version in history.
+              </p>
+              <Textarea
+                value={editContent}
+                onChange={e => setEditContent(e.target.value)}
+                className="font-mono text-xs min-h-[600px] resize-y"
+              />
+            </div>
+          ) : blog.content ? (
             <div
               className="prose prose-sm prose-invert max-w-none
                 prose-headings:font-semibold prose-headings:tracking-tight

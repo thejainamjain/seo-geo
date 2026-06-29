@@ -109,19 +109,19 @@ Schema:
     "TargetRegionsOrLanguages": "comma-separated string e.g. India, United States",
     "ProductOrService": {
       "WhatTheBusinessSells": "one sentence string",
-      "KeyFeaturesAndBenefits": "newline-separated string e.g. Feature 1: benefit\nFeature 2: benefit",
+      "KeyFeaturesAndBenefits": "newline-separated string e.g. Feature 1: benefit\\nFeature 2: benefit",
       "ProductTiersAndInclusions": "plain text string e.g. Free: basic access. Pro: $29/mo full access.",
       "FreeTrialOrDemoAvailability": "string e.g. Yes, 14-day free trial",
       "TotalLifetimeValuePerClient": "string"
     },
     "TargetCustomers": {
-      "CustomerSegments": "newline-separated string e.g. Freelancers\nSmall business owners\nEntrepreneurs",
-      "CustomerPainPoints": "newline-separated string e.g. Finding clients\nHigh commission fees",
-      "KeywordsTheyTalkAbout": "newline-separated string e.g. freelancing\ndesign tools\nportfolio",
-      "TopUseCasesYouWantToRankFor": "newline-separated string e.g. freelance platform\ncommission-free work"
+      "CustomerSegments": "newline-separated string e.g. Freelancers\\nSmall business owners\\nEntrepreneurs",
+      "CustomerPainPoints": "newline-separated string e.g. Finding clients\\nHigh commission fees",
+      "KeywordsTheyTalkAbout": "newline-separated string e.g. freelancing\\ndesign tools\\nportfolio",
+      "TopUseCasesYouWantToRankFor": "newline-separated string e.g. freelance platform\\ncommission-free work"
     },
     "CompetitorsAndDifferentiation": {
-      "MainCompetitors": "newline-separated string of domains e.g. upwork.com\nfiverr.com\ntoptal.com",
+      "MainCompetitors": "newline-separated string of domains e.g. upwork.com\\nfiverr.com\\ntoptal.com",
       "Differentiation": "string",
       "UniqueStrengths": "string",
       "Proof": "string",

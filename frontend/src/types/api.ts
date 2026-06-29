@@ -140,9 +140,14 @@ export interface Keyword {
   keyword:        string;
   searchVolume:   number;
   difficulty:     number;
+  cpc?:           number;        // cost per click from DataForSEO
   alignmentScore: number;
   status:         KeywordStatus;
   relevanceReason?: string;
+  weekNumber?:    number;        // content calendar week
+  startDate?:     string;        // ISO date string
+  pillar?:        string;
+  pageType?:      'blog' | 'landing_page' | 'product' | 'comparison';
   createdAt:      string;
 }
 
@@ -258,4 +263,28 @@ export interface CmsUpdatePayload {
   autoPublish?:        boolean;
   allowedPublishDays?: number[];
   blogPostPath?:       string;
+}
+
+export interface FAQ {
+  _id:       string;
+  projectId: string;
+  sourceUrl: string;
+  status:    'pending' | 'applied' | 'disabled' | 'failed';
+  questions?: Array<{ question: string; answer: string }>;
+  oldHtml?:  string;
+  newHtml?:  string;
+  createdAt: string;
+  appliedAt?: string;
+}
+ 
+export interface TLDR {
+  _id:       string;
+  projectId: string;
+  sourceUrl: string;
+  status:    'pending' | 'applied' | 'disabled' | 'failed';
+  tldrText?: string;
+  oldHtml?:  string;
+  newHtml?:  string;
+  createdAt: string;
+  appliedAt?: string;
 }

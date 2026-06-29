@@ -96,7 +96,7 @@ export async function publishToShopify(
   });
 
   // Use access token — for private apps this is the client secret
-  const accessToken = creds.accessToken ?? creds.clientSecret;
+  const accessToken = creds.accessToken;
 
   // 1. Get the first blog ID
   const blogId = await getFirstBlogId(creds.storeName, accessToken, context);

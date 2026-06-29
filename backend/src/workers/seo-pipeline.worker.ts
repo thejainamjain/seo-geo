@@ -16,8 +16,8 @@
  *   - SEO_PIPELINE queue : all linear pipeline steps
  *   - BLOG_GENERATION queue: 25 parallel child blog jobs via FlowProducer
  *   - PUBLISH queue      : cron-triggered, Mon–Sat 5PM UTC only
- *   - GEO_ANALYTICS queue: repeatable cron job per project (registered after CMS_PUBLISH)
- *   - GSC_MONITOR queue  : repeatable cron job per project (registered after CMS_PUBLISH)
+ *   - GEO_ANALYTICS queue: repeatable cron job per project 
+ *   - GSC_MONITOR queue  : repeatable cron job per project 
  *
  * BLOG GENERATION FLOW (FlowProducer):
  *   handleBlogGeneration (SEO_PIPELINE)
@@ -26,9 +26,6 @@
  *     → children run in parallel on blogWorker
  *     → when ALL children complete → BullMQ auto-completes parent
  *     → QueueEvents 'completed' fires for parent → enqueues CMS_PUBLISH
- *
- * PRIORITY (lower = higher priority):
- *   CMS_PUBLISH(1) > SITE_CRAWL(2) > most steps(3) > analytics(4) > blog(5)
  */
 
 import { Worker, Queue, type Job } from 'bullmq';
@@ -82,14 +79,6 @@ export const blogGenerationQueue = new Queue<BlogJobData>(QUEUE_NAMES.BLOG_GENER
   defaultJobOptions: {
     removeOnComplete: { count: 200 },
     removeOnFail:     { count: 500 },
-  },
-});
-
-export const publishQueue = new Queue(QUEUE_NAMES.PUBLISH, {
-  connection:        getConnectionOptions(),
-  defaultJobOptions: {
-    removeOnComplete: { count: 50  },
-    removeOnFail:     { count: 200 },
   },
 });
 

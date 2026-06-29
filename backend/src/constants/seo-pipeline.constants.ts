@@ -59,7 +59,7 @@ export const QUEUE_NAMES = {
   BLOG_GENERATION:     'seo-blog-generation',
   GEO_ANALYTICS:       'seo-geo-analytics',
   GSC_MONITOR:         'seo-gsc-monitor',
-  PUBLISH:             'seo-publish',
+  // PUBLISH:             'seo-publish',
   CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
 } as const
 
@@ -98,7 +98,7 @@ export const CODE_CHANGE_SEVERITY_WEIGHT: Record<string, number> = {
  * BLOG_GENERATION is lowest: heavy background work, not time-sensitive.
  */
 export const JOB_PRIORITY = {
-  CMS_PUBLISH:          1,
+ // CMS_PUBLISH:          1,
   SITE_CRAWL:           2,
   BUSINESS_PROFILE:     3,
   TECHNICAL_AUDIT:      3,
@@ -124,7 +124,7 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   KEYWORD_RESEARCH:     { attempts: 4,  backoffDelay: 15_000 },
   SERP_RESEARCH:        { attempts: 4,  backoffDelay: 15_000 },
   BLOG_GENERATION:      { attempts: 4,  backoffDelay: 30_000 },
-  CMS_PUBLISH:          { attempts: 3,  backoffDelay: 20_000 },
+ // CMS_PUBLISH:          { attempts: 3,  backoffDelay: 20_000 },
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
   CONTENT_GENERATION:   { attempts: 3,  backoffDelay: 15_000 },

@@ -1,7 +1,7 @@
 /**
  * lib/cms/index.ts
  *
- * Unified CMS publisher — single entry point for cms-publish.job.ts.
+ * Unified CMS publisher — called by content-generation.job.ts and blog.service.ts.
  *
  * USAGE:
  *   import { publishBlog } from '../lib/cms';

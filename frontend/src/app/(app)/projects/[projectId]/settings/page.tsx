@@ -28,7 +28,7 @@ type CmsPlatformId =
   | 'webflow'
   | 'shopify'
   | 'wix'
-  | 'framer'
+  // | 'framer'
   | 'sanity'
   | 'squarespace'
   | 'gohighlevel';
@@ -37,7 +37,7 @@ const CMS_PLATFORMS: { id: CmsPlatformId; label: string; desc: string }[] = [
   { id: 'wordpress',   label: 'WordPress',   desc: 'Connect via Application Password' },
   { id: 'webflow',     label: 'Webflow',     desc: 'Connect via API token' },
   { id: 'shopify',     label: 'Shopify',     desc: 'Connect via app credentials' },
-  { id: 'framer',      label: 'Framer',      desc: 'Connect via plugin' },
+ // { id: 'framer',      label: 'Framer',      desc: 'Connect via plugin' },
   { id: 'wix',         label: 'Wix',         desc: 'Connect via API key' },
   { id: 'sanity',      label: 'Sanity',      desc: 'Connect via project ID + token' },
   { id: 'squarespace', label: 'Squarespace', desc: 'Connect via dashboard URL' },
@@ -240,44 +240,38 @@ function WebflowForm({ onConnect, isPending, error }: FormProps) {
 
 function ShopifyForm({ onConnect, isPending, error }: FormProps) {
   const [storeName,    setStoreName]    = useState('');
-  const [clientId,     setClientId]     = useState('');
-  const [clientSecret, setClientSecret] = useState('');
+  const [accessToken,  setAccessToken]  = useState('');
 
   return (
     <>
       <StepBlock n={1} title="Get Store Name">
         <InstructionList items={[
-          'Go to your Shopify Admin portal and sign in',
-          'Your store name is the subdomain before .myshopify.com (e.g. mystore.myshopify.com → mystore)',
+          'Your store name is the subdomain before .myshopify.com',
+          'e.g. mystore.myshopify.com → enter mystore',
         ]} />
+        <FormField label="Store Name" id="sh-store" placeholder="mystore"
+          value={storeName} onChange={setStoreName} />
       </StepBlock>
 
-      <StepBlock n={2} title="Create App from Dev Dashboard">
+      <StepBlock n={2} title="Create Custom App">
         <InstructionList items={[
-          'Go to the Shopify Dev Dashboard and sign in with your Shopify Partner account',
-          'Click Create app or navigate to Apps > Create app',
-          'Configure scopes: read_content, write_content, read_themes, write_themes',
-          'Click Release, install the app, then copy Client ID and Secret from the Settings tab',
+          'In Shopify Admin go to Settings → Apps and sales channels → Develop apps',
+          'Click Create an app and give it a name',
+          'Under Configuration, set Admin API scopes: write_content, read_content',
+          'Click Save, then Install app',
+          'Copy the Admin API access token — you can only view it once',
         ]} />
       </StepBlock>
 
-      <StepBlock n={3} title="Connect Credentials" done>
-        <p className="text-sm text-muted-foreground mb-3">
-          Enter your Shopify store name, Client ID, and Client Secret
-        </p>
-        <div className="space-y-3">
-          <FormField label="Store Name" id="sh-store" placeholder="Store Name (e.g. mystore)"
-            value={storeName} onChange={setStoreName} />
-          <FormField label="Client ID" id="sh-id" placeholder="Client ID"
-            value={clientId} onChange={setClientId} />
-          <FormField label="Client Secret" id="sh-secret" placeholder="Client Secret"
-            type="password" value={clientSecret} onChange={setClientSecret} />
-        </div>
+      <StepBlock n={3} title="Connect" done>
+        <FormField label="Admin API Access Token" id="sh-token"
+          placeholder="shpat_..." type="password"
+          value={accessToken} onChange={setAccessToken} />
         {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
         <Button
           className="mt-4 w-full"
-          onClick={() => onConnect({ credentials: { storeName, clientId, clientSecret } })}
-          disabled={isPending || !storeName || !clientId || !clientSecret}
+          onClick={() => onConnect({ credentials: { storeName, accessToken } })}
+          disabled={isPending || !storeName || !accessToken}
         >
           {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Connect
@@ -612,7 +606,9 @@ function CmsConnectView({
       {platformId === 'webflow'     && <WebflowForm                         {...formProps} />}
       {platformId === 'shopify'     && <ShopifyForm                         {...formProps} />}
       {platformId === 'wix'         && <WixForm                             {...formProps} />}
+      {/*
       {platformId === 'framer'      && <FramerForm      projectId={projectId} {...formProps} />}
+      */}
       {platformId === 'sanity'      && <SanityForm      domain={domain}     {...formProps} />}
       {platformId === 'squarespace' && <SquarespaceForm domain={domain}     {...formProps} />}
       {platformId === 'gohighlevel' && <GoHighLevelForm                     {...formProps} />}

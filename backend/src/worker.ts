@@ -13,7 +13,6 @@
  * WORKERS STARTED HERE:
  *   seoPipelineWorker  — processes linear pipeline steps (SEO_PIPELINE queue)
  *   blogWorker         — processes blog generation child jobs (BLOG_GENERATION queue)
- *   blogQueueEvents    — listens for parent job completion → enqueues CMS_PUBLISH
  *
  * BOOT ORDER (mirrors app.ts — OTel must always be first):
  *   1. initOtel()          — tracing/logging before anything else

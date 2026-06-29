@@ -30,10 +30,8 @@ export interface WixCredentials {
 }
 
 export interface ShopifyCredentials {
-  storeName:    string;
-  clientId:     string;
-  clientSecret: string;
-  accessToken?: string; // set after OAuth — may not exist on first publish
+  storeName:   string;
+  accessToken: string;
 }
 
 export interface SanityCredentials {

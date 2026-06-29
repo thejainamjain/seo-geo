@@ -125,8 +125,11 @@ function formatSerpBrief(briefJson: string | undefined): string {
 
 // ── Day check (same as cms-publish.job.ts) ────────────────────────────────
 
-function isTodayAllowedPublishDay(allowedDays: number[]): boolean {
-  return allowedDays.includes(new Date().getUTCDay());
+function isNowAllowedPublishTime(allowedDays: number[], publishHourUtc: number): boolean {
+  const now      = new Date();
+  const todayUtc = now.getUTCDay();
+  const hourUtc  = now.getUTCHours();
+  return allowedDays.includes(todayUtc) && hourUtc >= publishHourUtc;
 }
 
 // ── Main job handler ───────────────────────────────────────────────────────
@@ -391,12 +394,15 @@ async function handlePublish(
   }
 
   const allowedDays = cmsConfig.allowedPublishDays ?? [1, 2, 3, 4, 5, 6];
-  if (!isTodayAllowedPublishDay(allowedDays)) {
-    logger.info('Today not an allowed publish day — blog stays ready', {
+  const publishHourUtc = cmsConfig.publishHourUtc ?? 17;
+  if (!isNowAllowedPublishTime(allowedDays, publishHourUtc)) {
+    logger.info('Not an allowed publish time — blog stays ready', {
       projectId,
       blogId,
-      todayUtc:    new Date().getUTCDay(),
+      todayUtc:       new Date().getUTCDay(),
+      hourUtc:        new Date().getUTCHours(),
       allowedDays,
+      publishHourUtc,
     });
     return;
   }

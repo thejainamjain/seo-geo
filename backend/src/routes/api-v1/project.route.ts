@@ -68,17 +68,25 @@ router.post(
 );
 
 // Pipeline status + resume (existing)
-router.get('/:id/pipeline/status', async (req, res) => {
-  const status = await getPipelineStatus(req.params.id);
-  res.json(status);
+router.get('/:id/pipeline/status', async (req, res, next) => {
+try {
+const status = await getPipelineStatus(req.params.id);
+res.json(status);
+} catch (err) {
+next(err);
+}
 });
 
-// POST /api/projects/:id/pipeline/resume
-router.post('/:id/pipeline/resume', async (req, res) => {
-  const result = await resumePipeline(req.params.id, {
-    fromStep: req.body.fromStep, // optional — auto-detects if not provided
-  });
-  res.json(result);
+// Resume pipeline from a specific step
+router.post('/:id/pipeline/resume', async (req, res, next) => {
+try {
+const result = await resumePipeline(req.params.id, {
+fromStep: req.body.fromStep,
+});
+res.json(result);
+} catch (err) {
+next(err);
+}
 });
 
 export default router;

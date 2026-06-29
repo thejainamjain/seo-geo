@@ -1,10 +1,9 @@
 'use client';
 
 import { use, useState } from 'react';
-import { useCodeChanges, useLatestAudit } from '@/lib/hooks';
+import { useCodeChanges, useLatestAudit, useFAQs, useTLDRs } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -12,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { CodeChange } from '@/types/api';
+import type { CodeChange, FAQ, TLDR } from '@/types/api';
 
 const TYPE_LABELS: Record<string, string> = {
   title:             'Optimize title',
@@ -32,14 +31,12 @@ const TYPE_LABELS: Record<string, string> = {
   page_size:         'Reduce page size',
 };
 
+// ── Type filter ───────────────────────────────────────────────────────────
+
 function TypeFilter({
-  types,
-  selected,
-  onChange,
+  types, selected, onChange,
 }: {
-  types: string[];
-  selected: string | null;
-  onChange: (t: string | null) => void;
+  types: string[]; selected: string | null; onChange: (t: string | null) => void;
 }) {
   return (
     <div className="flex flex-wrap gap-1.5 mb-4">
@@ -70,6 +67,8 @@ function TypeFilter({
   );
 }
 
+// ── Diff modal ────────────────────────────────────────────────────────────
+
 function DiffModal({ change, onClose }: { change: CodeChange; onClose: () => void }) {
   return (
     <Dialog open onOpenChange={onClose}>
@@ -78,6 +77,33 @@ function DiffModal({ change, onClose }: { change: CodeChange; onClose: () => voi
           <DialogTitle>{TYPE_LABELS[change.type] ?? change.type}</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground truncate mb-4">{change.url}</p>
+
+        {/* Extra info from htmlAttributes */}
+        {change.htmlAttributes && Object.keys(change.htmlAttributes).length > 0 && (
+          <div className="flex flex-wrap gap-3 mb-4">
+            {change.htmlAttributes['wordCount'] && (
+              <span className="text-xs text-muted-foreground">
+                Word count: <strong>{change.htmlAttributes['wordCount']}</strong>
+              </span>
+            )}
+            {change.htmlAttributes['responseTimeMs'] && (
+              <span className="text-xs text-muted-foreground">
+                Load time: <strong>{change.htmlAttributes['responseTimeMs']}ms</strong>
+              </span>
+            )}
+            {change.htmlAttributes['pageSizeKb'] && (
+              <span className="text-xs text-muted-foreground">
+                Page size: <strong>{change.htmlAttributes['pageSizeKb']}KB</strong>
+              </span>
+            )}
+            {change.htmlAttributes['hops'] && (
+              <span className="text-xs text-muted-foreground">
+                Redirect hops: <strong>{change.htmlAttributes['hops']}</strong>
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Before</p>
@@ -97,20 +123,175 @@ function DiffModal({ change, onClose }: { change: CodeChange; onClose: () => voi
   );
 }
 
+// ── Code change table ─────────────────────────────────────────────────────
+
+function ChangeTable({ changes, onSelect }: { changes: CodeChange[]; onSelect: (c: CodeChange) => void }) {
+  const byUrl = changes.reduce<Record<string, CodeChange[]>>((acc, c) => {
+    if (!acc[c.url]) acc[c.url] = [];
+    acc[c.url]!.push(c);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-1">
+      {Object.entries(byUrl).map(([url, urlChanges]) => (
+        <div key={url}>
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent rounded-lg transition-colors text-left"
+            onClick={() => onSelect(urlChanges[0]!)}
+          >
+            <span className="text-sm text-blue-400 hover:underline truncate">{url}</span>
+            <span className="text-xs text-muted-foreground shrink-0 ml-2">
+              {urlChanges.length} fix{urlChanges.length !== 1 ? 'es' : ''}
+            </span>
+          </button>
+          <div className="ml-4 border-l border-border pl-4 mb-2">
+            {urlChanges.map(change => (
+              <button
+                key={change._id}
+                onClick={() => onSelect(change)}
+                className="w-full flex items-center justify-between py-2 px-2 hover:bg-accent rounded text-left transition-colors"
+              >
+                <span className="text-xs text-muted-foreground">
+                  {TYPE_LABELS[change.type] ?? change.type}
+                  {/* Inline extra detail where useful */}
+                  {change.htmlAttributes?.['wordCount'] && (
+                    <span className="ml-1.5 text-muted-foreground/60">
+                      · {change.htmlAttributes['wordCount']} words
+                    </span>
+                  )}
+                  {change.htmlAttributes?.['responseTimeMs'] && (
+                    <span className="ml-1.5 text-muted-foreground/60">
+                      · {change.htmlAttributes['responseTimeMs']}ms
+                    </span>
+                  )}
+                  {change.htmlAttributes?.['pageSizeKb'] && (
+                    <span className="ml-1.5 text-muted-foreground/60">
+                      · {change.htmlAttributes['pageSizeKb']}KB
+                    </span>
+                  )}
+                </span>
+                <Badge variant="outline" className="text-xs capitalize">
+                  {change.status}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── FAQ list ──────────────────────────────────────────────────────────────
+
+function FAQList({ faqs }: { faqs: FAQ[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (faqs.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        No FAQs generated yet. Complete the pipeline to generate FAQs.
+      </p>
+    );
+  }
+
+  const withQuestions = faqs.filter(f => f.questions && f.questions.length > 0);
+
+  if (withQuestions.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        FAQs are pending LLM generation.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {withQuestions.map(faq => (
+        <div key={faq._id}>
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent rounded-lg transition-colors text-left"
+            onClick={() => setExpanded(expanded === faq._id ? null : faq._id)}
+          >
+            <span className="text-sm text-blue-400 truncate">{faq.sourceUrl}</span>
+            <div className="flex items-center gap-2 shrink-0 ml-2">
+              <span className="text-xs text-muted-foreground">
+                {faq.questions?.length} question{faq.questions?.length !== 1 ? 's' : ''}
+              </span>
+              <Badge variant="outline" className="text-xs capitalize">{faq.status}</Badge>
+            </div>
+          </button>
+          {expanded === faq._id && faq.questions && (
+            <div className="ml-4 border-l border-border pl-4 mb-2 space-y-3 py-2">
+              {faq.questions.map((q, i) => (
+                <div key={i} className="space-y-1">
+                  <p className="text-xs font-medium">{q.question}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{q.answer}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── TLDR list ─────────────────────────────────────────────────────────────
+
+function TLDRList({ tldrs }: { tldrs: TLDR[] }) {
+  if (tldrs.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        No TL;DRs generated yet. Complete the pipeline to generate summaries.
+      </p>
+    );
+  }
+
+  const withText = tldrs.filter(t => t.tldrText);
+
+  if (withText.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        TL;DRs are pending LLM generation.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {withText.map(tldr => (
+        <div key={tldr._id} className="px-4 py-3 border border-border rounded-lg space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-blue-400 truncate">{tldr.sourceUrl}</span>
+            <Badge variant="outline" className="text-xs capitalize shrink-0 ml-2">{tldr.status}</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">{tldr.tldrText}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
+
 export default function AuditPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId }   = use(params);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [selected, setSelected]     = useState<CodeChange | null>(null);
 
-  const { data: audit }   = useLatestAudit(projectId);
+  const { data: audit }              = useLatestAudit(projectId);
   const { data: changes, isLoading } = useCodeChanges(
     projectId,
     typeFilter ? { type: typeFilter } : undefined,
   );
+  const { data: faqs,  isLoading: faqLoading  } = useFAQs(projectId);
+  const { data: tldrs, isLoading: tldrLoading } = useTLDRs(projectId);
 
-  const allTypes   = [...new Set(changes?.map(c => c.type) ?? [])].sort();
-  const pending    = changes?.filter(c => c.status === 'pending')  ?? [];
-  const applied    = changes?.filter(c => c.status === 'applied')  ?? [];
+  const allTypes = [...new Set(changes?.map(c => c.type) ?? [])].sort();
+  const pending  = changes?.filter(c => c.status === 'pending') ?? [];
+  const applied  = changes?.filter(c => c.status === 'applied') ?? [];
 
   return (
     <div className="p-8">
@@ -136,10 +317,10 @@ export default function AuditPage({ params }: { params: Promise<{ projectId: str
       {audit?.summary && (
         <div className="grid grid-cols-4 gap-4 mb-8">
           {[
-            { label: 'Pages crawled', value: audit.summary.totalPages },
-            { label: 'SEO fixes',     value: audit.summary.totalFixes },
-            { label: 'Schemas added', value: audit.summary.totalSchemas },
-            { label: 'FAQs generated',value: audit.summary.totalFaqs },
+            { label: 'Pages crawled',  value: audit.summary.totalPages },
+            { label: 'SEO fixes',      value: audit.summary.totalFixes },
+            { label: 'Schemas added',  value: audit.summary.totalSchemas },
+            { label: 'FAQs generated', value: audit.summary.totalFaqs },
           ].map(({ label, value }) => (
             <div key={label} className="border border-border rounded-lg p-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
@@ -147,6 +328,12 @@ export default function AuditPage({ params }: { params: Promise<{ projectId: str
             </div>
           ))}
         </div>
+      )}
+
+      {!audit && !isLoading && (
+        <p className="text-sm text-muted-foreground mb-8">
+          No audit data yet. Run the pipeline to crawl your site and detect issues.
+        </p>
       )}
 
       <Tabs defaultValue="pending">
@@ -157,19 +344,24 @@ export default function AuditPage({ params }: { params: Promise<{ projectId: str
           <TabsTrigger value="applied">
             Applied {applied.length > 0 ? `(${applied.length})` : ''}
           </TabsTrigger>
+          <TabsTrigger value="faqs">
+            FAQs {faqs && faqs.filter(f => f.questions?.length).length > 0
+              ? `(${faqs.filter(f => f.questions?.length).length})`
+              : ''}
+          </TabsTrigger>
+          <TabsTrigger value="tldrs">
+            TL;DRs {tldrs && tldrs.filter(t => t.tldrText).length > 0
+              ? `(${tldrs.filter(t => t.tldrText).length})`
+              : ''}
+          </TabsTrigger>
         </TabsList>
 
         {isLoading && <Skeleton className="h-64 w-full" />}
 
         {!isLoading && (
           <>
-            <TypeFilter
-              types={allTypes}
-              selected={typeFilter}
-              onChange={setTypeFilter}
-            />
-
             <TabsContent value="pending">
+              <TypeFilter types={allTypes} selected={typeFilter} onChange={setTypeFilter} />
               {pending.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">
                   {typeFilter ? 'No pending fixes for this type.' : 'No pending fixes. Run the pipeline to detect issues.'}
@@ -186,60 +378,25 @@ export default function AuditPage({ params }: { params: Promise<{ projectId: str
                 <ChangeTable changes={applied} onSelect={setSelected} />
               )}
             </TabsContent>
+
+            <TabsContent value="faqs">
+              {faqLoading
+                ? <Skeleton className="h-64 w-full" />
+                : <FAQList faqs={faqs ?? []} />
+              }
+            </TabsContent>
+
+            <TabsContent value="tldrs">
+              {tldrLoading
+                ? <Skeleton className="h-64 w-full" />
+                : <TLDRList tldrs={tldrs ?? []} />
+              }
+            </TabsContent>
           </>
         )}
       </Tabs>
 
       {selected && <DiffModal change={selected} onClose={() => setSelected(null)} />}
-    </div>
-  );
-}
-
-function ChangeTable({
-  changes,
-  onSelect,
-}: {
-  changes: CodeChange[];
-  onSelect: (c: CodeChange) => void;
-}) {
-  // Group by URL
-  const byUrl = changes.reduce<Record<string, CodeChange[]>>((acc, c) => {
-    if (!acc[c.url]) acc[c.url] = [];
-    acc[c.url]!.push(c);
-    return acc;
-  }, {});
-
-  return (
-    <div className="space-y-1">
-      {Object.entries(byUrl).map(([url, urlChanges]) => (
-        <div key={url}>
-          <button
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent rounded-lg transition-colors group text-left"
-            onClick={() => onSelect(urlChanges[0]!)}
-          >
-            <span className="text-sm text-blue-400 hover:underline truncate">{url}</span>
-            <span className="text-xs text-muted-foreground shrink-0 ml-2">
-              {urlChanges.length} fix{urlChanges.length !== 1 ? 'es' : ''}
-            </span>
-          </button>
-          <div className="ml-4 border-l border-border pl-4 mb-2">
-            {urlChanges.map(change => (
-              <button
-                key={change._id}
-                onClick={() => onSelect(change)}
-                className="w-full flex items-center justify-between py-2 px-2 hover:bg-accent rounded text-left transition-colors"
-              >
-                <span className="text-xs text-muted-foreground">
-                  {TYPE_LABELS[change.type] ?? change.type}
-                </span>
-                <Badge variant="outline" className="text-xs capitalize">
-                  {change.status}
-                </Badge>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

@@ -99,7 +99,7 @@ export const blogsApi = {
 // ── Audit ─────────────────────────────────────────────────────────────────
 export const auditApi = {
   latest: (projectId: string) =>
-    apiClient.get<Audit>(`/projects/${projectId}/audit/latest`).then(r => r.data),
+    apiClient.get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`).then(r => r.data.audit),
  
   codeChanges: (projectId: string, params?: { type?: string; status?: string }) =>
     apiClient.get<CodeChange[]>(`/projects/${projectId}/audit/changes`, { params }).then(r => r.data),

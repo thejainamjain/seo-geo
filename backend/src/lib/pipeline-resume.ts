@@ -56,6 +56,7 @@ import {
   type PipelineStep,
 } from '@/constants/seo-pipeline.constants';
 import { seoPipelineQueue } from '@/workers/seo-pipeline.worker';
+import { NotFoundError } from '../utils/errors';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -261,7 +262,7 @@ export async function getPipelineStatus(projectId: string): Promise<{
   resumeFrom:  string | null;
 }> {
   const project = await Project.findById(projectId).lean();
-  if (!project) throw new Error(`Project not found: ${projectId}`);
+  if (!project) throw new NotFoundError('Project');
 
   const { pipeline } = project;
 

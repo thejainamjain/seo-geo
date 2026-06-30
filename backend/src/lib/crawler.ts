@@ -115,7 +115,7 @@ export interface PageData {
   structuredData:  StructuredDataItem[];  // parsed JSON-LD (not just boolean)
 
   // Links
-  links:       Array<{ href: string; text: string; isExternal: boolean }>;
+  links:       Array<{ href: string; text: string; isExternal: boolean; title: string }>;
   brokenLinks: Array<{ href: string; statusCode: number }>;  // checked HEAD requests
 
   // Images
@@ -636,9 +636,10 @@ export function extractFromCheerio(
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href')?.trim() ?? '';
     const text = $(el).text().trim();
+    const title = $(el).attr('title')?.trim() ?? '';
     if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
     const isExternal = href.startsWith('http') && !isSameDomain(href, domain);
-    links.push({ href, text, isExternal });
+    links.push({ href, text, isExternal, title });
   });
 
   const images: PageData['images'] = [];

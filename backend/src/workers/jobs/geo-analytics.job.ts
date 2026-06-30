@@ -36,7 +36,7 @@ import { logger }          from '@/open-tele';
 import { Project }         from '@/models/Project';
 import { Keyword }         from '@/models/Keyword';
 import { GeoAnalyticsRun } from '@/models/Analytics';
-import { callGemini }      from '@/lib/llm';
+import { geoCitationCheck, GeoCitationLlmResponse } from '@/lib/llm';
 import { LLM_RATE_LIMIT }  from '@/constants/seo-pipeline.constants';
 
 const GEO_KEYWORD_LIMIT  = 20;   // Cap at 20 to stay within free Gemini tier
@@ -51,28 +51,27 @@ function buildUserQuery(keyword: string): string {
 }
 
 /**
- * Check if the project's domain appears in the AI response.
- * Checks the first DOMAIN_CHECK_CHARS characters — AI citations are usually near the top.
+ * Check if the project's domain/brand appears in the LLM's structured
+ * citation list, instead of substring-matching raw free text.
+ * More accurate: catches brand mentions phrased differently, and avoids
+ * false positives from coincidental substrings in unrelated text.
  */
-function domainAppearsInResponse(response: string, domain: string): boolean {
-  const haystack = response.slice(0, DOMAIN_CHECK_CHARS).toLowerCase();
-
-  // Strip www. for flexible matching
+function domainAppearsInCitations(
+  sources: GeoCitationLlmResponse['mentionedSources'],
+  domain:  string,
+): boolean {
   const normalizedDomain = domain.replace(/^www\./, '').toLowerCase();
+  const brandName = normalizedDomain.split('.')[0]!.replace(/-/g, ' ').toLowerCase();
 
-  // Check 1: exact domain mention (example.com)
-  if (haystack.includes(normalizedDomain)) return true;
+  return sources.some(s => {
+    const sourceDomain = s.domain?.replace(/^www\./, '').toLowerCase() ?? '';
+    const sourceName   = s.name?.toLowerCase() ?? '';
 
-  // Check 2: brand name extracted from domain
-  // "cleaningpro.in" → "cleaningpro", "rank-ai.com" → "rank ai"
-  const brandName = normalizedDomain
-    .split('.')[0]!
-    .replace(/-/g, ' ')
-    .toLowerCase();
+    if (sourceDomain && sourceDomain.includes(normalizedDomain)) return true;
+    if (brandName.length > 3 && sourceName.includes(brandName)) return true;
 
-  if (brandName.length > 3 && haystack.includes(brandName)) return true;
-
-  return false;
+    return false;
+  });
 }
 
 function delay(ms: number): Promise<void> {
@@ -173,16 +172,9 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
         total:     keywords.length,
       });
 
-      // Send as a plain conversation — no JSON extraction needed
-      // We're measuring if the domain appears in free-form AI response
-      const response = await callGemini(
-        `You are a helpful AI assistant. Answer the user's question naturally and helpfully. Include specific website recommendations if you know relevant ones.`,
-        userQuery,
-        context,
-      );
+      const citationResult = await geoCitationCheck(userQuery, projectId, keyword.keyword);
 
-      const appeared = domainAppearsInResponse(response, project.domain);
-
+      const appeared = domainAppearsInCitations(citationResult.mentionedSources, project.domain);
       if (appeared) {
         domainAppearances++;
         logger.info('Domain appeared in GEO response', {

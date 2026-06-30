@@ -155,13 +155,13 @@ function detectCodeChanges(
     });
   }
 
-  for (const link of page.links.filter(l => l.isExternal)) {
+  for (const link of page.links.filter(l => l.isExternal && !l.title)) {
     changes.push({
       projectId, auditId, url: page.url,
       type:    'link_title',
       status:  'pending',
       oldHtml: `<a href="${link.href}">${link.text}</a>`,
-      newHtml: `<a href="${link.href}" target="_blank" rel="noopener noreferrer">${link.text}</a>`,
+      newHtml: '',
     });
   }
 

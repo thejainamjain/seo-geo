@@ -21,13 +21,12 @@
  *   title fix, description fix, OG tags, alt texts, schema, FAQ, TLDR.
  *   This is coherent (LLM sees full context once) and efficient (minimises RPM).
  *
- *   Non-LLM fixes (canonical, link_title) are already filled by site-crawl.
+ *   Non-LLM fixes (canonical) are already filled by site-crawl.
  *   We never call LLM for those — they are mechanical, deterministic fixes.
  *
  * WHICH TYPES NEED LLM vs MECHANICAL:
- *   LLM-generated:  title, description, open_graph, alt_text, schema
+ *   LLM-generated:  title, description, open_graph, alt_text, schema, link_title
  *   Pre-filled:     canonical (site-crawl sets newHtml directly)
- *   Mechanical:     link_title (site-crawl sets newHtml directly)
  *   LLM-generated:  faqQuestions (on FAQ model), tldrText (on TLDR model)
  *
  * RATE LIMITING:
@@ -127,6 +126,7 @@ interface PageCodeChanges {
   title:       string;
   description: string;
   textContent: string;
+  linkRefs:    Array<{ href: string; text: string }>; // links needing title attrs
 }
 
 interface AuditScoreInput {
@@ -180,6 +180,13 @@ function extractImgSrc(oldHtml: string): string {
   return match?.[1]?.trim() ?? '';
 }
 
+function extractLinkRef(oldHtml: string): { href: string; text: string } | null {
+  const hrefMatch = oldHtml.match(/href="([^"]*)"/i);
+  const textMatch = oldHtml.match(/>([^<]*)<\/a>/i);
+  if (!hrefMatch?.[1]) return null;
+  return { href: hrefMatch[1].trim(), text: textMatch?.[1]?.trim() ?? '' };
+}
+
 /**
  * Calculates weighted SEO score from audit results.
  * Returns actualScore, totalPossible, weightedPassRate for LLM calibration.
@@ -225,6 +232,7 @@ function calculateWeightedScore(input: AuditScoreInput): {
 function buildPageNeeds(pageChanges: PageCodeChanges): {
   needs:     string[];
   imageSrcs: string[];
+  linkRefs: Array<{href:string;text:string}>
 } {
   const needs: string[]     = [];
   const imageSrcs: string[] = [];
@@ -262,14 +270,15 @@ function buildPageNeeds(pageChanges: PageCodeChanges): {
       needs.push('canonicalFix');
     } else if (type === 'page_size') {
       needs.push('pageSizeFix');
-    }
+    } else if (type === 'link_title') {
+      if (pageChanges.linkRefs.length > 0) {
+        needs.push('linkTitles');
+      }
+    } 
   }
-
-  // Always request FAQ and TLDR if this page has stubs — no extra cost
-  // since it's the same LLM call
   needs.push('faqQuestions', 'tldrText');
 
-  return { needs, imageSrcs };
+  return { needs, imageSrcs, linkRefs: pageChanges.linkRefs };
 }
 
 // ── CodeChange updaters ────────────────────────────────────────────────────
@@ -357,6 +366,24 @@ async function applyCodeChanges(
               htmlAttributes: { alt },
             },
           },
+        },
+      });
+    }
+  }
+
+  if (llmResult.linkTitles && pageChanges.changeIds['link_title']) {
+    for (const id of pageChanges.changeIds['link_title']!) {
+      const idx = pageChanges.changeIds['link_title']!.indexOf(id);
+      const ref = pageChanges.linkRefs[idx];
+      if (!ref) continue;
+
+      const linkTitle = llmResult.linkTitles[ref.href];
+      if (!linkTitle) continue;
+
+      ops.push({
+        updateOne: {
+          filter: { _id: id },
+          update: { $set: { newHtml: `<a href="${ref.href}" title="${linkTitle}">${ref.text}</a>` } },
         },
       });
     }
@@ -539,6 +566,7 @@ async function groupCodeChangesByPage(
         title:       page?.title       ?? '',
         description: '', // extracted from CodeChange oldHtml below
         textContent: page?.textContent ?? '',
+        linkRefs:    [],
       });
     }
 
@@ -570,6 +598,17 @@ async function groupCodeChangesByPage(
         }
       }
     }
+
+    // Extract href/text for link_title changes
+    if (change.type === 'link_title' && change.oldHtml) {
+      const ref = extractLinkRef(change.oldHtml);
+      if (ref) {
+        if (entry.linkRefs.length < TECHNICAL_AUDIT_CONFIG.MAX_LINK_TITLES) {
+          entry.linkRefs.push(ref);
+        }
+      }
+    }
+
   }
 
   logger.info('CodeChanges grouped by page', {
@@ -709,6 +748,7 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
       title:        pages[i]?.title       ?? '',
       description:  '',
       textContent:  pages[i]?.textContent ?? '',
+      linkRefs:     [],
     };
 
     // Build what the LLM needs to generate for this page
@@ -741,6 +781,7 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
         pageChanges.textContent,
         needs,
         imageSrcs,
+        pageChanges.linkRefs,
         projectId,
       );
 

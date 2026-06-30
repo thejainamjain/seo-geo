@@ -12,10 +12,6 @@
  *   - Rate limit (429) and server errors (5xx) throw so BullMQ retries
  *   - API key validated at call time — clear error if missing
  *
- * GEMINI MODEL: gemini-2.0-flash
- *   - Free tier: 15 RPM, 1M tokens/day
- *   - Fast enough for pipeline use — not gemini-pro (slower, costs more)
- *
  * ADDING NEW LLM CALLS:
  *   1. Add typed interface for the expected JSON response
  *   2. Add a function that calls callGemini() with the right prompts
@@ -393,6 +389,39 @@ export interface PageAuditLlmResponse {
   speedFix?:         string;  // Performance improvement suggestions
   canonicalFix?:     string;  // Explanation of canonical mismatch + fix
   pageSizeFix?:      string;  // What's making the page large + fix suggestions
+  linkTitles?:       Record<string, string>;
+}
+
+export interface GeoCitationLlmResponse {
+  mentionedSources: Array<{
+    name:    string;  // brand/site name as mentioned
+    domain?: string;  // domain if explicitly stated
+  }>;
+}
+
+/**
+ * Asks Gemini a realistic user query and extracts structured citations,
+ * instead of returning free text for substring matching.
+ * Used by: geo-analytics.job.ts
+ *
+ * FUTURE: extend to ChatGPT + Perplexity for multi-provider GEO coverage.
+ * FUTURE: send 2-3 query phrasing variants per keyword instead of one fixed
+ *         template, to reduce undercounting from rigid query wording.
+ */
+export async function geoCitationCheck(
+  userQuery: string,
+  projectId: string,
+  keyword:   string,
+): Promise<GeoCitationLlmResponse> {
+  const context = `geo-citation:${projectId}:${keyword}`;
+
+  const raw = await callGemini(
+    `You are a helpful AI assistant. Answer the user's question naturally and helpfully, including specific website/business recommendations if you know relevant ones. After your answer, list every distinct website, brand, or business you mentioned. Return ONLY a JSON object: { "mentionedSources": [{ "name": string, "domain": string | null }] }. No markdown, no explanation, no extra fields.`,
+    userQuery,
+    context,
+  );
+
+  return extractJson<GeoCitationLlmResponse>(raw, context);
 }
 
 export interface SeoScoreLlmResponse {
@@ -495,19 +524,9 @@ export async function generateMarketSizing(
   return extractJson<MarketSizingLlmResponse>(raw, `market-sizing:${projectId}`);
 }
 
-
-
 /**
  * Audits a single page — generates all missing SEO fixes in one LLM call.
  * Used by: technical-audit.job.ts
- *
- * @param url         - Page URL (context for LLM)
- * @param title       - Current page title (may be empty)
- * @param description - Current meta description (may be empty)
- * @param textContent - Page text content, will be truncated inside prompt
- * @param needs       - List of fields to generate (only what's missing)
- * @param imageSrcs   - Image src URLs that need alt text generated
- * @param projectId   - For logging context
  */
 export async function auditPage(
   url:         string,
@@ -516,10 +535,10 @@ export async function auditPage(
   textContent: string,
   needs:       string[],
   imageSrcs:   string[],
+  linkRefs:    Array<{ href: string; text: string }>,
   projectId:   string,
 ): Promise<PageAuditLlmResponse> {
   if (needs.length === 0) {
-    // Nothing to generate — caller should have filtered this page out
     logger.warn('auditPage called with empty needs list — returning empty', {
       projectId, url,
     });
@@ -530,22 +549,15 @@ export async function auditPage(
 
   const raw = await callGemini(
     PROMPTS.PAGE_AUDIT_SYSTEM,
-    PROMPTS.PAGE_AUDIT_USER(url, title, description, textContent, needs, imageSrcs),
+    PROMPTS.PAGE_AUDIT_USER(url, title, description, textContent, needs, imageSrcs, linkRefs),
     context,
   );
 
   return extractJson<PageAuditLlmResponse>(raw, context);
 }
-
 /**
  * Calculates an SEO score for the project based on audit results.
  * Used by: technical-audit.job.ts (once per audit run, not per page)
- *
- * @param siteUrl         - The project's domain URL
- * @param actualScore     - Raw score (weighted passes)
- * @param totalPossible   - Maximum possible score
- * @param weightedPassRate - Percentage of weighted checks that passed
- * @param projectId       - For logging context
  */
 export async function generateSeoScore(
   siteUrl:          string,

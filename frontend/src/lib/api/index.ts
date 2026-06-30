@@ -37,7 +37,7 @@ export const projectsApi = {
   apiClient.get<{ projects: Project[] }>('/projects').then(r => r.data.projects),
 
   get: (projectId: string) =>
-    apiClient.get<Project>(`/projects/${projectId}`).then(r => r.data),
+    apiClient.get<{ project: Project }>(`/projects/${projectId}`).then(r => r.data.project),
 
   create: (domain: string) =>
     apiClient.post<{ project: Project }>('/projects', { domain }).then(r => r.data.project),
@@ -99,17 +99,32 @@ export const blogsApi = {
 // ── Audit ─────────────────────────────────────────────────────────────────
 export const auditApi = {
   latest: (projectId: string) =>
-    apiClient
-      .get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`)
-      .then(r => r.data.audit),
+    apiClient.get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`).then(r => r.data.audit),
  
-  codeChanges: (projectId: string, params?: { type?: string; status?: string }) =>
-    apiClient
-      .get<{ codeChanges: CodeChange[]; total: number; page: number; limit: number }>(
-        `/projects/${projectId}/audit/code-changes`,
-        { params },
-      )
-      .then(r => r.data.codeChanges),
+  codeChanges: async (projectId: string, params?: { type?: string; status?: string }) => {
+    const allChanges: CodeChange[] = [];
+    let page = 1;
+    let total = Infinity;
+ 
+    while (allChanges.length < total) {
+      const res = await apiClient.get<{
+        codeChanges: CodeChange[];
+        total: number;
+        page: number;
+        limit: number;
+      }>(`/projects/${projectId}/audit/code-changes`, {
+        params: { ...params, page, limit: 100 },
+      });
+ 
+      allChanges.push(...res.data.codeChanges);
+      total = res.data.total;
+      page++;
+ 
+      if (res.data.codeChanges.length === 0) break; // safety exit
+    }
+ 
+    return allChanges;
+  },
  
   faqs: (projectId: string) =>
     apiClient

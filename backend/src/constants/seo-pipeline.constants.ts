@@ -156,4 +156,5 @@ export const TECHNICAL_AUDIT_CONFIG = {
   PAGES_PER_BATCH:    1,    // Process N pages before sleeping — increase on paid plan
   MAX_ALT_TEXT_IMGS:  10,   // Cap: only generate alt text for first N missing-alt images per page
   MAX_FAQ_QUESTIONS:  5,    // Cap: max FAQ Q&A pairs per page
+  MAX_LINK_TITLES:    20,   // Cap: only generate titles for first N missing-title links per page
 } as const

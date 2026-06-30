@@ -185,29 +185,35 @@ Rules:
 - schemaFix: one sentence listing the missing schema fields and suggested values
 - speedFix: 2-3 specific actionable suggestions to reduce page load time
 - canonicalFix: one sentence explaining the canonical mismatch and the correct canonical URL
-- pageSizeFix: one sentence identifying what's making the page large and how to reduce it`,
+- pageSizeFix: one sentence identifying what's making the page large and how to reduce it
+- linkTitles: object mapping link href to a short descriptive title attribute (3-8 words). For links with visible anchor text, base the title on that text and the link's destination. For links with empty or generic anchor text (icon-only social links, "click here"), infer purpose from the domain (e.g. instagram.com → "Follow us on Instagram", whatsapp.com → "Chat with us on WhatsApp", x.com/twitter.com → "Follow us on X")`,
 
   PAGE_AUDIT_USER: (
-    url:         string,
-    title:       string,
-    description: string,
-    textContent: string,
-    needs:       string[],           // e.g. ['title', 'description', 'schema', 'faqQuestions']
-    imageSrcs:   string[],           // only images that need alt text
-  ) => {
-    const needsList = needs.join(', ');
-    const imgBlock  = imageSrcs.length > 0
-      ? `\nImages needing alt text:\n${imageSrcs.map(s => `- ${s}`).join('\n')}`
-      : '';
+      url:         string,
+      title:       string,
+      description: string,
+      textContent: string,
+      needs:       string[],
+      imageSrcs:   string[],
+      linkRefs:    Array<{ href: string; text: string }> = [],
+    ) => {
+      const needsList = needs.join(', ');
+      const imgBlock  = imageSrcs.length > 0
+        ? `\nImages needing alt text:\n${imageSrcs.map(s => `- ${s}`).join('\n')}`
+        : '';
+      const linkBlock = linkRefs.length > 0
+        ? `\nLinks needing title attributes:\n${linkRefs.map(l => `- href: ${l.href}, current text: "${l.text || '(empty)'}"`).join('\n')}`
+        : '';
 
-    return `Page URL: ${url}
-Current title: ${title || '(missing)'}
-Current description: ${description || '(missing)'}
-Page content (truncated):
-${textContent.slice(0, 8_000)}
-${imgBlock}
+      return `Page URL: ${url}
+  Current title: ${title || '(missing)'}
+  Current description: ${description || '(missing)'}
+  Page content (truncated):
+  ${textContent.slice(0, 8_000)}
+  ${imgBlock}
+  ${linkBlock}
 
-Generate ONLY these fields: ${needsList}
-Return a single JSON object with only those keys.`;
-  },
+  Generate ONLY these fields: ${needsList}
+  Return a single JSON object with only those keys.`;
+    },
 }

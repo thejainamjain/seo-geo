@@ -32,11 +32,16 @@ refinement, not rescue work.
    decisions surfaced, not yet made: retuning `LLM_RATE_LIMIT.DELAY_MS` for
    Groq's higher RPM, and whether `GROQ_MODEL` itself should change.
 
-2. **Competitor discovery silently overwrites the user's manual input**
-   (`docs/05-phase4-competitor-discovery-audit.md`). A user who manually
-   enters their competitors during onboarding gets that list replaced by
-   SERP-derived domains as soon as the pipeline resumes, with no merge, no
-   flag, no way to know it happened.
+2. ✅ **RESOLVED** — Competitor discovery no longer overwrites manual input
+   (`docs/05-phase4-competitor-discovery-audit.md`). Full schema change:
+   `mainCompetitors` is now `CompetitorEntry[]` with source/verified
+   tracking. Merge-and-verify logic replaces the old blind overwrite —
+   user/AI-drafted entries get crawled + LLM-verified, SERP matches upgrade
+   existing entries instead of duplicating them, failed verifications are
+   kept (not dropped) with a reasoning string. **Frontend not touched** —
+   3 files (`types/api.ts`, `business/page.tsx`, `onboarding/page.tsx`)
+   will need updating to read the new object shape; you're handling that
+   separately.
 
 3. **`publishHourUtc` is a latent landmine** (`docs/07-...-audit.md`). Fully
    built out in three files as if user-configurable, but never wired to the

@@ -1,22 +1,40 @@
 /**
  * workers/jobs/competitor-discovery.job.ts
  *
- * WHAT: Discovers the top real competitors for this project by running
- *       a Google SERP search for the business's core keyword and extracting
- *       the domains that rank for the same searches.
+ * WHAT: Discovers real competitors two ways — (1) verifies any existing
+ *       user-entered or AI-drafted competitor entries via crawl + LLM
+ *       judgment, and (2) runs a Google SERP search for the business's
+ *       core keyword and adds the domains that actually rank. MERGES
+ *       both into BusinessContext.competition.mainCompetitors — never
+ *       overwrites a human's manual input. See
+ *       docs/05-phase4-competitor-discovery-audit.md for the history of
+ *       why this changed from "always overwrite" to "verify and merge."
  *
  * PIPELINE POSITION: Step 4 of 8
- * READS:  BusinessContext (for core keyword + target region)
+ * READS:  BusinessContext (for core keyword, target region, and any
+ *         existing mainCompetitors entries from onboarding step 4 or the
+ *         AI's initial business-profile draft)
  *         Project (for own domain to exclude)
- * WRITES: BusinessContext.competition.mainCompetitors (array of domains)
+ * WRITES: BusinessContext.competition.mainCompetitors (CompetitorEntry[])
+ *         BusinessContext.competition.competitorInsights
  *
- * WHY SERP-BASED (not LLM-guessed):
+ * WHY SERP-BASED (not LLM-guessed) FOR DISCOVERY:
  *   LLM hallucination risk is high for competitor lists.
- *   Gemini will confidently name competitors that don't exist or
+ *   Gemini/Groq will confidently name competitors that don't exist or
  *   don't actually rank for the same keywords.
  *   SerpAPI gives us ground truth — real domains that Google ranks
  *   for the business's core keyword RIGHT NOW.
  *   This is exactly what RankAI does (visible in their UI screenshots).
+ *
+ * WHY VERIFY EXISTING ENTRIES (not just trust or discard them):
+ *   A user-typed or AI-drafted domain has no external ground truth behind
+ *   it the way a SERP ranking does. Rather than blindly trusting it (could
+ *   be wrong) or blindly overwriting it (destroys real human input), we
+ *   crawl the candidate's homepage and ask the LLM a narrow question: does
+ *   this actually look like a competitor, based on real page content? A
+ *   failed check doesn't delete the entry — it's kept with
+ *   verified:false and a reasoning string, so the user can see why and
+ *   decide, rather than their input silently vanishing.
  *
  * CORE KEYWORD EXTRACTION:
  *   Priority order (highest signal first):
@@ -36,8 +54,10 @@
  *   This ensures a Udaipur business gets Indian SERP results, not US ones.
  *
  * IDEMPOTENCY:
- *   Always overwrites mainCompetitors — safe on retry.
- *   SERP results are real-time — fresh data on retry is fine.
+ *   Safe on retry — SERP-discovered domains already in the list are
+ *   skipped (not re-added), and already-verified entries are not
+ *   re-verified (avoids burning LLM calls on retry). Only genuinely new
+ *   SERP domains and still-unverified entries do work on a retry.
  *
  * ERROR HANDLING:
  *   - BusinessContext missing → throws → BullMQ retries
@@ -46,19 +66,24 @@
  *   - Zero competitors after filtering → warns but completes
  *     (downstream keyword research will still run with empty list,
  *      which is better than blocking the whole pipeline)
+ *   - A single candidate's verification crawl/LLM call failing is
+ *     non-fatal — that entry just stays verified:false, job continues
  */
 
 import type { Job } from 'bullmq';
 import { logger }          from '@/open-tele';
 import { Project }         from '@/models/Project';
 import { BusinessContext } from '@/models/BusinessContext';
+import type { CompetitorEntry } from '@/models/BusinessContext';
 import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
 import { crawlSinglePage } from '@/lib/crawler';
+import { verifyCompetitor } from '@/lib/llm';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const MAX_COMPETITORS   = 10;
+const MAX_COMPETITORS   = 10; // cap on SERP-discovered candidates fetched per run
+const MAX_COMPETITORS_TOTAL = 15; // cap on the final merged list (existing + SERP)
 const MAX_KEYWORD_LEN   = 60; // chars — longer queries return noisier SERP results
 
 /**
@@ -115,7 +140,7 @@ function extractCoreKeyword(
   bc:
   { company?: { description?: string; targetRegions?: string[] }; 
     customers?: { topUseCases?: string; keywordsTheyUse?: string }; 
-    product?: { whatItSells?: string }; competition?: { mainCompetitors?: string[] } 
+    product?: { whatItSells?: string }; competition?: { mainCompetitors?: CompetitorEntry[] } 
   },
   domain:    string,
   projectId: string,
@@ -217,20 +242,154 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   });
 
   // 6. Filter: remove own domain + generic non-competitors + deduplicate
-  const allDomains        = serpResult.organicResults.map(r => r.domain);
-  const competitorDomains = filterCompetitorDomains(allDomains, project.domain, MAX_COMPETITORS);
+  const allDomains  = serpResult.organicResults.map(r => r.domain);
+  const serpDomains = filterCompetitorDomains(allDomains, project.domain, MAX_COMPETITORS);
 
-  logger.info('Competitor domains after filtering', {
+  logger.info('SERP-discovered competitor domains after filtering', {
     projectId,
     rawCount:      allDomains.length,
-    filteredCount: competitorDomains.length,
-    competitors:   competitorDomains,
+    filteredCount: serpDomains.length,
+    competitors:   serpDomains,
   });
 
-  if (competitorDomains.length === 0) {
+  // 7. Build a short business description for the LLM verification step —
+  //    same fields used elsewhere for LLM context, kept short.
+  const businessDescription = [
+    bc.company?.description,
+    bc.product?.whatItSells,
+    bc.customers?.topUseCases,
+  ].filter(Boolean).join(' ') || `A business at ${project.domain}`;
+
+  // 8. Load existing entries (from onboarding step 4 and/or the AI's
+  //    initial business-profile draft) into a domain → entry map.
+  //    This is the merge base — nothing here gets silently dropped.
+  const existingEntries = bc.competition?.mainCompetitors ?? [];
+  const merged = new Map<string, CompetitorEntry>();
+  for (const entry of existingEntries) {
+    const key = entry.domain.replace(/^www\./, '').toLowerCase();
+    if (key) merged.set(key, entry);
+  }
+
+  logger.debug('Existing competitor entries loaded for merge', {
+    projectId,
+    existingCount:   existingEntries.length,
+    alreadyVerified: existingEntries.filter(e => e.verified).length,
+  });
+
+  // Track pages we crawl along the way so step 11 (insights) doesn't
+  // re-crawl the same domain twice.
+  const crawledPages = new Map<string, Awaited<ReturnType<typeof crawlSinglePage>>>();
+
+  // 9. Merge in SERP results. A SERP domain ranking for the core keyword
+  //    IS its own verification — no LLM check needed for these. If a SERP
+  //    domain happens to match an existing (previously unverified) entry,
+  //    that's real confirmation for it too — upgrade it in place rather
+  //    than creating a duplicate.
+  for (const domain of serpDomains) {
+    const key = domain.replace(/^www\./, '').toLowerCase();
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, {
+        domain:   key,
+        source:   'serp',
+        verified: true,
+        addedAt:  new Date(),
+      });
+    } else if (!existing.verified) {
+      merged.set(key, {
+        ...existing,
+        verified:              true,
+        verificationReasoning: `Confirmed via live SERP ranking for "${coreKeyword}".`,
+      });
+    }
+    // If existing && existing.verified — already confirmed, leave as-is.
+  }
+
+  // 10. Verify remaining unverified entries (user-entered or AI-drafted,
+  //     not confirmed by the SERP pass above) via crawl + LLM judgment.
+  //     Non-fatal per entry — a failed check stays verified:false with a
+  //     reason, never silently dropped.
+  const stillUnverified = [...merged.values()].filter(e => !e.verified);
+
+  logger.info('Verifying remaining unverified competitor entries', {
+    projectId,
+    count: stillUnverified.length,
+  });
+
+  for (const entry of stillUnverified) {
+    const url = `https://${entry.domain}`;
+    try {
+      const page = await crawlSinglePage(url, entry.domain);
+      if (!page) {
+        merged.set(entry.domain, {
+          ...entry,
+          verificationReasoning: 'Could not reach this domain to verify it automatically.',
+        });
+        continue;
+      }
+      crawledPages.set(entry.domain, page);
+
+      const verdict = await verifyCompetitor(
+        businessDescription,
+        entry.domain,
+        page.title,
+        page.description,
+        page.textContent,
+        projectId,
+      );
+
+      merged.set(entry.domain, {
+        ...entry,
+        verified:              verdict.isCompetitor,
+        verificationReasoning: verdict.reasoning,
+      });
+
+      logger.debug('Competitor entry verified', {
+        projectId,
+        domain:   entry.domain,
+        source:   entry.source,
+        verified: verdict.isCompetitor,
+      });
+
+      // Polite delay between candidate crawls
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+
+    } catch (err) {
+      // Verification failure is non-fatal — keep the entry, mark why it
+      // couldn't be checked, move on to the next one.
+      logger.warn('Competitor verification failed — leaving unverified', {
+        projectId,
+        domain: entry.domain,
+        error:  err instanceof Error ? err.message : String(err),
+      });
+      merged.set(entry.domain, {
+        ...entry,
+        verificationReasoning: 'Automatic verification failed — could not confirm.',
+      });
+    }
+  }
+
+  // 11. Cap the final list — verified entries first (highest confidence),
+  //     preserve relative order within each group.
+  const allEntries = [...merged.values()];
+  const finalEntries = [
+    ...allEntries.filter(e => e.verified),
+    ...allEntries.filter(e => !e.verified),
+  ].slice(0, MAX_COMPETITORS_TOTAL);
+
+  logger.info('Competitor list merged', {
+    projectId,
+    existingCount: existingEntries.length,
+    serpCount:     serpDomains.length,
+    finalCount:    finalEntries.length,
+    verifiedCount: finalEntries.filter(e => e.verified).length,
+  });
+
+  if (finalEntries.length === 0) {
     // Non-fatal — keyword research will run with empty competitor list
     // This can happen for very niche local businesses with no online competitors
-    logger.warn('No competitors found after filtering — pipeline will continue', {
+    logger.warn('No competitors found after merge — pipeline will continue', {
       projectId,
       coreKeyword,
       countryCode,
@@ -238,13 +397,12 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
     });
   }
 
-  // 7. Upsert competitors into BusinessContext
-  //    Always overwrites — fresh SERP data on retry is correct behaviour
+  // 12. Write the merged (not overwritten) list back to BusinessContext
   await BusinessContext.findOneAndUpdate(
     { projectId },
     {
       $set: {
-        'competition.mainCompetitors': competitorDomains,
+        'competition.mainCompetitors': finalEntries,
       },
     },
     {
@@ -252,15 +410,15 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
       runValidators: false, // competition field is Mixed — no validators to run
     },
   );
-  
-  // 8. Crawl competitor homepages — extract content for blog generation context
-  //    crawlSinglePage() from lib/crawler.ts — lightweight, no link-following.
-  //    Results stored in BusinessContext.competition.competitorInsights.
-  //    Non-fatal: if all crawls fail, pipeline continues with domains only.
-  if (competitorDomains.length > 0) {
-    logger.info('Crawling competitor homepages', {
+
+  // 13. Crawl remaining competitor homepages — extract content for blog
+  //     generation context. Reuses crawls already done during verification
+  //     (step 10) instead of re-fetching the same domain twice.
+  //     Non-fatal: if all crawls fail, pipeline continues with domains only.
+  if (finalEntries.length > 0) {
+    logger.info('Building competitor insights', {
       projectId,
-      count: competitorDomains.length,
+      count: finalEntries.length,
     });
 
     const competitorInsights: Array<{
@@ -274,10 +432,17 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
       wordCount:   number;
     }> = [];
 
-    for (const competitorDomain of competitorDomains) {
-      const url = `https://${competitorDomain}`;
+    for (const entry of finalEntries) {
+      const competitorDomain = entry.domain;
       try {
-        const page = await crawlSinglePage(url, competitorDomain);
+        let page = crawledPages.get(competitorDomain);
+        if (!page) {
+          const url = `https://${competitorDomain}`;
+          page = await crawlSinglePage(url, competitorDomain);
+          // Polite delay only when we actually crawl (not for cache hits)
+          await new Promise(resolve => setTimeout(resolve, 1_000));
+        }
+
         if (!page) {
           logger.debug('Competitor page returned null', { projectId, competitorDomain });
           continue;
@@ -293,17 +458,6 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
           hasSchema:   page.hasSchema,
           wordCount:   page.wordCount,
         });
-
-        logger.debug('Competitor homepage crawled', {
-          projectId,
-          competitorDomain,
-          title:     page.title,
-          wordCount: page.wordCount,
-          hasSchema: page.hasSchema,
-        });
-
-        // Polite delay between competitor crawls
-        await new Promise(resolve => setTimeout(resolve, 1_000));
 
       } catch (err) {
         logger.warn('Competitor homepage crawl failed — skipping', {
@@ -328,15 +482,15 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
       logger.info('Competitor insights stored', {
         projectId,
         crawledCount: competitorInsights.length,
-        totalDomains: competitorDomains.length,
+        totalDomains: finalEntries.length,
       });
     }
   }
 
   logger.info('BusinessContext.competition.mainCompetitors updated', {
     projectId,
-    competitorCount: competitorDomains.length,
-    competitors:     competitorDomains,
+    competitorCount: finalEntries.length,
+    competitors:     finalEntries.map(e => e.domain),
   });
 
   logger.info('Competitor discovery job completed', {
@@ -344,6 +498,6 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
     jobId:           job.id,
     coreKeyword,
     countryCode,
-    competitorCount: competitorDomains.length,
+    competitorCount: finalEntries.length,
   });
 }

@@ -96,6 +96,23 @@ Schema:
   KEYWORD_ALIGNMENT_USER: (keywordList: string) =>
     `Score these keywords for the business above:\n${keywordList}`,
 
+  COMPETITOR_VERIFICATION_SYSTEM: `You are a market research analyst. You'll be given a business description and a candidate competitor's homepage content. Decide whether this candidate is plausibly a real competitor — i.e. serves a similar customer need, in a similar market, not just a coincidental keyword overlap (e.g. a news article that happens to mention a similar topic is NOT a competitor). Return ONLY valid JSON, no markdown, no explanation.
+
+Schema:
+{
+  "isCompetitor": true,
+  "reasoning": "one sentence explaining the judgment"
+}`,
+
+  COMPETITOR_VERIFICATION_USER: (
+    businessDescription: string,
+    candidateDomain:     string,
+    candidateTitle:      string,
+    candidateDescription: string,
+    candidateTextSnippet: string,
+  ) =>
+    `Business being analyzed:\n${businessDescription}\n\nCandidate competitor: ${candidateDomain}\nPage title: ${candidateTitle}\nPage description: ${candidateDescription}\nPage content snippet:\n${candidateTextSnippet.slice(0, 1_000)}\n\nIs this candidate a real competitor of the business above?`,
+
   CUSTOMER_PROFILE_SYSTEM: `You are a senior business strategist. Analyze this website deeply and return a comprehensive customer profile JSON object. Return ONLY valid JSON, no markdown, no explanation.
 
   CRITICAL: Every single value in the JSON must be a plain string. No arrays. No objects. No nested structures anywhere.

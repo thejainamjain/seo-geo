@@ -127,10 +127,33 @@ export const projectService = {
     const field = STEP_FIELD_MAP[step];
     if (!field) throw new ValidationError(`Invalid step: ${step}`);
 
+    // Step 4 (Competition): the wizard submits mainCompetitors as plain
+    // domain strings. Wrap each as a structured CompetitorEntry so it
+    // carries provenance (source: 'user') and starts unverified — the
+    // same shape business-profile.job.ts's AI draft and
+    // competitor-discovery.job.ts's SERP results use. This lets a human's
+    // manually-entered list MERGE with later SERP findings instead of
+    // being silently replaced — see docs/05-phase4-competitor-discovery-audit.md.
+    let stepData = data;
+    if (step === 4 && Array.isArray(data.mainCompetitors)) {
+      const now = new Date();
+      stepData = {
+        ...data,
+        mainCompetitors: (data.mainCompetitors as unknown[])
+          .filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
+          .map(raw => ({
+            domain:   raw.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim().toLowerCase(),
+            source:   'user' as const,
+            verified: false,
+            addedAt:  now,
+          })),
+      };
+    }
+
     await BusinessContext.findOneAndUpdate(
       { projectId: project._id },
       {
-        [field]:   data,
+        [field]:   stepData,
         $addToSet: { completedSteps: step },
       },
       { upsert: true, new: true },

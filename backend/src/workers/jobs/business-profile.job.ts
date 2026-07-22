@@ -29,6 +29,7 @@ import type { Job } from 'bullmq';
 import { logger }            from '@/open-tele';
 import { Project }           from '@/models/Project';
 import { BusinessContext }   from '@/models/BusinessContext';
+import type { CompetitorEntry } from '@/models/BusinessContext';
 import { getBusinessPages }  from '@/lib/page-selector';
 import { generateCustomerProfile } from '@/lib/llm';
 import type { PipelineJobData }    from '../seo-pipeline.worker';
@@ -114,6 +115,18 @@ function mapLlmResponseToBusinessContext(
     }
   }
 
+  // Wrap as structured CompetitorEntry objects — this is the AI's first,
+  // unverified guess (LLM-hallucination-prone, per the same reasoning
+  // documented in competitor-discovery.job.ts). Tagged 'ai_draft' /
+  // verified:false so downstream (onboarding wizard, competitor-discovery
+  // job) knows this hasn't been confirmed by a human or real SERP data yet.
+  const competitorEntries: CompetitorEntry[] = competitorList.map(raw => ({
+    domain:   raw.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').toLowerCase(),
+    source:   'ai_draft' as const,
+    verified: false,
+    addedAt:  new Date(),
+  }));
+
   logger.debug('LLM response mapped to BusinessContext fields', {
     projectId,
     hasCompany:      !!llm.CompanyName,
@@ -121,7 +134,7 @@ function mapLlmResponseToBusinessContext(
     hasCustomers:    !!llm.TargetCustomers,
     hasCompetition:  !!llm.CompetitorsAndDifferentiation,
     hasSocialProof:  !!llm.SocialProofAndTrust,
-    competitorCount: competitorList.length,
+    competitorCount: competitorEntries.length,
     segmentCount:    segments.length,
   });
 
@@ -148,7 +161,7 @@ function mapLlmResponseToBusinessContext(
       lifetimeValuePerClient: normalizeToString(llm.ProductOrService?.TotalLifetimeValuePerClient),
     },
     competition: {
-      mainCompetitors:  competitorList,
+      mainCompetitors:  competitorEntries,
       differentiation:  llm.CompetitorsAndDifferentiation?.Differentiation,
       uniqueStrengths:  llm.CompetitorsAndDifferentiation?.UniqueStrengths,
       proof:            llm.CompetitorsAndDifferentiation?.Proof,
@@ -233,7 +246,7 @@ export async function runBusinessProfileJob(job: Job<PipelineJobData>): Promise<
     businessContextId: String(businessContext._id),
     completedSteps:    businessContext.completedSteps,
     companyName:       String(mapped.company.name ?? ''),
-    competitorCount:   (mapped.competition.mainCompetitors as string[]).length,
+    competitorCount:   (mapped.competition.mainCompetitors as CompetitorEntry[]).length,
     segmentCount:      (mapped.customers.segments as string[]).length,
   });
 

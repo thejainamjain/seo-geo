@@ -62,6 +62,7 @@ import type { Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { logger }          from '@/open-tele';
 import { Project, Keyword, BusinessContext}         from '@/models';
+import type { CompetitorEntry }          from '@/models/BusinessContext';
 import { getRankedKeywords } from '@/lib/dataforseo';
 import { generateMarketSizing, scoreKeywordAlignment } from '@/lib/llm';
 import { deriveCountryCodeFromRegions } from '@/lib/serp';
@@ -445,7 +446,12 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
     );
   }
 
-  const competitors = (bc.competition?.mainCompetitors as string[] | undefined) ?? [];
+  // Only use VERIFIED competitor entries for keyword research — an
+  // unverified user/AI-drafted domain hasn't been confirmed as a real
+  // competitor yet, and burning DataForSEO calls on it would waste quota
+  // on potentially-wrong data. See docs/05-phase4-competitor-discovery-audit.md.
+  const competitorEntries = (bc.competition?.mainCompetitors as CompetitorEntry[] | undefined) ?? [];
+  const competitors = competitorEntries.filter(c => c.verified).map(c => c.domain);
   const countryCode = deriveCountryCodeFromRegions(
     bc.company?.targetRegions as string[] | undefined,
     projectId,

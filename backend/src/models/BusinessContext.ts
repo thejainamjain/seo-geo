@@ -20,6 +20,28 @@
 
 import mongoose, { Document, Schema, Types } from "mongoose";
 
+/**
+ * A single competitor entry with provenance and verification status.
+ *
+ * WHY STRUCTURED (not just a domain string):
+ *   - source tracks WHERE this competitor came from — a human typed it,
+ *     the initial AI business-profile draft guessed it, or it was
+ *     discovered via real SERP ranking data. The UI can show this.
+ *   - verified tracks WHETHER we've actually checked it's a real
+ *     competitor (crawled + LLM-judged, or self-verified for SERP
+ *     entries since ranking for the core keyword IS the verification).
+ *   - This lets competitor-discovery.job.ts MERGE new SERP findings with
+ *     existing entries instead of overwriting user/AI input wholesale —
+ *     see docs/05-phase4-competitor-discovery-audit.md.
+ */
+export interface CompetitorEntry {
+  domain:                 string;
+  source:                 'user' | 'ai_draft' | 'serp';
+  verified:                boolean;
+  verificationReasoning?:  string;
+  addedAt:                 Date;
+}
+
 export interface IBusinessContext extends Document {
   projectId: Types.ObjectId;
 
@@ -52,7 +74,7 @@ export interface IBusinessContext extends Document {
 
   // Step 4: Competition & differentiation
   competition?: {
-    mainCompetitors?: string[];
+    mainCompetitors?: CompetitorEntry[];
     differentiation?: string;
     uniqueStrengths?: string;
     tradeOffs?: string;

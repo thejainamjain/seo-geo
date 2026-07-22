@@ -3,7 +3,72 @@
 **File:** `workers/jobs/competitor-discovery.job.ts`
 **Pipeline position:** Step 4 of the 5-step auto-chain (runs right after
 `TECHNICAL_AUDIT`, which runs right after the user completes onboarding)
-**Status: 🔴 Real conflict found — user-entered data gets silently overwritten.**
+**Status: ✅ RESOLVED — merge + verify, no more silent overwrite.**
+
+## What changed
+Full structured schema change (per your call — not the backward-compatible
+option): `BusinessContext.competition.mainCompetitors` went from
+`string[]` to a `CompetitorEntry[]` — see `models/BusinessContext.ts` for
+the new type:
+
+```ts
+interface CompetitorEntry {
+  domain:                 string;
+  source:                 'user' | 'ai_draft' | 'serp';
+  verified:                boolean;
+  verificationReasoning?:  string;
+  addedAt:                 Date;
+}
+```
+
+- **`business-profile.job.ts`** now tags its initial AI-guessed competitor
+  list as `source: 'ai_draft', verified: false` — honest about the fact
+  this is an unverified LLM guess, matching the same reasoning this file
+  already used to justify SERP-based discovery over LLM-guessed.
+- **`project.service.ts`'s `saveOnboardingStep`** now wraps a user's
+  step-4 submission as `source: 'user', verified: false` before persisting
+  — the API request shape is unchanged (still plain domain strings in,
+  per the frontend's actual wire format, confirmed by reading
+  `onboarding/page.tsx` directly rather than trusting the README's
+  shorthand docs).
+- **`competitor-discovery.job.ts`** rewritten to **merge, verify, never
+  silently overwrite**:
+  1. Loads existing entries (user + AI-draft) as the merge base.
+  2. Runs the SERP search as before — any SERP domain matching an existing
+     unverified entry **upgrades it in place** (real ranking data is
+     stronger confirmation than an LLM check) rather than creating a
+     duplicate.
+  3. Remaining unverified entries get a real check: crawl the candidate's
+     homepage (reusing the same `crawlSinglePage` already used for
+     competitor insights) + one LLM call (`verifyCompetitor`, new function
+     in `lib/llm.ts`) asking "is this plausibly a competitor, true/false +
+     reasoning."
+  4. A failed verification (crawl fails, LLM fails, or LLM judges "no")
+     **keeps the entry** with `verified: false` and a reasoning string —
+     never silently dropped, so the user can see why.
+  5. Final list capped at 15, verified entries sorted first.
+  6. Homepage crawls done during verification are reused for
+     `competitorInsights` instead of re-crawled — avoids double-crawling
+     the same domain.
+- **`keyword-research.job.ts`** now only spends DataForSEO calls on
+  `verified: true` competitors — avoids wasting API quota on unconfirmed
+  guesses.
+- Verified with `tsc --noEmit` — clean compile across all touched files.
+
+## Scope note — frontend not touched
+This was a real schema change (`string[]` → `CompetitorEntry[]`), and 3
+frontend files read this field (`types/api.ts`, `business/page.tsx`,
+`onboarding/page.tsx`). Per your direction, frontend updates are being
+handled separately — **the onboarding wizard's write path still works
+unchanged** (still submits plain domain strings, transformed server-side),
+but any frontend code that *reads back* `mainCompetitors` from the API
+(e.g. `business/page.tsx` displaying the list) will need updating to
+handle the new object shape instead of plain strings, or it will render
+incorrectly (e.g. `[object Object]` instead of a domain).
+
+---
+
+## Original finding (for reference)
 
 ## What it does
 Extracts a "core keyword" from `BusinessContext` (priority chain: top use
@@ -79,3 +144,4 @@ market.
 - Which of the three fix options above matches the intended product
   behavior — should the user's manual competitor input always win, always
   lose to fresh SERP data, or should both be shown separately?
+  

@@ -591,6 +591,43 @@ export async function scoreKeywordAlignment(
   return extractJson<KeywordAlignmentLlmResponse>(raw, `keyword-alignment:${projectId}`);
 }
 
+export interface CompetitorVerificationLlmResponse {
+  isCompetitor: boolean;
+  reasoning:    string;
+}
+
+/**
+ * Judges whether a candidate domain is plausibly a real competitor of the
+ * business, based on the candidate's own crawled homepage content.
+ *
+ * Used by: competitor-discovery.job.ts — to verify user-entered and
+ * AI-drafted competitor entries (which, unlike SERP-discovered ones, have
+ * no external ground truth backing them). See
+ * docs/05-phase4-competitor-discovery-audit.md for why this exists.
+ *
+ * On failure (LLM error, bad JSON), the caller should treat the entry as
+ * unverified rather than dropping it — a failed check is not the same as
+ * a negative judgment.
+ */
+export async function verifyCompetitor(
+  businessDescription:   string,
+  candidateDomain:       string,
+  candidateTitle:        string,
+  candidateDescription:  string,
+  candidateTextSnippet:  string,
+  projectId:             string,
+): Promise<CompetitorVerificationLlmResponse> {
+  const context = `competitor-verification:${projectId}:${candidateDomain}`;
+  const raw = await callLLM(
+    PROMPTS.COMPETITOR_VERIFICATION_SYSTEM,
+    PROMPTS.COMPETITOR_VERIFICATION_USER(
+      businessDescription, candidateDomain, candidateTitle, candidateDescription, candidateTextSnippet,
+    ),
+    context,
+  );
+  return extractJson<CompetitorVerificationLlmResponse>(raw, context);
+}
+
 /**
  * Analyzes SERP results for a keyword.
  * Used by: serp-research.job.ts

@@ -59,7 +59,6 @@ export const QUEUE_NAMES = {
   BLOG_GENERATION:     'seo-blog-generation',
   GEO_ANALYTICS:       'seo-geo-analytics',
   GSC_MONITOR:         'seo-gsc-monitor',
-  // PUBLISH:             'seo-publish',
   CMS_PUBLISH_CRON: 'seo-cms-publish',
   CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
 } as const
@@ -94,12 +93,15 @@ export const CODE_CHANGE_SEVERITY_WEIGHT: Record<string, number> = {
 
 /**
  * BullMQ job priorities — lower number = higher priority.
- * CMS_PUBLISH is highest: runs in a time-sensitive window (Mon–Sat 5PM UTC).
- * SITE_CRAWL is next: unblocks all downstream steps.
+ * SITE_CRAWL is highest here: unblocks all downstream pipeline steps.
  * BLOG_GENERATION is lowest: heavy background work, not time-sensitive.
+ *
+ * NOTE: CMS_PUBLISH has no entry here — it's not enqueued via this constant.
+ * global-scheduler.job.ts enqueues CMS_PUBLISH_CRON jobs with its own
+ * hardcoded { attempts: 3, backoff: { delay: 30_000 } }, since it fans out
+ * per-project from a cron trigger rather than following the linear pipeline.
  */
 export const JOB_PRIORITY = {
- // CMS_PUBLISH:          1,
   SITE_CRAWL:           2,
   BUSINESS_PROFILE:     3,
   TECHNICAL_AUDIT:      3,
@@ -125,7 +127,6 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   KEYWORD_RESEARCH:     { attempts: 4,  backoffDelay: 15_000 },
   SERP_RESEARCH:        { attempts: 4,  backoffDelay: 15_000 },
   BLOG_GENERATION:      { attempts: 4,  backoffDelay: 30_000 },
- // CMS_PUBLISH:          { attempts: 3,  backoffDelay: 20_000 },
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
   CONTENT_GENERATION:   { attempts: 3,  backoffDelay: 15_000 },

@@ -206,19 +206,12 @@ async function handleKeywordResearch(job: Job<PipelineJobData>): Promise<void> {
   await markStepCompleted(projectId, step);
 }
 
-// async function handleGeoAnalytics(job: Job<PipelineJobData>): Promise<void> {
-//   const { projectId } = job.data;
-//   logger.info('GEO analytics handler started', { projectId });
-//   await runGeoAnalyticsJob(job as unknown as Job<{ projectId: string }>);
-//   logger.info('GEO analytics handler completed', { projectId });
-// }
-
-// async function handleGscMonitor(job: Job<PipelineJobData>): Promise<void> {
-//   const { projectId } = job.data;
-//   logger.info('GSC monitor handler started', { projectId });
-//   await runGscMonitorJob(job as unknown as Job<{ projectId: string }>);
-//   logger.info('GSC monitor handler completed', { projectId });
-// }
+// NOTE: GEO_ANALYTICS and GSC_MONITOR are NOT handled here. They run as
+// separate repeatable cron jobs on their own queues (seo-geo-analytics,
+// seo-gsc-monitor), processed by scheduler.worker.ts's createGeoAnalyticsWorker
+// and createGscMonitorWorker. They were removed from this linear pipeline
+// worker when the architecture split into three mechanisms — see
+// docs/03-orchestration-audit.md for the full picture.
 
 // ── Step dispatcher ────────────────────────────────────────────────────────
 
@@ -228,8 +221,6 @@ const STEP_HANDLERS: Partial<Record<PipelineStep, (job: Job<PipelineJobData>) =>
   [PIPELINE_STEP.TECHNICAL_AUDIT]:      handleTechnicalAudit,
   [PIPELINE_STEP.COMPETITOR_DISCOVERY]: handleCompetitorDiscovery,
   [PIPELINE_STEP.KEYWORD_RESEARCH]:     handleKeywordResearch,
-  //[PIPELINE_STEP.GEO_ANALYTICS]:        handleGeoAnalytics,
-  //[PIPELINE_STEP.GSC_MONITOR]:          handleGscMonitor,
 };
 
 // ── SEO Pipeline worker factory ────────────────────────────────────────────

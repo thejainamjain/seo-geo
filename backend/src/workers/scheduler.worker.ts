@@ -128,10 +128,17 @@ function createCmsPublishWorker(): Worker<CmsPublishJobData> {
     },
   );
 
+  worker.on('completed', (job) => {
+    logger.info('CMS publish job completed', {
+      jobId:     job.id,
+      projectId: job.data.projectId,
+    });
+  });
+
   worker.on('failed', (job, err) => {
     if (!job) return;
     logger.error(new Error('CMS publish job failed'), {
-      jobId: job.id, projectId: job.data.projectId, error: err.message,
+      jobId: job.id, projectId: job.data.projectId, attemptsMade: job.attemptsMade, error: err.message,
     });
   });
 
@@ -158,10 +165,17 @@ function createGeoAnalyticsWorker(): Worker<{ projectId: string }> {
     },
   );
 
+  worker.on('completed', (job) => {
+    logger.info('GEO analytics job completed', {
+      jobId:     job.id,
+      projectId: job.data.projectId,
+    });
+  });
+
   worker.on('failed', (job, err) => {
     if (!job) return;
     logger.error(new Error('GEO analytics job failed'), {
-      jobId: job.id, projectId: job.data.projectId, error: err.message,
+      jobId: job.id, projectId: job.data.projectId, attemptsMade: job.attemptsMade, error: err.message,
     });
   });
 
@@ -188,10 +202,17 @@ function createGscMonitorWorker(): Worker<{ projectId: string }> {
     },
   );
 
+  worker.on('completed', (job) => {
+    logger.info('GSC monitor job completed', {
+      jobId:     job.id,
+      projectId: job.data.projectId,
+    });
+  });
+
   worker.on('failed', (job, err) => {
     if (!job) return;
     logger.error(new Error('GSC monitor job failed'), {
-      jobId: job.id, projectId: job.data.projectId, error: err.message,
+      jobId: job.id, projectId: job.data.projectId, attemptsMade: job.attemptsMade, error: err.message,
     });
   });
 

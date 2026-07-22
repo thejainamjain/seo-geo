@@ -148,16 +148,18 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
     keywords:     keywords.map(k => k.keyword),
   });
 
-  // 6. For each keyword: send a user query to Gemini, check if domain appears
+  // 6. For each keyword: send a user query to Groq compound-beta (live
+  //    search + real citations), check if domain appears in actual results.
   let successfulPrompts = 0;
   let failedPrompts     = 0;
+  let skippedNoSearch   = 0; // model answered without running search — excluded from the score, not a failure
   let domainAppearances = 0;
 
   for (let i = 0; i < keywords.length; i++) {
     const keyword = keywords[i]!;
     const context = `geo-analytics:${projectId}:${keyword.keyword}`;
 
-    // Rate limit — stay under Gemini free tier (15 RPM)
+    // Rate limit — stay under Groq free tier
     if (i > 0) {
       await delay(LLM_RATE_LIMIT.DELAY_MS);
     }
@@ -165,7 +167,7 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
     try {
       const userQuery = buildUserQuery(keyword.keyword);
 
-      logger.debug('Sending GEO query to Gemini', {
+      logger.debug('Sending GEO query to Groq compound-beta (live search)', {
         projectId,
         keyword:   keyword.keyword,
         jobIndex:  i + 1,
@@ -174,17 +176,30 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
 
       const citationResult = await geoCitationCheck(userQuery, projectId, keyword.keyword);
 
+      // If the model didn't actually run a search, we have no real signal
+      // for this query — don't count it as "checked, domain absent."
+      // That would silently bias the score toward 0% exactly like the old
+      // non-grounded bug this replaced. Exclude it instead.
+      if (!citationResult.searchExecuted) {
+        skippedNoSearch++;
+        logger.warn('GEO query answered without executing a live search — excluding from score', {
+          projectId,
+          keyword: keyword.keyword,
+        });
+        continue;
+      }
+
       const appeared = domainAppearsInCitations(citationResult.mentionedSources, project.domain);
       if (appeared) {
         domainAppearances++;
-        logger.info('Domain appeared in GEO response', {
+        logger.info('Domain appeared in live GEO search results', {
           projectId,
           keyword:  keyword.keyword,
           domain:   project.domain,
           appeared: true,
         });
       } else {
-        logger.debug('Domain did not appear in GEO response', {
+        logger.debug('Domain did not appear in live GEO search results', {
           projectId,
           keyword:  keyword.keyword,
           appeared: false,
@@ -204,7 +219,10 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
   }
 
   // 7. Calculate GEO score
-  const totalAttempts        = successfulPrompts + failedPrompts;
+  //    Denominator is successfulPrompts only — queries where search never
+  //    ran (skippedNoSearch) are excluded from both numerator and
+  //    denominator, since we have no real data for them either way.
+  const totalAttempts        = successfulPrompts + failedPrompts + skippedNoSearch;
   const objectivePercentage  = successfulPrompts > 0
     ? Math.round((domainAppearances / successfulPrompts) * 100)
     : 0;
@@ -227,6 +245,7 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
     keywordsEvaluated:   keywords.length,
     successfulPrompts,
     failedPrompts,
+    skippedNoSearch,
     domainAppearances,
     objectivePercentage,
     prevScore:           prevObjectivePercentage,

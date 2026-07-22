@@ -24,12 +24,13 @@ refinement, not rescue work.
 
 ## 🔴 Findings that actually matter (ranked by impact)
 
-1. **GEO Analytics doesn't measure what it claims to measure**
-   (`docs/08-geo-analytics-audit.md`). Uses non-grounded Gemini, so it's
-   testing training-data brand recall, not live AI-answer citation. For new
-   content this will show ~0% regardless of real performance. This is the
-   core "AEO" differentiator being sold — worth fixing or clearly relabeling
-   before this metric is shown to real users.
+1. ✅ **RESOLVED** — GEO Analytics now uses real live search grounding
+   (`docs/08-geo-analytics-audit.md`). Rewrote `geoCitationCheck` to use
+   Groq's `compound-beta` (real search + real result URLs, not LLM
+   self-reporting). Also flipped the whole LLM provider order — Groq is now
+   primary, Gemini fallback (`docs/10-llm-provider-flip.md`). Two follow-up
+   decisions surfaced, not yet made: retuning `LLM_RATE_LIMIT.DELAY_MS` for
+   Groq's higher RPM, and whether `GROQ_MODEL` itself should change.
 
 2. **Competitor discovery silently overwrites the user's manual input**
    (`docs/05-phase4-competitor-discovery-audit.md`). A user who manually

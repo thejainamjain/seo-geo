@@ -1,10 +1,60 @@
 # GEO Analytics (AEO Measurement): Backend Audit
 
-**Files:** `workers/jobs/geo-analytics.job.ts`, `lib/llm.ts` (`callGemini`,
-`geoCitationCheck`)
-**Status: 🔴 Significant finding — the measurement doesn't test what the
-feature claims to test. This is the most important finding in the audit so
-far.**
+**Files:** `workers/jobs/geo-analytics.job.ts`, `lib/llm.ts`
+**Status: ✅ RESOLVED — now uses real, live search grounding instead of
+non-grounded LLM recall.**
+
+## What was wrong (original finding)
+Used a plain, non-grounded Gemini call — testing training-data brand recall,
+not live AI-citation. New content would always show ~0% regardless of real
+performance. Full original writeup preserved below.
+
+## What changed
+- **`geoCitationCheck()` in `lib/llm.ts` rewritten** to call Groq's
+  `compound-beta` model directly — this model runs real, server-side live
+  web search (via Tavily) before answering, and the SDK exposes the actual
+  `executed_tools[].search_results[]` it used (real URLs, real titles),
+  confirmed against the installed `groq-sdk` v1.3.0 type definitions.
+- The domain-appearance check now runs against **real search result URLs**,
+  not an LLM's self-reported "sources I used" JSON (which could hallucinate)
+  — strictly more trustworthy than the original design even before the
+  grounding issue.
+- Added a `searchExecuted` flag to the return type: compound-beta can choose
+  *not* to search for a given query. `geo-analytics.job.ts` now excludes
+  those queries from both the numerator and denominator of the score
+  (`skippedNoSearch` counter) instead of silently counting them as "checked,
+  domain absent" — which would have reintroduced the same 0%-bias bug in a
+  different form.
+- Deliberately **no Gemini fallback** on this specific call — if Groq
+  compound fails, the per-keyword failure handling already in
+  `geo-analytics.job.ts` treats it as `failedPrompts++` and moves on. A
+  Gemini fallback here would have silently regressed to non-grounded
+  measurement, which defeats the fix. Documented directly in the function's
+  code comment so this isn't accidentally "fixed" back to a fallback later.
+- Verified with `tsc --noEmit` — clean compile, zero errors.
+
+## Also changed at the same time: Groq is now the primary LLM provider
+Part of the same work session — see `docs/10-llm-provider-flip.md` for the
+full writeup of flipping all 10 LLM call sites from Gemini-primary to
+Groq-primary (Gemini now the fallback, only used on Groq rate limit).
+
+## Not changed — flagged, not touched
+While implementing this, found that `LLM_RATE_LIMIT.DELAY_MS` (4500ms, tuned
+for Gemini's 14 RPM ceiling) is used as an *external* pacing delay in 5 job
+files (`geo-analytics`, `technical-audit`, `serp-research`,
+`keyword-research`, `content-generation`), on top of the *internal*
+Redis-based per-provider rate limiter in `lib/llm.ts` (which already
+enforces the correct ceiling per provider — 14 RPM Gemini, 28 RPM Groq).
+Now that Groq is primary, this external delay is unnecessarily conservative
+everywhere, not just in GEO analytics — it's pacing every pipeline job at
+Gemini's slower rate even when the calls are actually going to Groq. Did
+not touch this — it's a real optimization opportunity but affects pipeline
+throughput/timing across 5 files, which felt like a separate decision from
+"fix GEO grounding + flip provider order." Flagging for your call.
+
+---
+
+## Original finding (for reference)
 
 ## What it's supposed to measure
 Per the file's own description: how often the project's domain gets cited
@@ -77,3 +127,4 @@ customers (ones who just had content generated and published).
 - Was non-grounded Gemini a deliberate, known-limitation MVP choice, or an
   oversight? This affects whether the fix is "add grounding" (code change)
   or "relabel the metric" (product/UX change) as the immediate next step.
+  

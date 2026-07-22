@@ -1,22 +1,24 @@
 /**
  * lib/llm.ts
  *
- * WHAT: Gemini API wrapper for all LLM calls in the pipeline.
+ * WHAT: LLM wrapper for all pipeline LLM calls.
+ *       Groq is primary; Gemini is the fallback (used only when Groq
+ *       rate-limits, so it's still one BullMQ attempt, not a wasted one).
  *
  * DESIGN:
  *   - Single exported function per use case (not a generic call — each
  *     function has typed input and typed output)
- *   - JSON extraction is robust — strips markdown fences Gemini adds
- *     despite "return only JSON" instructions
+ *   - JSON extraction is robust — strips markdown fences either provider
+ *     sometimes adds despite "return only JSON" instructions
  *   - All calls are logged with duration for observability
  *   - Rate limit (429) and server errors (5xx) throw so BullMQ retries
  *   - API key validated at call time — clear error if missing
  *
  * ADDING NEW LLM CALLS:
  *   1. Add typed interface for the expected JSON response
- *   2. Add a function that calls callGemini() with the right prompts
+ *   2. Add a function that calls callLLM() with the right prompts
  *   3. Export it
- *   Never add raw Gemini calls outside this file.
+ *   Never add raw Groq/Gemini calls outside this file.
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -30,6 +32,16 @@ import Groq from 'groq-sdk';
 
 const GEMINI_MODEL = 'gemini-2.0-flash';
 const GROQ_MODEL   = 'llama-3.3-70b-versatile';
+
+// Groq's compound system — does real, server-side live web search (via
+// Tavily) before answering, with actual executed_tools.search_results
+// returned alongside the answer. Used only by geoCitationCheck() below,
+// since that's the one call that needs live grounding, not just a fast
+// chat completion. Confirmed against the installed groq-sdk (v1.3.0) type
+// definitions — 'compound-beta' is the literal supported by this SDK
+// version (docs also reference 'groq/compound' as a newer alias; sticking
+// to the type-checked literal here).
+const GROQ_COMPOUND_MODEL = 'compound-beta';
 
 // ── Gemini client (lazy singleton) ────────────────────────────────────────
 // Lazy so we don't crash at import time if key is missing —
@@ -156,18 +168,12 @@ function extractJson<T>(raw: string, context: string): T {
   }
 }
 
-// ── Core Gemini call ───────────────────────────────────────────────────────
+// ── Core Gemini call (fallback provider) ──────────────────────────────────
 /**
- * Base function — all LLM calls go through here.
- * Handles: logging, duration tracking, error classification.
- *
- * Throws on:
- *   - 429 rate limit    → BullMQ retries with backoff
- *   - 5xx server error  → BullMQ retries with backoff
- *   - Empty response    → BullMQ retries
- *   - Invalid JSON      → BullMQ retries
+ * Direct Gemini call — no fallback logic inside. callLLM() decides whether
+ * to fall back here; this function just calls Gemini and throws on failure.
  */
-export async function callGemini(
+async function callGeminiDirect(
   systemPrompt: string,
   userPrompt:   string,
   context:      string, // for logging — e.g. "business-profile:projectId"
@@ -228,17 +234,16 @@ export async function callGemini(
       { context, model: GEMINI_MODEL, durationMs, isRateLimit, isServerError },
     );
 
-    // On rate limit → try Groq immediately instead of burning a BullMQ retry
-    if (isRateLimit) {
-      logger.warn('Gemini rate limited — falling back to Groq', { context });
-      return callGroq(systemPrompt, userPrompt, context);
-    }
-
     throw err;
   }
 }
 
-async function callGroq(
+// ── Core Groq call (primary provider) ─────────────────────────────────────
+/**
+ * Direct Groq call — no fallback logic inside. callLLM() decides whether
+ * to fall back to Gemini; this function just calls Groq and throws on failure.
+ */
+async function callGroqDirect(
   systemPrompt: string,
   userPrompt:   string,
   context:      string,
@@ -288,6 +293,40 @@ async function callGroq(
       err instanceof Error ? err : new Error(message),
       { context, model: GROQ_MODEL, durationMs: Date.now() - startedAt, isRateLimit },
     );
+    throw err;
+  }
+}
+
+// ── Public dispatcher — Groq primary, Gemini fallback ─────────────────────
+/**
+ * Base function — all LLM calls go through here.
+ * Tries Groq first (primary). On Groq rate limit, falls back to Gemini
+ * immediately instead of burning a BullMQ retry. Any other Groq error
+ * (bad JSON, empty response, 5xx) propagates so BullMQ retries against
+ * Groq again on the next attempt.
+ *
+ * Throws on:
+ *   - 429 rate limit (both providers exhausted) → BullMQ retries
+ *   - 5xx server error    → BullMQ retries
+ *   - Empty response      → BullMQ retries
+ *   - Invalid JSON        → BullMQ retries
+ */
+export async function callLLM(
+  systemPrompt: string,
+  userPrompt:   string,
+  context:      string, // for logging — e.g. "business-profile:projectId"
+): Promise<string> {
+  try {
+    return await callGroqDirect(systemPrompt, userPrompt, context);
+  } catch (err) {
+    const message     = err instanceof Error ? err.message : String(err);
+    const isRateLimit = message.includes('429') || message.toLowerCase().includes('rate limit');
+
+    if (isRateLimit) {
+      logger.warn('Groq rate limited — falling back to Gemini', { context });
+      return callGeminiDirect(systemPrompt, userPrompt, context);
+    }
+
     throw err;
   }
 }
@@ -394,15 +433,38 @@ export interface PageAuditLlmResponse {
 
 export interface GeoCitationLlmResponse {
   mentionedSources: Array<{
-    name:    string;  // brand/site name as mentioned
-    domain?: string;  // domain if explicitly stated
+    name:    string;  // search result title
+    domain?: string;  // domain, extracted from the real result URL
   }>;
+  /** True if the search tool actually ran and returned results.
+   *  False means the model answered from memory only (e.g. it judged
+   *  search unnecessary) — 0 sources in that case doesn't mean "not
+   *  cited," it means "we didn't actually check." Callers should treat
+   *  that distinctly from a genuine zero-result search. */
+  searchExecuted: boolean;
 }
 
 /**
- * Asks Gemini a realistic user query and extracts structured citations,
- * instead of returning free text for substring matching.
+ * Checks whether the project's domain shows up in REAL, live Google-web
+ * search results Groq's compound-beta model runs server-side while
+ * answering a realistic user query — not whether the model "remembers"
+ * the domain from training data, and not the model's own self-reported
+ * list of "sources it used" (which earlier versions of this function
+ * relied on, and which an LLM can hallucinate).
+ *
+ * compound-beta autonomously decides whether to search; if it does, the
+ * SDK exposes the actual executed_tools[].search_results — real URLs, not
+ * LLM-generated ones — which is what we check the domain against.
+ *
  * Used by: geo-analytics.job.ts
+ *
+ * ERROR HANDLING: throws on failure (rate limit, empty response, etc.) —
+ * deliberately does NOT fall back to plain Gemini, since a Gemini fallback
+ * would silently reintroduce non-grounded (memory-only) citation checking,
+ * which defeats the point of this function. geo-analytics.job.ts already
+ * treats a per-keyword failure here as non-fatal (failedPrompts++, continue
+ * to next keyword) — that's the correct behavior on failure, not a silent
+ * degrade to a different, weaker measurement.
  *
  * FUTURE: extend to ChatGPT + Perplexity for multi-provider GEO coverage.
  * FUTURE: send 2-3 query phrasing variants per keyword instead of one fixed
@@ -413,15 +475,76 @@ export async function geoCitationCheck(
   projectId: string,
   keyword:   string,
 ): Promise<GeoCitationLlmResponse> {
-  const context = `geo-citation:${projectId}:${keyword}`;
+  const context   = `geo-citation:${projectId}:${keyword}`;
+  const startedAt = Date.now();
 
-  const raw = await callGemini(
-    `You are a helpful AI assistant. Answer the user's question naturally and helpfully, including specific website/business recommendations if you know relevant ones. After your answer, list every distinct website, brand, or business you mentioned. Return ONLY a JSON object: { "mentionedSources": [{ "name": string, "domain": string | null }] }. No markdown, no explanation, no extra fields.`,
-    userQuery,
+  await waitForRateLimit('groq');
+
+  logger.debug('Groq compound GEO citation check started', {
     context,
-  );
+    model: GROQ_COMPOUND_MODEL,
+  });
 
-  return extractJson<GeoCitationLlmResponse>(raw, context);
+  try {
+    const groq = getGroq();
+    const completion = await groq.chat.completions.create({
+      model:    GROQ_COMPOUND_MODEL,
+      messages: [
+        {
+          role:    'system',
+          content: 'You are a helpful AI assistant. Use web search to answer the user question naturally and helpfully, including specific website/business recommendations if relevant.',
+        },
+        { role: 'user', content: userQuery },
+      ],
+    });
+
+    const message = completion.choices[0]?.message;
+
+    if (!message) {
+      throw new Error(`Groq compound returned no message. Context: ${context}`);
+    }
+
+    const executedTools  = message.executed_tools ?? [];
+    const searchExecuted = executedTools.some(t => !!t.search_results);
+
+    const mentionedSources: GeoCitationLlmResponse['mentionedSources'] = [];
+    for (const tool of executedTools) {
+      for (const result of tool.search_results?.results ?? []) {
+        mentionedSources.push({
+          name:   result.title ?? '',
+          domain: safeExtractDomain(result.url),
+        });
+      }
+    }
+
+    logger.info('Groq compound GEO citation check completed', {
+      context,
+      durationMs:         Date.now() - startedAt,
+      searchExecuted,
+      searchResultCount:  mentionedSources.length,
+    });
+
+    return { mentionedSources, searchExecuted };
+
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(
+      err instanceof Error ? err : new Error(message),
+      { context, model: GROQ_COMPOUND_MODEL, durationMs: Date.now() - startedAt },
+    );
+    throw err; // Deliberately no Gemini fallback — see function doc comment above.
+  }
+}
+
+/** Extracts a bare hostname (no www., no protocol) from a URL string.
+ *  Returns undefined if the URL is missing or unparseable. */
+function safeExtractDomain(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return undefined;
+  }
 }
 
 export interface SeoScoreLlmResponse {
@@ -443,7 +566,7 @@ export async function generateCustomerProfile(
   crawledContent: string,
   projectId:      string,
 ): Promise<CustomerProfileLlmResponse> {
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.CUSTOMER_PROFILE_SYSTEM,
     PROMPTS.CUSTOMER_PROFILE_USER(siteUrl, crawledContent),
     `customer-profile:${projectId}`,
@@ -460,7 +583,7 @@ export async function scoreKeywordAlignment(
   domainDescription: string,
   projectId:         string,
 ): Promise<KeywordAlignmentLlmResponse> {
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.KEYWORD_ALIGNMENT_SYSTEM(domainDescription),
     PROMPTS.KEYWORD_ALIGNMENT_USER(keywordList),
     `keyword-alignment:${projectId}`,
@@ -478,7 +601,7 @@ export async function analyzeSerpResults(
   domainDescription: string,
   projectId:         string,
 ): Promise<SerpAnalysisLlmResponse> {
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.SERP_ANALYSIS_SYSTEM(keyword, domainDescription),
     PROMPTS.SERP_ANALYSIS_USER(keyword, serpResults),
     `serp-analysis:${projectId}:${keyword}`,
@@ -499,7 +622,7 @@ export async function generateBlogPost(
   projectId:       string,
   keywordId:       string,
 ): Promise<BlogGenerationLlmResponse> {
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.BLOG_GENERATION_SYSTEM(customerProfile, keyword, sourceAnalysis, knowledgeChunks, contactUrl),
     PROMPTS.BLOG_GENERATION_USER(keyword),
     `blog-generation:${projectId}:${keywordId}`,
@@ -516,7 +639,7 @@ export async function generateMarketSizing(
   country:           string,
   projectId:         string,
 ): Promise<MarketSizingLlmResponse> {
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.MARKET_SIZING_SYSTEM,
     PROMPTS.MARKET_SIZING_USER(domainDescription, country),
     `market-sizing:${projectId}`,
@@ -547,7 +670,7 @@ export async function auditPage(
 
   const context = `page-audit:${projectId}:${url}`;
 
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.PAGE_AUDIT_SYSTEM,
     PROMPTS.PAGE_AUDIT_USER(url, title, description, textContent, needs, imageSrcs, linkRefs),
     context,
@@ -568,7 +691,7 @@ export async function generateSeoScore(
 ): Promise<SeoScoreLlmResponse> {
   const context = `seo-score:${projectId}`;
 
-  const raw = await callGemini(
+  const raw = await callLLM(
     PROMPTS.SEO_SCORE_SYSTEM,
     PROMPTS.SEO_SCORE_USER(siteUrl, actualScore, totalPossible, weightedPassRate),
     context,

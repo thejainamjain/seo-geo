@@ -69,6 +69,7 @@ import { deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData }          from '../seo-pipeline.worker';
 import type { DataForSeoKeyword }        from '@/lib/dataforseo';
 import { LLM_RATE_LIMIT }               from '@/constants/seo-pipeline.constants';
+import { scheduleWeeklyGeneration }     from '@/lib/keyword-generation-scheduler';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -562,6 +563,19 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
     modified:  bulkResult.modifiedCount,
     total:     scheduled.length,
   });
+
+  // 10. Schedule automatic weekly generation — week 1 immediately, every
+  //     other week as a delayed trigger 24h before its start date.
+  //     Re-query rather than trust bulkOps in-memory data: bulkWrite's
+  //     result doesn't reliably give back _ids for updated (non-inserted)
+  //     docs on a retry, so this is the simplest way to get the
+  //     authoritative current state to schedule against.
+  //     See lib/keyword-generation-scheduler.ts for the full design.
+  const savedKeywords = await Keyword.find({ projectId: projectObjectId, status: 'upcoming' })
+    .select('_id weekNumber startDate')
+    .lean();
+
+  await scheduleWeeklyGeneration(projectId, savedKeywords);
 
   logger.info('Keyword research job completed', {
     projectId,

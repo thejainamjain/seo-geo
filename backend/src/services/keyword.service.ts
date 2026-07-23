@@ -93,6 +93,11 @@ export const keywordService = {
       'content-generation',
       { projectId, keywordId },
       {
+        // Same jobId scheme as lib/keyword-generation-scheduler.ts's
+        // automatic weekly trigger — if both happen to fire for the same
+        // keyword near-simultaneously (manual click racing the automatic
+        // trigger), BullMQ's jobId dedup means only one actually runs.
+        jobId:    `content-generation:${keywordId}`,
         attempts: retryConfig.attempts,
         backoff:  { type: 'exponential', delay: retryConfig.backoffDelay },
       },

@@ -61,6 +61,7 @@ export const QUEUE_NAMES = {
   GSC_MONITOR:         'seo-gsc-monitor',
   CMS_PUBLISH_CRON: 'seo-cms-publish',
   CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
+  WEEKLY_GENERATION_TRIGGER: 'seo-weekly-generation-trigger', // per-project, per-week — fans out to CONTENT_GENERATION
 } as const
 
 export const CODE_CHANGE_TYPE = {

@@ -36,6 +36,7 @@ import {
   runGscMonitorScheduler,
 } from './jobs/global-scheduler.job';
 import { reconcileCmsPublishSchedules } from '@/lib/cms-publish-scheduler';
+import { runWeeklyGenerationTrigger }   from '@/lib/keyword-generation-scheduler';
 import { runCmsPublishJob, type CmsPublishJobData } from './jobs/cms-publish.job';
 import { runGeoAnalyticsJob } from './jobs/geo-analytics.job';
 import { runGscMonitorJob }   from './jobs/gsc-monitor.job';
@@ -222,13 +223,53 @@ function createGscMonitorWorker(): Worker<{ projectId: string }> {
   return worker;
 }
 
+function createWeeklyGenerationTriggerWorker(): Worker<{ projectId: string; weekNumber: number }> {
+  const worker = new Worker<{ projectId: string; weekNumber: number }>(
+    QUEUE_NAMES.WEEKLY_GENERATION_TRIGGER,
+    async (job: Job<{ projectId: string; weekNumber: number }>) => {
+      await runWeeklyGenerationTrigger(job.data);
+    },
+    {
+      connection:  getConnectionOptions(),
+      concurrency: 5, // lightweight — just enqueues onto CONTENT_GENERATION, no LLM calls itself
+    },
+  );
+
+  worker.on('completed', (job) => {
+    logger.info('Weekly generation trigger completed', {
+      jobId:      job.id,
+      projectId:  job.data.projectId,
+      weekNumber: job.data.weekNumber,
+    });
+  });
+
+  worker.on('failed', (job, err) => {
+    if (!job) return;
+    logger.error(new Error('Weekly generation trigger failed'), {
+      jobId: job.id, projectId: job.data.projectId, weekNumber: job.data.weekNumber,
+      attemptsMade: job.attemptsMade, error: err.message,
+    });
+  });
+
+  worker.on('error', (err) => {
+    logger.error(err, { context: 'weekly-generation-trigger.worker' });
+  });
+
+  logger.info('Weekly generation trigger worker started', {
+    queue: QUEUE_NAMES.WEEKLY_GENERATION_TRIGGER, concurrency: 5,
+  });
+
+  return worker;
+}
+
 // ── Main boot function ─────────────────────────────────────────────────────
 
 export interface SchedulerWorkers {
-  schedulerWorker:    Worker;
-  cmsPublishWorker:   Worker<CmsPublishJobData>;
-  geoAnalyticsWorker: Worker<{ projectId: string }>;
-  gscMonitorWorker:   Worker<{ projectId: string }>;
+  schedulerWorker:              Worker;
+  cmsPublishWorker:             Worker<CmsPublishJobData>;
+  geoAnalyticsWorker:           Worker<{ projectId: string }>;
+  gscMonitorWorker:             Worker<{ projectId: string }>;
+  weeklyGenerationTriggerWorker: Worker<{ projectId: string; weekNumber: number }>;
   close: () => Promise<void>;
 }
 
@@ -246,6 +287,7 @@ export async function bootSchedulers(): Promise<SchedulerWorkers> {
   const cmsPublishWorker   = createCmsPublishWorker();
   const geoAnalyticsWorker = createGeoAnalyticsWorker();
   const gscMonitorWorker   = createGscMonitorWorker();
+  const weeklyGenerationTriggerWorker = createWeeklyGenerationTriggerWorker();
 
   logger.info('All scheduler workers booted', {
     workers: [
@@ -253,6 +295,7 @@ export async function bootSchedulers(): Promise<SchedulerWorkers> {
       'cmsPublishWorker',
       'geoAnalyticsWorker',
       'gscMonitorWorker',
+      'weeklyGenerationTriggerWorker',
     ],
   });
 
@@ -261,11 +304,13 @@ export async function bootSchedulers(): Promise<SchedulerWorkers> {
     cmsPublishWorker,
     geoAnalyticsWorker,
     gscMonitorWorker,
+    weeklyGenerationTriggerWorker,
     close: async () => {
       await schedulerWorker.close();
       await cmsPublishWorker.close();
       await geoAnalyticsWorker.close();
       await gscMonitorWorker.close();
+      await weeklyGenerationTriggerWorker.close();
       logger.info('All scheduler workers closed');
     },
   };

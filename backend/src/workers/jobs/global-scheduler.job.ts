@@ -1,7 +1,7 @@
 /**
  * workers/jobs/global-scheduler.job.ts
  *
- * WHAT: Three global cron jobs that fan out work to per-project queues.
+ * WHAT: Two global cron jobs that fan out work to per-project queues.
  *
  * PATTERN (industry standard):
  *   One repeatable job fires on schedule → loads all active projects →
@@ -13,17 +13,21 @@
  *   - One place to change the schedule for all projects
  *   - BullMQ repeatable jobs are simpler to manage as singletons
  *
- * THREE SCHEDULERS:
+ *   NOTE: CMS publishing does NOT use this pattern anymore — it moved to
+ *   per-project BullMQ Job Schedulers (see lib/cms-publish-scheduler.ts)
+ *   because, unlike GEO analytics and GSC monitoring (which run at the
+ *   same global time for every project), CMS publish time is meant to be
+ *   per-project configurable. A single global trigger structurally can't
+ *   serve that correctly — see
+ *   docs/07-phases6-8-content-generation-publish-audit.md for the history.
  *
- *   1. CMS_PUBLISH_SCHEDULER — daily Mon–Sat at 17:00 UTC
- *      Finds all projects with CMS connected + autoPublish on
- *      Enqueues one cms-publish job per project
+ * TWO SCHEDULERS:
  *
- *   2. GEO_ANALYTICS_SCHEDULER — every Monday at 10:00 UTC
+ *   1. GEO_ANALYTICS_SCHEDULER — every Monday at 10:00 UTC
  *      Finds all projects with at least one published keyword
  *      Enqueues one geo-analytics job per project
  *
- *   3. GSC_MONITOR_SCHEDULER — every Monday at 11:00 UTC
+ *   2. GSC_MONITOR_SCHEDULER — every Monday at 11:00 UTC
  *      Finds all projects with GSC connected + published blogs
  *      Enqueues one gsc-monitor job per project
  *
@@ -34,8 +38,6 @@
 
 import { Queue }         from 'bullmq';
 import { logger }        from '@/open-tele';
-import { Project }       from '@/models/Project';
-import { CmsConfig }     from '@/models/CmsConfig';
 import { GoogleToken }   from '@/models/GoogleToken';
 import { Keyword }       from '@/models/Keyword';
 import { Blog }          from '@/models/Blog';
@@ -43,14 +45,6 @@ import { getConnectionOptions } from '@/loaders/redis';
 import { QUEUE_NAMES }   from '@/constants/seo-pipeline.constants';
 
 // ── Queue instances for fan-out ────────────────────────────────────────────
-
-const cmsPublishQueue = new Queue<{ projectId: string }>(QUEUE_NAMES.CMS_PUBLISH_CRON, {
-  connection: getConnectionOptions(),
-  defaultJobOptions: {
-    removeOnComplete: { count: 100 },
-    removeOnFail:     { count: 200 },
-  },
-});
 
 const geoAnalyticsQueue = new Queue<{ projectId: string }>(QUEUE_NAMES.GEO_ANALYTICS, {
   connection: getConnectionOptions(),
@@ -74,61 +68,7 @@ function todayKey(): string {
   return new Date().toISOString().split('T')[0]!; // "2026-06-29"
 }
 
-// ── Scheduler 1: CMS publish fan-out ──────────────────────────────────────
-
-export async function runCmsPublishScheduler(): Promise<void> {
-  logger.info('CMS publish scheduler started');
-
-  // Find all projects with CMS connected
-  const cmsConfigs = await CmsConfig.find({
-    cmsType:             { $exists: true, $ne: null },
-    encryptedCredentials: { $exists: true, $ne: null },
-    autoPublish:         true,
-  }).select('projectId allowedPublishDays publishHourUtc').lean();
-
-  if (cmsConfigs.length === 0) {
-    logger.info('CMS publish scheduler: no projects with autoPublish enabled');
-    return;
-  }
-
-  const todayUtc = new Date().getUTCDay();
-  const hourUtc  = new Date().getUTCHours();
-  const dateKey  = todayKey();
-
-  let enqueued = 0;
-  let skipped  = 0;
-
-  for (const config of cmsConfigs) {
-    const projectId  = String(config.projectId);
-    const allowedDays    = config.allowedPublishDays ?? [1, 2, 3, 4, 5, 6];
-    const publishHourUtc = config.publishHourUtc     ?? 17;
-
-    // Check day + hour
-    if (!allowedDays.includes(todayUtc) || hourUtc < publishHourUtc) {
-      skipped++;
-      continue;
-    }
-
-    await cmsPublishQueue.add(
-      `cms-publish:${projectId}`,
-      { projectId },
-      {
-        jobId:    `cms-publish:${projectId}:${dateKey}`,
-        attempts: 3,
-        backoff:  { type: 'exponential', delay: 30_000 },
-      },
-    );
-    enqueued++;
-  }
-
-  logger.info('CMS publish scheduler completed', {
-    total:    cmsConfigs.length,
-    enqueued,
-    skipped,
-  });
-}
-
-// ── Scheduler 2: GEO analytics fan-out ────────────────────────────────────
+// ── Scheduler 1: GEO analytics fan-out ────────────────────────────────────
 
 export async function runGeoAnalyticsScheduler(): Promise<void> {
   logger.info('GEO analytics scheduler started');
@@ -162,7 +102,7 @@ export async function runGeoAnalyticsScheduler(): Promise<void> {
   logger.info('GEO analytics scheduler completed', { enqueued });
 }
 
-// ── Scheduler 3: GSC monitor fan-out ──────────────────────────────────────
+// ── Scheduler 2: GSC monitor fan-out ──────────────────────────────────────
 
 export async function runGscMonitorScheduler(): Promise<void> {
   logger.info('GSC monitor scheduler started');

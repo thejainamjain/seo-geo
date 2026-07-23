@@ -43,11 +43,15 @@ refinement, not rescue work.
    will need updating to read the new object shape; you're handling that
    separately.
 
-3. **`publishHourUtc` is a latent landmine** (`docs/07-...-audit.md`). Fully
-   built out in three files as if user-configurable, but never wired to the
-   API — works today only because it's stuck at the default (17, matching
-   the fixed daily cron hour). Will silently break the moment it's exposed,
-   unless the cron-frequency fix ships in the same change.
+3. ✅ **RESOLVED** — `publishHourUtc` landmine fixed at the mechanism level
+   (`docs/07-phases6-8-content-generation-publish-audit.md`). Replaced the
+   single fixed-time daily sweep with per-project BullMQ Job Schedulers
+   (`lib/cms-publish-scheduler.ts`) — each project now fires at its own
+   configured hour/days natively, no polling, no "is the trigger late
+   enough" check. Synced into `cms.service.ts`'s connect/update/disconnect
+   flows, with idempotent reconciliation on worker boot to migrate existing
+   projects. `publishHourUtc` still isn't exposed via the API — that
+   remains a separate, deliberately out-of-scope decision.
 
 ## 🟡 Findings worth deciding on, lower urgency
 

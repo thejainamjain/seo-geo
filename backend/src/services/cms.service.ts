@@ -2,6 +2,7 @@ import { CmsConfig, Project, OrganizationMember } from '../models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { encrypt } from '../lib/crypto';
 import { logger } from '../open-tele';
+import { upsertCmsPublishSchedule, removeCmsPublishSchedule } from '../lib/cms-publish-scheduler';
 
 const VALID_CMS_TYPES = [
   'wordpress', 'webflow', 'framer', 'wix', 'shopify',
@@ -114,6 +115,14 @@ export const cmsService = {
     );
     if (!config) throw new NotFoundError('CmsConfig');
 
+    // Keep the per-project publish schedule in sync with the new state —
+    // see lib/cms-publish-scheduler.ts for why this exists.
+    if (config.autoPublish) {
+      await upsertCmsPublishSchedule(projectId, config.publishHourUtc, config.allowedPublishDays);
+    } else {
+      await removeCmsPublishSchedule(projectId);
+    }
+
     logger.info('CmsConfig updated', { projectId });
     return config;
   },
@@ -130,6 +139,9 @@ export const cmsService = {
         autoPublish: false,
       },
     );
+
+    // CMS disconnected — no more auto-publishing for this project.
+    await removeCmsPublishSchedule(projectId);
 
     await Project.findByIdAndUpdate(project._id, { isCmsConnected: false });
 

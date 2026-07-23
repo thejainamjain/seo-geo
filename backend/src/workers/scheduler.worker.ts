@@ -1,13 +1,21 @@
 /**
  * workers/scheduler.worker.ts
  *
- * WHAT: Boots three global repeatable cron jobs (schedulers) and
+ * WHAT: Boots the global repeatable cron jobs (schedulers) and
  *       three per-project workers that process the fanned-out jobs.
  *
- * SCHEDULERS (singleton repeatable jobs):
- *   cms-publish-scheduler  → daily Mon–Sat 17:00 UTC
- *   geo-analytics-scheduler → every Monday 10:00 UTC
- *   gsc-monitor-scheduler  → every Monday 11:00 UTC
+ * SCHEDULERS:
+ *   geo-analytics-scheduler → every Monday 10:00 UTC (global fan-out)
+ *   gsc-monitor-scheduler  → every Monday 11:00 UTC (global fan-out)
+ *
+ *   CMS publishing is NOT a global fan-out scheduler anymore — each
+ *   project has its OWN BullMQ Job Scheduler at its own publishHourUtc /
+ *   allowedPublishDays, created/updated by cms.service.ts (see
+ *   lib/cms-publish-scheduler.ts for why — short version: a single fixed
+ *   daily trigger can't correctly serve projects with different publish
+ *   hours). On boot, reconcileCmsPublishSchedules() re-asserts every
+ *   autoPublish:true project's schedule — idempotent, safe on every
+ *   restart, and is what migrates existing projects onto this design.
  *
  * WORKERS (process fanned-out per-project jobs):
  *   cmsPublishWorker    → processes seo-cms-publish queue
@@ -24,10 +32,10 @@ import { logger }                   from '@/open-tele';
 import { getConnectionOptions }     from '@/loaders/redis';
 import { QUEUE_NAMES }              from '@/constants/seo-pipeline.constants';
 import {
-  runCmsPublishScheduler,
   runGeoAnalyticsScheduler,
   runGscMonitorScheduler,
 } from './jobs/global-scheduler.job';
+import { reconcileCmsPublishSchedules } from '@/lib/cms-publish-scheduler';
 import { runCmsPublishJob, type CmsPublishJobData } from './jobs/cms-publish.job';
 import { runGeoAnalyticsJob } from './jobs/geo-analytics.job';
 import { runGscMonitorJob }   from './jobs/gsc-monitor.job';
@@ -48,16 +56,6 @@ const schedulerQueue = new Queue(SCHEDULER_QUEUE_NAME, {
 // ── Register repeatable scheduler jobs ────────────────────────────────────
 
 async function registerSchedulers(): Promise<void> {
-  // CMS publish — daily Mon–Sat at 17:00 UTC
-  await schedulerQueue.add(
-    'cms-publish-scheduler',
-    {},
-    {
-      jobId:  'cms-publish-scheduler',
-      repeat: { pattern: '0 17 * * 1-6' },
-    },
-  );
-
   // GEO analytics — every Monday at 10:00 UTC
   await schedulerQueue.add(
     'geo-analytics-scheduler',
@@ -80,9 +78,9 @@ async function registerSchedulers(): Promise<void> {
 
   logger.info('Global schedulers registered', {
     schedulers: [
-      'cms-publish-scheduler  → Mon–Sat 17:00 UTC',
       'geo-analytics-scheduler → Mon 10:00 UTC',
       'gsc-monitor-scheduler  → Mon 11:00 UTC',
+      '(CMS publish is per-project now — see reconcileCmsPublishSchedules)',
     ],
   });
 }
@@ -94,9 +92,6 @@ function createSchedulerWorker(): Worker {
     SCHEDULER_QUEUE_NAME,
     async (job: Job) => {
       switch (job.name) {
-        case 'cms-publish-scheduler':
-          await runCmsPublishScheduler();
-          break;
         case 'geo-analytics-scheduler':
           await runGeoAnalyticsScheduler();
           break;
@@ -240,6 +235,12 @@ export interface SchedulerWorkers {
 export async function bootSchedulers(): Promise<SchedulerWorkers> {
   // Register repeatable jobs — idempotent, safe on every restart
   await registerSchedulers();
+
+  // Re-assert every autoPublish:true project's own CMS publish schedule.
+  // Idempotent (upsert) — safe on every restart, and is what migrates
+  // existing projects onto the per-project scheduler design on first boot
+  // after this change. See lib/cms-publish-scheduler.ts.
+  await reconcileCmsPublishSchedules();
 
   const schedulerWorker    = createSchedulerWorker();
   const cmsPublishWorker   = createCmsPublishWorker();

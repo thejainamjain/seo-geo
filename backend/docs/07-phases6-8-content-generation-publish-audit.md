@@ -88,7 +88,48 @@ body fields should be double-checked against `cms.handler.ts` directly).
   `{projectId, slug}` unique index — worth confirming that index actually
   exists in the `Blog` model (not yet checked in this pass).
 
-## Correction after checking the API surface directly
+## ✅ RESOLVED — moved to per-project BullMQ Job Schedulers
+
+Per your direction: fixed the mechanism now (industry-standard pattern —
+BullMQ's native `upsertJobScheduler`, the same primitive behind most
+"publish at your preferred time" SaaS features), without adding a new
+settings UI for `publishHourUtc` yet.
+
+**What changed:**
+- New module `lib/cms-publish-scheduler.ts` — each project gets its own
+  recurring BullMQ Job Scheduler with a cron pattern built from *that
+  project's* `publishHourUtc`/`allowedPublishDays`
+  (`0 ${hour} * * ${days}`, `tz: 'UTC'`, confirmed against the actual
+  installed `bullmq`/`cron-parser` type definitions, not guessed). No
+  sweep, no polling, no "does the single daily trigger happen to be late
+  enough" check — each project fires at exactly its own configured time,
+  structurally independent of every other project's.
+- `cms.service.ts`'s `updateCmsConfig` now keeps the schedule in sync:
+  `autoPublish` turned on (or `allowedPublishDays` changed while on) →
+  upsert; turned off → remove. `disconnectCms` always removes it.
+- `scheduler.worker.ts` calls `reconcileCmsPublishSchedules()` once on
+  every boot — idempotent (upsert-based), so it both migrates existing
+  `autoPublish:true` projects onto this design on first deploy AND
+  recovers if Redis's scheduler data was ever lost, without a separate
+  one-off migration script.
+- Removed the old fixed-time daily sweep (`runCmsPublishScheduler` in
+  `global-scheduler.job.ts`, and its `'0 17 * * 1-6'` registration in
+  `scheduler.worker.ts`) — GEO analytics and GSC monitor schedulers were
+  untouched, since they don't have this per-project-custom-time problem
+  (they run at the same global time for every project by design).
+- `cms-publish.job.ts` (the actual per-project publish handler) needed no
+  changes — it already just processes `{projectId}` regardless of what
+  triggered it.
+- Verified with `tsc --noEmit` — clean compile.
+
+**Still not exposed:** `publishHourUtc` remains not settable via the API
+(same as before) — this fix makes the mechanism correct for whenever that
+changes, without building UI for it now, per your call.
+
+---
+
+## Original finding (for reference)
+
 Checked `services/cms.service.ts` — **`publishHourUtc` is not currently
 exposed** via `connectCms` or `updateCmsConfig` (only `autoPublish`,
 `allowedPublishDays`, `blogPostPath` are settable today). It always sits at
@@ -116,3 +157,4 @@ launch, not optional.
   anywhere in the backend — only read (always falling back to the model
   default of `17`). So it's fully dormant today, not partially exposed
   somewhere I missed.
+  

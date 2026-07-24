@@ -28,9 +28,11 @@ refinement, not rescue work.
    (`docs/08-geo-analytics-audit.md`). Rewrote `geoCitationCheck` to use
    Groq's `compound-beta` (real search + real result URLs, not LLM
    self-reporting). Also flipped the whole LLM provider order — Groq is now
-   primary, Gemini fallback (`docs/10-llm-provider-flip.md`). Two follow-up
-   decisions surfaced, not yet made: retuning `LLM_RATE_LIMIT.DELAY_MS` for
-   Groq's higher RPM, and whether `GROQ_MODEL` itself should change.
+   primary, Gemini fallback (`docs/10-llm-provider-flip.md`). The follow-up
+   `LLM_RATE_LIMIT.DELAY_MS` retuning question is also resolved — turned out
+   to be fully redundant with `lib/llm.ts`'s internal per-provider rate
+   limiter, so it was removed rather than retuned (see `docs/10-...` for
+   detail). `GROQ_MODEL` itself remains an open, separate decision.
 
 2. ✅ **RESOLVED** — Competitor discovery no longer overwrites manual input
    (`docs/05-phase4-competitor-discovery-audit.md`). Full schema change:
@@ -58,11 +60,14 @@ refinement, not rescue work.
 4. Keyword status can be reset by a forced pipeline resume after content
    generation has already started (`docs/06-...-audit.md`) — narrow, admin-
    only trigger path.
-5. `BusinessContext.completedSteps` is marked fully-done by the AI job
-   before a human has reviewed anything (`docs/02-...-audit.md`) — cosmetic
-   unless the wizard UI relies on it for messaging.
-6. GSC learnings have no weekly dedup, could accumulate noise over time
-   (`docs/09-...-audit.md`).
+5. ✅ **RESOLVED** — `BusinessContext.completedSteps` was marked fully-done
+   by the AI job before a human had reviewed anything (`docs/02-...-audit.md`).
+   Split into `aiDraftedSteps` (AI's guess, unreviewed) and `completedSteps`
+   (human-confirmed via the wizard, unchanged behavior). Frontend type
+   updated to match; no frontend logic currently consumes either field.
+6. ✅ **RESOLVED** — GSC learnings had no weekly dedup, could accumulate
+   noise over time (`docs/09-...-audit.md`). Added a 30-day cooldown per
+   blog+insight-type.
 
 ## 🟢 Real but minor technical debt
 
@@ -76,10 +81,20 @@ refinement, not rescue work.
    (`seo-pipeline.worker.ts` handlers, stale `constants` entries) cleaned up
    in the same pass.
 8. `isNowAllowedPublishTime` duplicated verbatim in two files (still open).
-9. Assorted small items noted per-phase doc: hardcoded `totalInternalLinks:
-   0`, weaker audit data for Playwright-rendered pages, crude
-   `freeTrialAvailable` string-match, `REGION_TO_COUNTRY` only covers 9
-   countries.
+9. Assorted small items noted per-phase doc — status:
+   - ✅ **RESOLVED**: hardcoded `totalInternalLinks: 0` (`docs/01-...`) —
+     now actually summed from crawled page data.
+   - ✅ **RESOLVED**: `REGION_TO_COUNTRY` only covered 9 countries
+     (`docs/05-...`) — expanded to ~40; also deleted a dead, already-drifted
+     duplicate copy of the map found in `competitor-discovery.job.ts`.
+   - ✅ **RESOLVED**: `seoSchema` silently dropped on webflow/wix/gohighlevel,
+     and Shopify's schema stored in a metafield nobody rendered
+     (`docs/11-cms-integrations-audit.md`) — all four now reliably deliver
+     schema markup to the live page via a shared `injectSchema()` helper.
+   - Still open: weaker audit data for Playwright-rendered pages
+     (`docs/01-...`), crude `freeTrialAvailable` string-match
+     (`docs/02-...`), Wix's `contentText` field format for HTML content is
+     still unverified against the live API (`docs/11-...`).
 
 ## What's genuinely solid, no action needed
 - Site crawl (3-pass sitemap-first strategy, documented real bug fixes)
@@ -92,8 +107,14 @@ refinement, not rescue work.
   top-level README's linear diagram is just stale relative to it.
 
 ## Suggested next step
-Given the scope, I'd suggest deciding on findings #1–#3 first since they
-have real product/trust implications — the rest are either narrow edge
-cases or pure cleanup. Let me know which you want to tackle, or if you want
-me to continue the audit into the CMS integration layer and the read-side
-services next.
+Findings #1–#3 (the real product/trust-impacting ones) and all of the 🟡/🟢
+items are now resolved. What's left, ranked:
+- 🔴 **Critical, not yet fixed**: `framer.ts` hardcodes a webhook call out to
+  RankAI's own live domain — a real data-handling risk, not just a code
+  smell (`docs/11-cms-integrations-audit.md`).
+- 🟠 **Cross-cutting, not yet fixed**: 7 of 8 CMS publishers have no
+  idempotency (BullMQ retries can duplicate-publish), `isNowAllowedPublishTime`
+  duplicated verbatim in two files, `sanity.ts` bakes a RankAI-specific
+  schema name into the customer's Sanity project.
+Recommend tackling `framer.ts` first given the live-domain exposure, then
+the CMS idempotency/dedup pass.

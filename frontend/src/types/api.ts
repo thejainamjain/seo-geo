@@ -190,6 +190,11 @@ export interface PaginatedResponse<T> {
 export interface BusinessContext {
   _id:        string;
   projectId:  string;
+  // Steps the AI has auto-drafted (not yet human-reviewed) vs steps the
+  // user has actually confirmed via the onboarding wizard. Previously a
+  // single completedSteps field conflated the two — see
+  // backend/docs/02-phase2-business-profile-audit.md.
+  aiDraftedSteps: number[];
   completedSteps: number[];
   company?: {
     name?:            string;

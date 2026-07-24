@@ -1,7 +1,7 @@
 # GSC Monitor: Backend Audit
 
 **File:** `workers/jobs/gsc-monitor.job.ts`
-**Status: ✅ Solid, real integration. One minor noise/dedup gap.**
+**Status: ✅ Solid, real integration. Noise/dedup gap resolved.**
 
 ## What it does
 Real Google Search Console REST API integration (no SDK dependency, plain
@@ -27,17 +27,25 @@ keyword).
 - Per-blog and per-project failure isolation both present (missing token →
   skip project cleanly; one blog's GSC fetch failing → skip that blog only).
 
-## Minor gap: no dedup on repeated weekly insights
-`detectInsights` runs fresh every week and every match becomes a new
-`BlogLearning` document via `insertMany` — there's no check for "did we
-already flag this exact insight type for this blog last week." For a
-chronically underperforming post, this will accumulate near-duplicate
-`BlogLearning` records indefinitely (e.g. the same "high impression, low
-CTR" insight recorded weekly for months). Likely fine if the UI groups/dedups
-by type when displaying, but worth confirming — otherwise the learnings feed
-could get noisy over time. Low priority relative to other findings.
+## ✅ RESOLVED — dedup on repeated weekly insights
+`detectInsights` runs fresh every week and every match became a new
+`BlogLearning` document via `insertMany` — no check for "did we already flag
+this exact insight type for this blog recently." For a chronically
+underperforming post, this accumulated near-duplicate `BlogLearning` records
+indefinitely (e.g. the same "high impression, low CTR" insight recorded
+weekly for months) — and since these feed the `BlogOptimization` LLM
+pipeline, not just a dashboard, duplicates meant wasted LLM context, not
+just visual noise.
 
-## Open question for the team
-- Does the frontend dedup/group `BlogLearning` records by type+blog when
-  displaying, or would this benefit from a "don't re-flag the same insight
-  within N days" guard in the job itself?
+Decision (checked in): added a 30-day cooldown — skip creating a new
+`BlogLearning` for a given blog+type pair if one was already created within
+the last 30 days (`INSIGHT_DEDUP_WINDOW_DAYS` in `gsc-monitor.job.ts`). 30
+days rather than the job's own weekly cadence because these are
+content-strategy insights meant to inform a rewrite, not time-critical
+alerts — a monthly refresh is enough to notice if a chronic issue is still
+unresolved. This does NOT change the deliberate "multiple learnings per
+blog over time is correct" time-series design (a ranking drop this month is
+still a distinct, real data point from one two months ago) — it only
+suppresses re-flagging the *same* type within the cooldown window. Added a
+compound index (`blogId, type, createdAt`) on `BlogLearning` to support the
+new query efficiently.

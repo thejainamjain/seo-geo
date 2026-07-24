@@ -132,11 +132,19 @@ market.
   (turning the domain name into a keyword, e.g. `mydomain.com` →
   `mydomain`) is a genuinely weak SEO signal if it's ever reached — worth
   confirming how often it actually falls this far in practice.
-- `REGION_TO_COUNTRY` is a hardcoded regex list covering 9 countries; any
-  other region defaults to `'us'`. Fine for MVP, but a real limitation for
-  international customers outside this list (e.g. no coverage for Brazil,
-  Japan, most of Africa) — worth deciding if this needs to be a proper
-  country lookup table before wider rollout.
+- ✅ **RESOLVED** — `REGION_TO_COUNTRY` (the shared map in `lib/serp.ts`,
+  `deriveCountryCodeFromRegions`) covered only 9 countries; any other region
+  silently defaulted to `'us'`. Expanded to ~40 countries covering the
+  common SerpAPI/DataForSEO markets (Latin America, most of Europe, East
+  and Southeast Asia, Middle East, and a handful of African markets),
+  anchored on full country names + unambiguous major cities rather than
+  short abbreviations, to avoid false-positive substring matches. Still not
+  exhaustive — anything unmatched still falls back to `'us'`, same as
+  before, just a much smaller miss rate now.
+  Bonus find while fixing this: `competitor-discovery.job.ts` had its own
+  **second, unused, already-drifted copy** of this exact map (dead code —
+  the file actually calls the shared `deriveCountryCodeFromRegions` from
+  `lib/serp.ts`, not its own local constant). Deleted.
 - Zero-competitors-found case is handled gracefully (warns, doesn't block
   pipeline) — good defensive behavior, not a gap.
 

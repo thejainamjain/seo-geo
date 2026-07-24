@@ -2,7 +2,7 @@
 
 **Files:** `workers/jobs/business-profile.job.ts`, `models/BusinessContext.ts`, `services/project.service.ts` (onboarding + resume logic)
 **Pipeline position:** Step 2 of 9
-**Status: ✅ Implemented. One data-semantics issue worth a decision, not a blocker.**
+**Status: ✅ Implemented. Data-semantics issue resolved — see below.**
 
 ## What it's supposed to do
 Analyze crawled page content with an LLM and produce a structured "business
@@ -33,18 +33,32 @@ trace across three files to understand fully:
    status — **not** `BusinessContext.completedSteps`. So even though the gate
    logic is correct, there's a side effect worth flagging next.
 
-## Gap worth a decision
+## Gap — ✅ RESOLVED (decision made: split into two fields)
 
-**`BusinessContext.completedSteps` is set to `[1,2,3,4,5]` by the automated AI
-job**, before the user has looked at or approved anything. If the onboarding
-wizard's frontend uses `completedSteps` to render progress (e.g. checkmarks,
-"step 3 of 5 done"), the UI would show all steps as complete immediately
-after crawl finishes — before the human has actually reviewed the AI's
-guesses. Functionally harmless (the real gate is `isOnboardingComplete`), but
-worth deciding: should the AI job use a separate field (e.g.
-`aiDraftedSteps`) so the UI can distinguish "AI drafted this" from "human
-confirmed this"? Low effort to fix, but it's a data-semantics decision, not
-just a bug fix — flagging for your call rather than assuming.
+**`BusinessContext.completedSteps` used to be set to `[1,2,3,4,5]` by the
+automated AI job**, before the user had looked at or approved anything. If
+the onboarding wizard's frontend used `completedSteps` to render progress
+(checkmarks, "step 3 of 5 done"), the UI would have shown all steps as
+complete immediately after crawl finishes — before the human had actually
+reviewed the AI's guesses.
+
+Decision: split into two fields on `BusinessContext`:
+- `aiDraftedSteps: number[]` — set in bulk (`[1,2,3,4,5]`) by
+  `business-profile.job.ts` as soon as the AI drafts a profile. Means "AI
+  has a guess for this," nothing more.
+- `completedSteps: number[]` — unchanged in behavior, still only set one
+  step at a time via `$addToSet` in `project.service.ts`'s
+  `saveOnboardingStep`. Now means, unambiguously, "a human went through the
+  wizard and confirmed this step."
+
+`business-profile.job.ts` no longer touches `completedSteps` at all — it
+only writes `aiDraftedSteps`. The onboarding wizard endpoint was already
+correct (only ever `$addToSet`s one step at a time on explicit user
+submission) and needed no change. Frontend `types/api.ts` updated to match;
+no frontend logic currently consumes either field, so this is a
+non-breaking type change — actual UI wiring (e.g. showing an "AI-drafted,
+not yet reviewed" badge) is still open for whoever builds that part of the
+wizard.
 
 ## Other observations
 - `normalizeToString()` handles a real, documented LLM inconsistency
@@ -56,8 +70,4 @@ just a bug fix — flagging for your call rather than assuming.
 - `freeTrialAvailable` inference is a crude `.includes('yes')` string check
   on the LLM's free-text answer — will misclassify anything not literally
   containing "yes" (e.g. "Yes, 14 days" works, "Free tier available" would
-  not). Minor accuracy gap, not a bug.
-
-## Open question for the team
-- Do we want `completedSteps` to reflect AI-drafted vs human-confirmed state
-  separately, given the wizard's UI likely depends on it?
+  not). Minor accuracy gap, not a bug. **Still open.**

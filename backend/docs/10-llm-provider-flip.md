@@ -41,13 +41,25 @@ provider directly.
 - `GROQ_MODEL` itself (`llama-3.3-70b-versatile`) — kept as-is. Making Groq
   primary is a different decision from changing which Groq model is used;
   didn't want to bundle a model-quality change into a provider-order change
-  without you weighing in separately.
-- The 5 files pacing calls via `LLM_RATE_LIMIT.DELAY_MS` (Gemini-tuned,
-  4500ms) — now overly conservative pipeline-wide since Groq's free tier is
-  roughly double Gemini's RPM. See the note in
-  `docs/08-geo-analytics-audit.md` for the full explanation. Worth a
-  decision on whether to retune this now that it's a secondary throughput
-  question, not a correctness one.
+  without you weighing in separately. **Still open.**
+- ✅ **RESOLVED** — the 5 files pacing calls via `LLM_RATE_LIMIT.DELAY_MS`
+  (Gemini-tuned, 4500ms). Turned out to be worse than just stale: it was
+  fully **redundant**. `waitForRateLimit()` inside `lib/llm.ts` already
+  enforces a correct, cross-process, per-provider RPM ceiling (Redis
+  sliding window) before every single LLM call, regardless of which job
+  triggered it — so every job-level `await delay(LLM_RATE_LIMIT.DELAY_MS)`
+  was a second, cruder limiter stacked on top of the real one, using the
+  wrong (Gemini) number. Fix: removed all 8 job-level sleep call sites
+  (`geo-analytics`, `technical-audit`, `serp-research` ×2,
+  `keyword-research` ×2 — one of which was misapplied to throttle a
+  non-LLM DataForSEO call, `content-generation`), and turned
+  `LLM_RATE_LIMIT` into the actual single source of truth: it now holds
+  `GROQ_RPM: 28` / `GEMINI_RPM: 14`, imported by `waitForRateLimit()`
+  itself instead of those numbers being hardcoded inline. Net effect: the
+  pipeline runs meaningfully faster on Groq (was throttled to Gemini's pace
+  everywhere), and there's now exactly one rate limiter, not two disagreeing
+  ones. See `docs/08-geo-analytics-audit.md` for where this was first
+  flagged.
 - No test coverage exists in this repo to run against this change (didn't
   find a test suite in the earlier file inventory) — verification here was
   limited to `tsc --noEmit` (types) and manual trace-through of both
@@ -57,8 +69,5 @@ provider directly.
   expected at runtime.
 
 ## Open question for the team
-- Do you want the `LLM_RATE_LIMIT.DELAY_MS` retuning done now (fixes real,
-  if minor, pipeline slowness) or held for later since it's throughput, not
-  correctness?
 - Should `GROQ_MODEL` be reconsidered while we're already touching provider
   config, or is that explicitly out of scope for this pass?

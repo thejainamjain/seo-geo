@@ -104,21 +104,29 @@ Affected: `wordpress.ts`, `webflow.ts`, `framer.ts`, `wix.ts`,
   REST API — would need to query existing articles by handle first.
   GoHighLevel/Framer/CustomApi depend on what each API actually supports.
 
-## 🟡 Medium — `seoSchema` (JSON-LD structured data) silently dropped on 3 platforms
+## ✅ RESOLVED — `seoSchema` (JSON-LD structured data) was silently dropped on 3 platforms
 
 The whole point of the technical-audit phase (Phase 3) is generating
-correct schema markup — but it never reaches the live page on:
-- `webflow.ts` — `payload.seoSchema` isn't referenced anywhere in the file
+correct schema markup — but it wasn't reaching the live page on:
+- `webflow.ts` — `payload.seoSchema` wasn't referenced anywhere in the file
 - `wix.ts` — same
 - `gohighlevel.ts` — same
 
-WordPress, Framer, Sanity, and Custom API all pass it through correctly.
-Shopify stores it (see below) but likely doesn't render it. This means
-schema markup — a real SEO factor this product's own technical-audit phase
-scores — silently doesn't make it to the live page for roughly half the
-supported CMS platforms.
+WordPress, Framer, Sanity, and Custom API all passed it through correctly.
+Shopify stored it (see below) but didn't render it. So schema markup — a
+real SEO factor this product's own technical-audit phase scores — was
+silently not reaching the live page for roughly half the supported CMS
+platforms.
 
-## 🟡 Medium — Shopify's schema storage likely isn't rendered anywhere
+Fix: extracted WordPress's existing `injectSchema()` helper (which appends
+a `<script type="application/ld+json">` tag to the end of the HTML content)
+into a new shared `lib/cms/shared.ts`, and wired it into `webflow.ts`
+(`post-body`), `gohighlevel.ts` (`rawHtml`), and `wix.ts` (`contentText` —
+see the caveat below, this one still needs live verification). All three
+accept plain HTML content fields, so this is a direct, reliable fix — no
+platform-specific API quirks to work around.
+
+## ✅ RESOLVED — Shopify's schema storage wasn't rendered anywhere
 
 ```ts
 metafields: payload.seoSchema
@@ -126,15 +134,29 @@ metafields: payload.seoSchema
   : [],
 ```
 
-This stores the schema as a Shopify metafield, which is real data storage
+This stored the schema as a Shopify metafield, which is real data storage
 — but metafields don't automatically appear on the storefront. A theme
 has to be explicitly customized with Liquid template code to read
 `seo.schema_json` and output it as a `<script type="application/ld+json">`
-tag. For any store using a default/unmodified theme, this schema is
-stored but invisible to search engines and AI crawlers — same practical
-effect as the Webflow/Wix/GHL gap above, just via a different mechanism.
+tag. For any store using a default/unmodified theme, this schema was
+stored but invisible to search engines and AI crawlers.
+
+Fix: switched to injecting the schema directly into `body_html` (same
+`injectSchema()` helper as above) — `body_html` renders on the storefront
+unconditionally, regardless of theme customization. Kept the
+`seo.schema_json` metafield write as well, as a bonus for any theme that
+has been customized to read it separately, but `body_html` is what now
+guarantees the schema actually reaches the live page by default.
 
 ## 🟡 Medium — Wix content field likely wrong for HTML content (needs live verification, not certain)
+
+**Partially addressed:** the `seoSchema` piece above now also applies to
+Wix (`contentText` gets the same JSON-LD script tag appended). The
+underlying content-format question below is unchanged and still needs a
+live API test — if `contentText` doesn't actually render as HTML, neither
+the blog body nor the injected schema will display correctly, and this
+needs a real fix (likely building the Ricos rich-content JSON structure)
+rather than a content-string change.
 
 ```ts
 post: { contentText: payload.content, ... }

@@ -38,19 +38,20 @@ Part of the same work session — see `docs/10-llm-provider-flip.md` for the
 full writeup of flipping all 10 LLM call sites from Gemini-primary to
 Groq-primary (Gemini now the fallback, only used on Groq rate limit).
 
-## Not changed — flagged, not touched
-While implementing this, found that `LLM_RATE_LIMIT.DELAY_MS` (4500ms, tuned
-for Gemini's 14 RPM ceiling) is used as an *external* pacing delay in 5 job
+## ✅ RESOLVED — external pacing delay was redundant, removed
+Flagged here originally: `LLM_RATE_LIMIT.DELAY_MS` (4500ms, tuned for
+Gemini's 14 RPM ceiling) was used as an *external* pacing delay in 5 job
 files (`geo-analytics`, `technical-audit`, `serp-research`,
 `keyword-research`, `content-generation`), on top of the *internal*
 Redis-based per-provider rate limiter in `lib/llm.ts` (which already
 enforces the correct ceiling per provider — 14 RPM Gemini, 28 RPM Groq).
-Now that Groq is primary, this external delay is unnecessarily conservative
-everywhere, not just in GEO analytics — it's pacing every pipeline job at
-Gemini's slower rate even when the calls are actually going to Groq. Did
-not touch this — it's a real optimization opportunity but affects pipeline
-throughput/timing across 5 files, which felt like a separate decision from
-"fix GEO grounding + flip provider order." Flagging for your call.
+
+Resolved: removed the external delay entirely from all 8 call sites across
+those 5 files — it was pure duplication of the internal limiter, and wrong
+besides (Gemini's pace, even for Groq calls). `LLM_RATE_LIMIT` now just
+holds `GROQ_RPM`/`GEMINI_RPM`, imported directly by `lib/llm.ts`'s
+`waitForRateLimit()` instead of being duplicated as inline literals there.
+Full writeup in `docs/10-llm-provider-flip.md`.
 
 ---
 

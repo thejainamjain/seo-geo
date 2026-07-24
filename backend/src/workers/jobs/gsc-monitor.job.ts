@@ -31,7 +31,16 @@
  *
  * IDEMPOTENCY:
  *   BlogLearning docs are created fresh each run — time-series data.
- *   We don't upsert — multiple learnings per blog per week is correct.
+ *   We don't upsert — multiple learnings per blog over time is correct
+ *   and expected (e.g. a ranking drop this month is a different, real
+ *   data point from one two months ago).
+ *
+ *   DEDUP: we DO skip creating a new doc for a given blog+type if one
+ *   already exists within INSIGHT_DEDUP_WINDOW_DAYS (30 days). Without
+ *   this, a chronically underperforming post re-triggers the *same*
+ *   insight every single week forever, which (a) is noise, and (b) bloats
+ *   the context fed to the BlogOptimization LLM pipeline with near-
+ *   duplicate insights instead of new signal.
  *
  * ERROR HANDLING:
  *   - Token missing → logs warning, skips (project may have disconnected GSC)
@@ -43,6 +52,16 @@
 import type { Job } from 'bullmq';
 import { logger }       from '@/open-tele';
 import { Project, BlogLearning, Blog, GoogleToken, Keyword } from '@/models';
+
+// Skip re-creating a BlogLearning for a blog+type pair if one was already
+// created within this window. Prevents an unresolved insight (e.g. a
+// chronically low-CTR post) from accumulating a near-identical duplicate
+// record every single week, forever — these feed the re-optimization LLM
+// pipeline (BlogOptimization), so duplicates also mean wasted context, not
+// just UI noise. 30 days because these are content-strategy insights meant
+// to inform a rewrite, not time-critical alerts — a monthly refresh is
+// enough to notice if a chronic issue is still unresolved.
+const INSIGHT_DEDUP_WINDOW_DAYS = 30;
 import config from '@/utils/config';
 
 // ── Thresholds ─────────────────────────────────────────────────────────────
@@ -379,8 +398,30 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
         continue;
       }
 
-      // Create BlogLearning docs for each insight
-      const learningDocs = insights.map((insight) => ({
+      // Dedup: skip insight types already recorded recently for this blog,
+      // so a chronic issue doesn't accumulate a fresh near-identical doc
+      // every week forever. See INSIGHT_DEDUP_WINDOW_DAYS above.
+      const dedupSince = new Date(Date.now() - INSIGHT_DEDUP_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+      const recentTypes = await BlogLearning.find({
+        blogId,
+        type: { $in: insights.map((i) => i.type) },
+        createdAt: { $gte: dedupSince },
+      }).distinct('type');
+      const recentTypeSet = new Set(recentTypes as string[]);
+
+      const freshInsights = insights.filter((i) => !recentTypeSet.has(i.type));
+
+      if (freshInsights.length === 0) {
+        logger.debug('All detected insights already recorded recently — skipping', {
+          projectId,
+          blogId,
+          skippedTypes: insights.map((i) => i.type),
+        });
+        continue;
+      }
+
+      // Create BlogLearning docs for each fresh insight
+      const learningDocs = freshInsights.map((insight) => ({
         blogId:    blog._id,
         projectId,
         type:      insight.type,
@@ -406,8 +447,8 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
       logger.info('BlogLearning docs created', {
         projectId,
         blogId,
-        insightCount: insights.length,
-        types:        insights.map(i => i.type),
+        insightCount: freshInsights.length,
+        types:        freshInsights.map(i => i.type),
       });
 
     } catch (err) {

@@ -19,6 +19,7 @@
 
 import { logger } from '@/open-tele';
 import type { WebflowCredentials, BlogPublishPayload, PublishResult } from './types';
+import { injectSchema } from './shared';
 
 const WEBFLOW_API_BASE  = 'https://api.webflow.com/v2';
 const FETCH_TIMEOUT_MS  = 30_000;
@@ -67,6 +68,8 @@ export async function publishToWebflow(
   });
 
   // 1. Create CMS item (staged — not live yet)
+  const fullContent = injectSchema(payload.content, payload.seoSchema);
+
   const item = await webflowFetch(
     `/collections/${creds.collectionId}/items`,
     'POST',
@@ -77,7 +80,7 @@ export async function publishToWebflow(
       fieldData: {
         name:              payload.title,
         slug:              payload.slug,
-        'post-body':       payload.content,
+        'post-body':       fullContent,
         'post-summary':    payload.description,
         'main-image':      payload.heroImageUrl ?? '',
         'thumbnail-image': payload.heroImageUrl ?? '',

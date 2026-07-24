@@ -13,6 +13,7 @@
 
 import { logger } from '@/open-tele';
 import type { WixCredentials, BlogPublishPayload, PublishResult } from './types';
+import { injectSchema } from './shared';
 
 const WIX_API_BASE     = 'https://www.wixapis.com/blog/v3';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -60,6 +61,12 @@ export async function publishToWix(
   });
 
   // 1. Create draft post
+  //    NOTE: seoSchema is appended the same way as the other raw-HTML
+  //    publishers (see lib/cms/shared.ts). Whether Wix's `contentText`
+  //    field actually renders HTML (including this script tag) or shows it
+  //    as literal text is unconfirmed — see docs/11-cms-integrations-audit.md.
+  const fullContent = injectSchema(payload.content, payload.seoSchema);
+
   const draft = await wixFetch(
     '/posts',
     'POST',
@@ -68,7 +75,7 @@ export async function publishToWix(
     {
       post: {
         title:               payload.title,
-        contentText:         payload.content,
+        contentText:         fullContent,
         excerpt:             payload.description,
         slug:                payload.slug,
         coverMedia: payload.heroImageUrl

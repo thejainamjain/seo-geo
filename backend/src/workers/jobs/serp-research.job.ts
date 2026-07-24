@@ -23,9 +23,9 @@
  *   Keywords are processed sequentially — each keyword = 1 SerpAPI call + 1 LLM call.
  *   Sequential (not parallel) to respect:
  *     - SerpAPI free tier: 100 searches/month
- *     - Gemini rate limit: 15 RPM (LLM_RATE_LIMIT.DELAY_MS between calls)
+ *     - LLM RPM ceiling — enforced internally by lib/llm.ts's
+ *       waitForRateLimit(), not by any delay in this file (see RATE LIMITING below)
  *   For 25 keywords: ~25 SerpAPI calls + ~25 LLM calls.
- *   At 4.5s delay between LLM calls: ~2 minutes total. Acceptable for a pipeline step.
  *
  * PARTIAL FAILURE HANDLING:
  *   - SerpAPI fails for one keyword → log warn, skip, continue to next
@@ -40,7 +40,8 @@
  *   Brief is always overwritten on retry (fresh SERP data is fine).
  *
  * RATE LIMITING:
- *   LLM_RATE_LIMIT.DELAY_MS between each LLM call (4500ms).
+ *   No manual delay between LLM calls — analyzeSerpResults() (lib/llm.ts)
+ *   enforces the global RPM ceiling internally via waitForRateLimit().
  *   No extra delay between SerpAPI calls — free tier is per-month, not per-second.
  */
 
@@ -53,7 +54,6 @@ import { searchOrganic }   from '@/lib/serp';
 import { analyzeSerpResults } from '@/lib/llm';
 import { deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
-import { LLM_RATE_LIMIT }  from '@/constants/seo-pipeline.constants';
 
 // ── Main job handler ───────────────────────────────────────────────────────
 
@@ -211,11 +211,6 @@ export async function runSerpResearchJob(job: Job<PipelineJobData>): Promise<voi
         error:     err instanceof Error ? err.message : String(err),
       });
       skipCount++;
-
-      // Still apply rate limit delay before next iteration
-      if (i < keywords.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, LLM_RATE_LIMIT.DELAY_MS));
-      }
       continue;
     }
 
@@ -259,12 +254,8 @@ export async function runSerpResearchJob(job: Job<PipelineJobData>): Promise<voi
       });
       skipCount++;
     }
-
-    // ── Step E: Rate limit delay ───────────────────────────────────────
-    // Apply after LLM call, skip after last keyword
-    if (i < keywords.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, LLM_RATE_LIMIT.DELAY_MS));
-    }
+    // No manual rate-limit delay — analyzeSerpResults() already enforces
+    // the global RPM ceiling internally (lib/llm.ts).
   }
 
   logger.info('SERP research job completed', {

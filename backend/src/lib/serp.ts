@@ -308,17 +308,59 @@ export function filterCompetitorDomains(
  * Example: ["Udaipur, Rajasthan, India"] → 'in'
  *
  * Used by: competitor-discovery.job.ts, keyword-research.job.ts
+ *
+ * COVERAGE: originally only 9 countries — far too narrow for a product
+ * meant to work for businesses targeting any region. Expanded to the ~35
+ * markets SerpAPI/DataForSEO commonly support, anchored on full country
+ * names (+ a few unambiguous major cities) rather than short abbreviations,
+ * to avoid false-positive substring matches (e.g. a bare "us" or "in"
+ * pattern would match inside unrelated words). Still not exhaustive —
+ * anything unmatched falls back to 'us', same as before.
  */
 const REGION_TO_COUNTRY_MAP: Array<{ pattern: RegExp; code: string }> = [
-  { pattern: /india|rajasthan|udaipur|mumbai|delhi|bangalore|hyderabad|chennai|kolkata/i, code: 'in' },
-  { pattern: /united kingdom|uk|england|scotland|wales/i,                                  code: 'gb' },
-  { pattern: /australia|sydney|melbourne|brisbane/i,                                       code: 'au' },
-  { pattern: /canada|toronto|vancouver|montreal/i,                                         code: 'ca' },
-  { pattern: /germany|berlin|munich|frankfurt/i,                                           code: 'de' },
-  { pattern: /france|paris|lyon|marseille/i,                                               code: 'fr' },
-  { pattern: /singapore/i,                                                                  code: 'sg' },
-  { pattern: /uae|dubai|abu dhabi/i,                                                       code: 'ae' },
-  { pattern: /united states|usa|new york|california|texas/i,                              code: 'us' },
+  { pattern: /india|rajasthan|udaipur|mumbai|delhi|bangalore|hyderabad|chennai|kolkata|pune|ahmedabad/i, code: 'in' },
+  { pattern: /united kingdom|\buk\b|england|scotland|wales|london|manchester|birmingham/i,                code: 'gb' },
+  { pattern: /australia|sydney|melbourne|brisbane|perth|adelaide/i,                                       code: 'au' },
+  { pattern: /canada|toronto|vancouver|montreal|calgary|ottawa/i,                                         code: 'ca' },
+  { pattern: /germany|berlin|munich|frankfurt|hamburg|cologne/i,                                          code: 'de' },
+  { pattern: /france|paris|lyon|marseille|toulouse/i,                                                     code: 'fr' },
+  { pattern: /singapore/i,                                                                                 code: 'sg' },
+  { pattern: /\buae\b|united arab emirates|dubai|abu dhabi|sharjah/i,                                     code: 'ae' },
+  { pattern: /new zealand|auckland|wellington|christchurch/i,                                             code: 'nz' },
+  { pattern: /ireland|dublin|cork/i,                                                                       code: 'ie' },
+  { pattern: /netherlands|holland|amsterdam|rotterdam|the hague/i,                                        code: 'nl' },
+  { pattern: /belgium|brussels|antwerp/i,                                                                  code: 'be' },
+  { pattern: /spain|madrid|barcelona|valencia|seville/i,                                                   code: 'es' },
+  { pattern: /italy|rome|milan|naples|turin/i,                                                             code: 'it' },
+  { pattern: /portugal|lisbon|porto/i,                                                                     code: 'pt' },
+  { pattern: /switzerland|zurich|geneva|basel/i,                                                           code: 'ch' },
+  { pattern: /austria|vienna|salzburg/i,                                                                   code: 'at' },
+  { pattern: /sweden|stockholm|gothenburg/i,                                                               code: 'se' },
+  { pattern: /norway|oslo|bergen/i,                                                                        code: 'no' },
+  { pattern: /denmark|copenhagen|aarhus/i,                                                                 code: 'dk' },
+  { pattern: /finland|helsinki|espoo/i,                                                                    code: 'fi' },
+  { pattern: /poland|warsaw|krakow|krak[oó]w/i,                                                            code: 'pl' },
+  { pattern: /brazil|s[aã]o paulo|rio de janeiro|brasilia|bras[ií]lia/i,                                   code: 'br' },
+  { pattern: /mexico|mexico city|guadalajara|monterrey/i,                                                  code: 'mx' },
+  { pattern: /argentina|buenos aires|c[oó]rdoba/i,                                                         code: 'ar' },
+  { pattern: /japan|tokyo|osaka|yokohama|kyoto/i,                                                          code: 'jp' },
+  { pattern: /south korea|\bkorea\b|seoul|busan/i,                                                         code: 'kr' },
+  { pattern: /china|beijing|shanghai|shenzhen|guangzhou/i,                                                 code: 'cn' },
+  { pattern: /hong kong/i,                                                                                 code: 'hk' },
+  { pattern: /philippines|manila|cebu|quezon city/i,                                                       code: 'ph' },
+  { pattern: /malaysia|kuala lumpur|penang/i,                                                              code: 'my' },
+  { pattern: /indonesia|jakarta|surabaya|bandung/i,                                                        code: 'id' },
+  { pattern: /thailand|bangkok|chiang mai/i,                                                               code: 'th' },
+  { pattern: /vietnam|hanoi|ho chi minh/i,                                                                 code: 'vn' },
+  { pattern: /south africa|johannesburg|cape town|durban/i,                                                code: 'za' },
+  { pattern: /nigeria|lagos|abuja/i,                                                                       code: 'ng' },
+  { pattern: /kenya|nairobi|mombasa/i,                                                                     code: 'ke' },
+  { pattern: /egypt|cairo|alexandria/i,                                                                    code: 'eg' },
+  { pattern: /saudi arabia|riyadh|jeddah/i,                                                                code: 'sa' },
+  { pattern: /qatar|doha/i,                                                                                code: 'qa' },
+  { pattern: /israel|tel aviv|jerusalem/i,                                                                 code: 'il' },
+  { pattern: /turkey|t[uü]rkiye|istanbul|ankara/i,                                                         code: 'tr' },
+  { pattern: /united states|\busa\b|new york|california|texas|chicago|los angeles|san francisco/i,        code: 'us' },
 ];
 
 export function deriveCountryCodeFromRegions(

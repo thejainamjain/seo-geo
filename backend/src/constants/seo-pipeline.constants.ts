@@ -136,16 +136,24 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
 /**
  * LLM rate limit configuration.
  *
- * GEMINI FREE TIER: 15 RPM → one call every 4 seconds.
- * When upgrading to paid plan, change REQUESTS_PER_MINUTE and DELAY_MS here.
- * Every job that calls LLM sequentially imports this — one place to change.
+ * Rate limiting itself is enforced centrally in lib/llm.ts's
+ * waitForRateLimit() — a Redis sliding-window counter shared across ALL
+ * worker processes, checked before every single LLM call regardless of
+ * which job triggered it. This is the single source of truth; jobs do NOT
+ * need (and should not add) their own sleep-between-calls logic on top of
+ * it — that used to exist here as LLM_RATE_LIMIT.DELAY_MS and was both
+ * redundant AND wrong: it was tuned for Gemini's free-tier 15 RPM even
+ * after Groq became the primary provider (28 RPM), silently running the
+ * whole pipeline ~2x slower than necessary. Removed — see
+ * docs/10-llm-provider-flip.md for the provider-flip history.
  *
- * DELAY_MS = Math.ceil(60_000 / REQUESTS_PER_MINUTE) + 500ms buffer.
- * The buffer prevents hitting the limit exactly on the boundary.
+ * GROQ_RPM / GEMINI_RPM below are the actual numbers used by
+ * waitForRateLimit() (imported from here instead of being duplicated as
+ * inline literals). Free-tier limits, minus a small safety buffer.
  */
 export const LLM_RATE_LIMIT = {
-  REQUESTS_PER_MINUTE: 15,
-  DELAY_MS:            4_500, // 60000/15 = 4000 + 500ms safety buffer
+  GROQ_RPM:   28, // Groq free tier: 30 RPM, buffer of 2
+  GEMINI_RPM: 14, // Gemini free tier: 15 RPM, buffer of 1
 } as const
 
 /**

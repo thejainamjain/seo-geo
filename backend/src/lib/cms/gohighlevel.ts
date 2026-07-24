@@ -15,6 +15,7 @@
 
 import { logger } from '@/open-tele';
 import type { GoHighLevelCredentials, BlogPublishPayload, PublishResult } from './types';
+import { injectSchema } from './shared';
 
 const GHL_API_BASE     = 'https://services.leadconnectorhq.com';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -64,6 +65,7 @@ export async function publishToGoHighLevel(
   });
 
   const url = `${GHL_API_BASE}/blogs/posts`;
+  const fullContent = injectSchema(payload.content, payload.seoSchema);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -78,7 +80,7 @@ export async function publishToGoHighLevel(
       title:       payload.title,
       slug:        payload.slug,
       description: payload.description,
-      rawHtml:     payload.content,
+      rawHtml:     fullContent,
       status:      'PUBLISHED',
       imageUrl:    payload.heroImageUrl ?? '',
     }),

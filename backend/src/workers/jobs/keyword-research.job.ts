@@ -68,7 +68,6 @@ import { generateMarketSizing, scoreKeywordAlignment } from '@/lib/llm';
 import { deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData }          from '../seo-pipeline.worker';
 import type { DataForSeoKeyword }        from '@/lib/dataforseo';
-import { LLM_RATE_LIMIT }               from '@/constants/seo-pipeline.constants';
 import { scheduleWeeklyGeneration }     from '@/lib/keyword-generation-scheduler';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -352,11 +351,8 @@ async function scoreKeywords(
         scored.push({ ...kw, alignmentScore: 0, relevanceReason: '' });
       }
     }
-
-    // Rate limit delay between LLM batches (skip after last batch)
-    if (i + ALIGNMENT_BATCH_SIZE < keywords.length) {
-      await new Promise(resolve => setTimeout(resolve, LLM_RATE_LIMIT.DELAY_MS));
-    }
+    // No manual rate-limit delay — scoreKeywordAlignment() already
+    // enforces the global RPM ceiling internally (lib/llm.ts).
   }
 
   return scored;
@@ -481,11 +477,6 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
     countryCode,
     projectId,
   );
-
-  // Rate limit delay before DataForSEO calls
-  if (llmKeywords.length > 0 && competitors.length > 0) {
-    await new Promise(resolve => setTimeout(resolve, LLM_RATE_LIMIT.DELAY_MS));
-  }
 
   // 4. Source 2 — DataForSEO competitor keywords
   const competitorKeywords = await fetchCompetitorKeywords(

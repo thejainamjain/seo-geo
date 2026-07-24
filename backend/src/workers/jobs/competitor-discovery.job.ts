@@ -86,24 +86,6 @@ const MAX_COMPETITORS   = 10; // cap on SERP-discovered candidates fetched per r
 const MAX_COMPETITORS_TOTAL = 15; // cap on the final merged list (existing + SERP)
 const MAX_KEYWORD_LEN   = 60; // chars — longer queries return noisier SERP results
 
-/**
- * Country code map — derived from common region strings in BusinessContext.
- * Covers the most common cases. Falls back to 'us' if no match.
- *
- * SerpAPI country codes: https://serpapi.com/google-countries
- */
-const REGION_TO_COUNTRY: Array<{ pattern: RegExp; code: string }> = [
-  { pattern: /india|rajasthan|udaipur|mumbai|delhi|bangalore|hyderabad|chennai|kolkata/i, code: 'in' },
-  { pattern: /united kingdom|uk|england|scotland|wales/i,                                  code: 'gb' },
-  { pattern: /australia|sydney|melbourne|brisbane/i,                                       code: 'au' },
-  { pattern: /canada|toronto|vancouver|montreal/i,                                         code: 'ca' },
-  { pattern: /germany|berlin|munich|frankfurt/i,                                           code: 'de' },
-  { pattern: /france|paris|lyon|marseille/i,                                               code: 'fr' },
-  { pattern: /singapore/i,                                                                  code: 'sg' },
-  { pattern: /uae|dubai|abu dhabi/i,                                                       code: 'ae' },
-  { pattern: /united states|usa|us|new york|california|texas/i,                           code: 'us' },
-];
-
 // ── Core keyword extraction ────────────────────────────────────────────────
 
 /**

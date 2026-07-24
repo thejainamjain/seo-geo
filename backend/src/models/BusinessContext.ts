@@ -98,8 +98,14 @@ export interface IBusinessContext extends Document {
     socialMediaPresence?: string;
   };
 
-  // Track which steps the user has completed
-  completedSteps: number[]; // e.g. [1, 2, 3] means steps 1-3 done
+  // Which steps the AI has auto-drafted from the site crawl. Set in bulk
+  // ([1,2,3,4,5]) by business-profile.job.ts as soon as it generates a
+  // profile — this happens before any human has looked at the data.
+  aiDraftedSteps: number[];
+
+  // Which steps a human has actually reviewed/confirmed via the onboarding
+  // wizard (project.service.ts's step-save endpoint, one at a time).
+  completedSteps: number[]; // e.g. [1, 2, 3] means user confirmed steps 1-3
 
   createdAt: Date;
   updatedAt: Date;
@@ -118,6 +124,7 @@ const BusinessContextSchema = new Schema<IBusinessContext>(
     customers: { type: Schema.Types.Mixed },
     competition: { type: Schema.Types.Mixed },
     socialProof: { type: Schema.Types.Mixed },
+    aiDraftedSteps: { type: [Number], default: [] },
     completedSteps: { type: [Number], default: [] },
   },
   { timestamps: true }

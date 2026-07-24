@@ -19,6 +19,7 @@
 
 import { logger } from '@/open-tele';
 import type { ShopifyCredentials, BlogPublishPayload, PublishResult } from './types';
+import { injectSchema } from './shared';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const FETCH_TIMEOUT_MS    = 30_000;
@@ -102,6 +103,14 @@ export async function publishToShopify(
   const blogId = await getFirstBlogId(creds.storeName, accessToken, context);
 
   // 2. Create the article
+  //    seoSchema is injected directly into body_html (same pattern as the
+  //    other raw-HTML publishers, see lib/cms/shared.ts) because it's
+  //    rendered on the storefront unconditionally. The `seo.schema_json`
+  //    metafield below is kept as well for any theme that's been
+  //    customized to read it separately, but body_html is what actually
+  //    guarantees the schema reaches the live page on a default theme.
+  const fullContent = injectSchema(payload.content, payload.seoSchema);
+
   const data = await shopifyFetch(
     creds.storeName,
     accessToken,
@@ -110,7 +119,7 @@ export async function publishToShopify(
     {
       article: {
         title:            payload.title,
-        body_html:        payload.content,
+        body_html:        fullContent,
         summary_html:     payload.description,
         handle:           payload.slug,
         published:        true,

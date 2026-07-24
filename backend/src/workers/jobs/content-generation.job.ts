@@ -45,7 +45,6 @@ import { searchOrganic, deriveCountryCodeFromRegions } from '@/lib/serp';
 import { analyzeSerpResults, generateBlogPost }        from '@/lib/llm';
 import { publishBlog }       from '@/lib/cms';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
-import { LLM_RATE_LIMIT }    from '@/constants/seo-pipeline.constants';
 import type { BlogPublishPayload } from '@/lib/cms';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -250,8 +249,8 @@ export async function runContentGenerationJob(
       });
     }
 
-    // Rate limit delay between the two LLM calls
-    await new Promise(resolve => setTimeout(resolve, LLM_RATE_LIMIT.DELAY_MS));
+    // No manual rate-limit delay — generateBlogPost() (called below) already
+    // enforces the global RPM ceiling internally (lib/llm.ts).
 
     // ── 5. Blog generation ────────────────────────────────────────────────
 

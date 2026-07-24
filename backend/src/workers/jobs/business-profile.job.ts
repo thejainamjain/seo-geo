@@ -220,8 +220,11 @@ export async function runBusinessProfileJob(job: Job<PipelineJobData>): Promise<
   const mapped = mapLlmResponseToBusinessContext(llmResponse, projectId);
 
   // 5. Upsert BusinessContext — idempotent, safe on retry
-  //    completedSteps: [1,2,3,4,5] — all steps filled by AI
-  //    User can override individual steps via onboarding wizard later
+  //    aiDraftedSteps: [1,2,3,4,5] — all steps drafted by AI, NOT yet
+  //    reviewed by a human. completedSteps is intentionally left untouched
+  //    here — it only gets set when the user goes through the onboarding
+  //    wizard and explicitly confirms a step (see project.service.ts).
+  //    See models/BusinessContext.ts for why these are separate fields.
   const businessContext = await BusinessContext.findOneAndUpdate(
     { projectId },
     {
@@ -231,7 +234,7 @@ export async function runBusinessProfileJob(job: Job<PipelineJobData>): Promise<
         customers:      mapped.customers,
         competition:    mapped.competition,
         socialProof:    mapped.socialProof,
-        completedSteps: [1, 2, 3, 4, 5],
+        aiDraftedSteps: [1, 2, 3, 4, 5],
       },
     },
     {
@@ -244,7 +247,7 @@ export async function runBusinessProfileJob(job: Job<PipelineJobData>): Promise<
   logger.info('BusinessContext upserted', {
     projectId,
     businessContextId: String(businessContext._id),
-    completedSteps:    businessContext.completedSteps,
+    aiDraftedSteps:    businessContext.aiDraftedSteps,
     companyName:       String(mapped.company.name ?? ''),
     competitorCount:   (mapped.competition.mainCompetitors as CompetitorEntry[]).length,
     segmentCount:      (mapped.customers.segments as string[]).length,

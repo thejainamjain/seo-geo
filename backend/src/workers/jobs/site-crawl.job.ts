@@ -809,6 +809,12 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     const brokenLinkCount = allPages.reduce((sum, p) => sum + p.brokenLinks.length, 0);
     const slowPageCount   = allPages.filter(p => p.responseTimeMs > SLOW_PAGE_MS).length;
     const thinPageCount   = allPages.filter(p => p.wordCount < THIN_CONTENT_WORDS && p.wordCount > 0).length;
+    // Was hardcoded to 0 despite page.links[].isExternal already telling us
+    // which links are internal — the data was there, just never summed.
+    const totalInternalLinks = allPages.reduce(
+      (sum, p) => sum + p.links.filter(l => !l.isExternal).length,
+      0,
+    );
 
     await Audit.findByIdAndUpdate(auditId, {
       status:      'completed',
@@ -818,7 +824,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
         totalPages:         allPages.length,
         totalFixes:         allCodeChanges.length,
         totalSchemas:       allPages.filter(p => p.hasSchema).length,
-        totalInternalLinks: 0,
+        totalInternalLinks,
         totalFaqs:          faqDocs.length,
       },
     });

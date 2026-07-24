@@ -12,14 +12,15 @@
  *   5. objectivePercentage = (appearances / total prompts) * 100
  *   6. Store result in GeoAnalyticsRun for trend charts
  *
- * WHY GEMINI FOR GEO MEASUREMENT:
- *   We use the same Gemini API we already have — no extra cost.
+ * WHY GROQ COMPOUND-BETA FOR GEO MEASUREMENT:
+ *   Groq's compound-beta model does live web search + returns real
+ *   citations, which is what this needs (checking if the domain actually
+ *   appears in an AI answer, not just guessing from training data).
  *   In production you'd also test ChatGPT + Perplexity for full coverage.
- *   For v1, Gemini-only gives a meaningful directional signal.
  *
  * RATE LIMITING:
- *   Sequential processing with delay between calls.
- *   Gemini free tier: 15 RPM → 4000ms delay between calls is safe.
+ *   Sequential processing. No manual delay between calls — geoCitationCheck()
+ *   enforces the global Groq RPM ceiling internally (lib/llm.ts).
  *
  * IDEMPOTENCY:
  *   Creates a new GeoAnalyticsRun each time — time-series data, not upserted.
@@ -37,7 +38,6 @@ import { Project }         from '@/models/Project';
 import { Keyword }         from '@/models/Keyword';
 import { GeoAnalyticsRun } from '@/models/Analytics';
 import { geoCitationCheck, GeoCitationLlmResponse } from '@/lib/llm';
-import { LLM_RATE_LIMIT }  from '@/constants/seo-pipeline.constants';
 
 const GEO_KEYWORD_LIMIT  = 20;   // Cap at 20 to stay within free Gemini tier
 const DOMAIN_CHECK_CHARS = 4000; // Check first 4000 chars of Gemini response
@@ -72,10 +72,6 @@ function domainAppearsInCitations(
 
     return false;
   });
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promise<void> {
@@ -158,11 +154,6 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
   for (let i = 0; i < keywords.length; i++) {
     const keyword = keywords[i]!;
     const context = `geo-analytics:${projectId}:${keyword.keyword}`;
-
-    // Rate limit — stay under Groq free tier
-    if (i > 0) {
-      await delay(LLM_RATE_LIMIT.DELAY_MS);
-    }
 
     try {
       const userQuery = buildUserQuery(keyword.keyword);

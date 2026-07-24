@@ -80,6 +80,9 @@ const BlogLearningSchema = new Schema<IBlogLearning>(
 
 BlogLearningSchema.index({ blogId: 1 });
 BlogLearningSchema.index({ projectId: 1, createdAt: -1 });
+// Supports gsc-monitor.job.ts's dedup check: "has this blog already had
+// this insight type recorded within the last N days?"
+BlogLearningSchema.index({ blogId: 1, type: 1, createdAt: -1 });
 
 export const BlogLearning = mongoose.model<IBlogLearning>(
   "BlogLearning",

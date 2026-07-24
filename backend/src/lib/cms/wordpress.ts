@@ -27,6 +27,7 @@
 
 import { logger } from '@/open-tele';
 import type { WordPressCredentials, BlogPublishPayload, PublishResult } from './types';
+import { injectSchema } from './shared';
 
 const FETCH_TIMEOUT_MS = 30_000;
 
@@ -153,12 +154,6 @@ async function uploadFeaturedImage(
  * Injects Schema.org JSON-LD into the blog HTML content.
  * Appended at the end — doesn't affect visual rendering.
  */
-function injectSchema(content: string, schema: Record<string, unknown> | undefined): string {
-  if (!schema) return content;
-  const scriptTag = `\n<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n</script>`;
-  return content + scriptTag;
-}
-
 // ── Main publisher ─────────────────────────────────────────────────────────
 
 export async function publishToWordPress(

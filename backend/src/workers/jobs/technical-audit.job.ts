@@ -30,8 +30,9 @@
  *   LLM-generated:  faqQuestions (on FAQ model), tldrText (on TLDR model)
  *
  * RATE LIMITING:
- *   Sequential processing with LLM_RATE_LIMIT.DELAY_MS between pages.
- *   Change LLM_RATE_LIMIT in seo-pipeline.constants.ts when upgrading plan.
+ *   Sequential processing. No manual delay between pages — auditPage()
+ *   enforces the global RPM ceiling internally (lib/llm.ts). To change the
+ *   RPM ceiling, edit LLM_RATE_LIMIT in seo-pipeline.constants.ts.
  *
  * IDEMPOTENCY:
  *   Only processes CodeChanges with status: 'pending' and empty newHtml.
@@ -65,7 +66,6 @@ import type { PipelineJobData }        from '../seo-pipeline.worker';
 import type { TieredPage }             from '@/lib/page-selector';
 import type { PageAuditLlmResponse }   from '@/lib/llm';
 import {
-  LLM_RATE_LIMIT,
   TECHNICAL_AUDIT_CONFIG,
   CODE_CHANGE_SEVERITY_WEIGHT,
 } from '@/constants/seo-pipeline.constants';
@@ -136,14 +136,6 @@ interface AuditScoreInput {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Sleeps for LLM_RATE_LIMIT.DELAY_MS milliseconds.
- * Called between page LLM calls to respect Gemini RPM limits.
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 /**
  * Extracts the current title and description from a CodeChange's oldHtml.
@@ -732,7 +724,6 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
     projectId,
     totalPages:        allCrawledUrls.length,
     pagesWithChanges:  pageGroups.size,
-    delayBetweenPages: LLM_RATE_LIMIT.DELAY_MS,
   });
 
   // 6. Process each page sequentially — one LLM call per page
@@ -831,15 +822,9 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
       );
     }
 
-    // Rate limit delay — skip after last page
-    if (i < allCrawledUrls.length - 1) {
-      logger.debug('Rate limit delay', {
-        projectId,
-        delayMs: LLM_RATE_LIMIT.DELAY_MS,
-        nextPage: allCrawledUrls[i + 1],
-      });
-      await sleep(LLM_RATE_LIMIT.DELAY_MS);
-    }
+    // No manual rate-limit delay here — auditPage() (called above) already
+    // enforces the global RPM ceiling internally via lib/llm.ts's
+    // waitForRateLimit(). See LLM_RATE_LIMIT in seo-pipeline.constants.ts.
   }
 
   logger.info('Per-page LLM processing complete', {

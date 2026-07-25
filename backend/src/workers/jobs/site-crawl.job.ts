@@ -505,6 +505,7 @@ async function runCheerioCrawler(
 async function runPlaywrightCrawler(
   jsRenderedUrls: string[],
   domain:         string,
+  baseUrl:        string,
   robots:         RobotsChecker,
   sitemapUrls:    Set<string>,
   inlinkCounts:   Map<string, number>,
@@ -589,6 +590,30 @@ async function runPlaywrightCrawler(
 
         crawledNormalized.add(normUrl);
 
+        // Track inlinks from this page's outbound links — same as the
+        // Cheerio pass. Previously missing here: a page only discoverable
+        // via a JS-rendered page's links would never get inlink credit
+        // from it, undercounting inlinkCount for pages linked only from
+        // JS-heavy sections of the site.
+        for (const link of extracted.links) {
+          if (!link.isExternal) {
+            const normLink = normalizeUrl(link.href, domain);
+            inlinkCounts.set(normLink, (inlinkCounts.get(normLink) ?? 0) + 1);
+          }
+        }
+
+        // Real broken-link check — same helper, same behavior as the
+        // Cheerio pass. Previously hardcoded to [] here, meaning
+        // JS-rendered pages got a free pass on broken-link detection
+        // regardless of how many actually existed.
+        let brokenLinks: PageData['brokenLinks'] = [];
+        if (CHECK_BROKEN_LINKS) {
+          brokenLinks = await checkBrokenLinks(extracted.links, baseUrl);
+          if (brokenLinks.length > 0) {
+            logger.debug('Broken links found (Playwright)', { projectId, url: normUrl, count: brokenLinks.length });
+          }
+        }
+
         const finalUrl = normalizeUrl(page.url(), domain);
         const hasRedirectChain = finalUrl !== normUrl;
 
@@ -601,11 +626,12 @@ async function runPlaywrightCrawler(
           redirectChain:   hasRedirectChain ? [{ url: normUrl, statusCode: 301 }] : [],
           hasRedirectChain,
           responseTimeMs,
-          pageSizeBytes:   0,
+          // pageSizeBytes now comes from extracted (computed from the
+          // rendered HTML in extractFromPlaywright) — no longer hardcoded.
           depth:           getUrlDepth(normUrl),
           inlinkCount:     inlinkCounts.get(normUrl) ?? 0,
           fromSitemap,
-          brokenLinks:     [],
+          brokenLinks,
         });
 
         logger.debug('Page crawled via Playwright', { projectId, url: normUrl, responseTimeMs });
@@ -683,6 +709,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     const playwrightResult = await runPlaywrightCrawler(
       cheerioResult.jsRenderedUrls,
       domain,
+      baseUrl,
       robots,
       sitemapUrls,
       cheerioResult.inlinkCounts,
@@ -712,6 +739,21 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     }
 
     const allPages = [...pagesByNormUrl.values()];
+
+    // Re-sync inlinkCount for every page using the FINAL inlinkCounts map,
+    // now that both passes have run. Cheerio pages had their inlinkCount
+    // set from inlinkCounts before the Playwright pass ran (inside
+    // runCheerioCrawler, since it returns before Playwright starts) — if
+    // a Playwright-crawled page links to a Cheerio-crawled page, that
+    // inlink wouldn't have been counted yet at that point. Since
+    // inlinkCounts is the same Map object mutated by reference across
+    // both passes, it's now complete — this re-sync makes sure every
+    // page's inlinkCount reflects links discovered by BOTH passes, not
+    // just whichever pass happened to crawl that specific page.
+    for (const page of allPages) {
+      page.inlinkCount = cheerioResult.inlinkCounts.get(normalizeUrl(page.url, domain)) ?? page.inlinkCount;
+    }
+
     const allSkipped: Array<{ url: string; reason: string }> = [
       ...cheerioResult.skippedUrls,
       ...playwrightResult.skippedUrls,

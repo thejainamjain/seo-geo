@@ -23,11 +23,46 @@ redirect chains, thin content, slow pages, missing metadata, invalid schema).
 ## Gaps / things worth flagging
 
 1. ✅ **RESOLVED** — `Audit.summary.totalInternalLinks` was hardcoded to `0` (site-crawl.job.ts line ~821), even though `page.links[].isExternal` already told us which links were internal. Now summed across all crawled pages (`allPages.reduce(...)`) into the audit summary.
-2. **Playwright-pass pages have weaker metadata than Cheerio-pass pages**: `pageSizeBytes` hardcoded to `0`, `brokenLinks` hardcoded to `[]`, no HEAD-based redirect-chain detection (only compares `page.url()` to requested URL, so multi-hop chains before the final JS-rendered page aren't captured). This is called out in the code as a deliberate tradeoff ("Playwright is too slow for bulk link checking") — reasonable, but worth confirming with the team that it's an accepted tradeoff and not an oversight, since it means JS-heavy sites get less complete audits than static/SSR sites.
+2. ✅ **RESOLVED** — Playwright-pass pages had weaker metadata than
+   Cheerio-pass pages: `pageSizeBytes` was hardcoded to `0`, `brokenLinks`
+   was hardcoded to `[]`. Fixed both, plus two related gaps found while
+   fixing them:
+   - `pageSizeBytes` now computed from the rendered HTML's byte length
+     (`extractFromPlaywright` already has the full HTML in memory from
+     `page.content()` — no extra network request needed). Deliberately a
+     different measurement basis than the Cheerio pass (which uses a HEAD
+     request's `Content-Length` — the pre-JS transfer size): for a
+     JS-rendered page, the pre-render HTML is often a near-empty SPA
+     shell, so measuring that would defeat the point of running Playwright
+     on the page at all. Rendered DOM size is the more honest signal here.
+   - `brokenLinks` now uses the same `checkBrokenLinks()` helper the
+     Cheerio pass already used — no more free pass on broken-link
+     detection for JS-heavy sites.
+   - Found in the process: the Playwright pass never fed its discovered
+     links into the shared `inlinkCounts` map, so a page only discoverable
+     via a JS-rendered page's links got no inlink credit from it. Fixed —
+     now tracks inlinks the same way the Cheerio pass does.
+   - Found a second, related bug this interacted with: Cheerio pages'
+     `inlinkCount` was finalized *inside* `runCheerioCrawler`, which
+     returns and finishes **before** the Playwright pass even starts — so
+     any inlinks a Playwright-crawled page contributed to a
+     Cheerio-crawled page could never reach it, even with the fix above.
+     Added a final re-sync pass after both passes complete and merge,
+     using the fully-populated `inlinkCounts` map, so every page's
+     `inlinkCount` now reflects links discovered by both passes, not just
+     whichever pass happened to crawl that specific page.
+   - Redirect-chain detection was NOT changed — on closer look, the
+     existing `page.url()` comparison is already roughly equivalent in
+     accuracy to the Cheerio pass's own HEAD-request approach (both only
+     produce a synthetic single-hop chain entry, not a real multi-hop
+     chain — that was a pre-existing simplification on both passes, not a
+     Playwright-specific gap).
+   - The "Playwright too slow for bulk link checking" tradeoff comment
+     that originally justified skipping this is gone — `checkBrokenLinks`
+     is now called for both passes identically.
 3. **Dedup logic when Cheerio and Playwright both crawl the same URL**: Cheerio result wins (documented as intentional — "more reliable"). Fine, but means if a page starts server-rendering minimal content and expands via JS, it's classified as Cheerio-only and might miss content Playwright would have seen. Edge case, low priority.
 4. **No stated limit/backoff behavior if the target site itself rate-limits or blocks the crawler mid-run** beyond generic `failedRequestHandler` logging into `skippedUrls`. Worth a manual test against a real site with aggressive bot protection (e.g. Cloudflare) — the file header actually already admits this ("WHAT WE STILL CANNOT HANDLE: Cloudflare Enterprise bot protection"), so it's a known, documented limitation rather than a silent gap.
 5. **`MAX_CRAWL_PAGES` default of 50** (from `.env`) — fine for MVP/demo, but worth deciding explicitly what the production limit should be and how it interacts with billing/plan tiers, since this isn't currently tied to any subscription/plan concept in the models reviewed so far (to be confirmed once we look at `Project`/`Organization` models).
 
 ## Open questions for the team
-- Is the Playwright-pass metadata gap (point 2) accepted, or should broken-link/redirect checks be extended to JS-rendered pages too (at the cost of crawl speed)?
 - What should `MAX_CRAWL_PAGES` be tied to — a flat config value, or plan-based limits?

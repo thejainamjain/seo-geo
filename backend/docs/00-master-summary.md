@@ -111,15 +111,27 @@ existing generate+conditional-publish logic untouched.
 
 ## 🟡 Still open — narrow, low urgency
 
-15. Weaker audit data for Playwright-rendered pages (`docs/01-...`), crude
-    `freeTrialAvailable` string-match (`docs/02-...`) — both documented,
-    low-impact simplifications, not touched.
+15. Crude `freeTrialAvailable` string-match (`docs/02-...`) — documented,
+    low-impact simplification, not touched.
 16. Wix's Ricos conversion (item 13 above) and GoHighLevel's
     slug-existence-check response shape (`docs/11-...`) are both
     implemented and reasoned through, but honestly flagged as needing a
     real live test against each platform before being fully trusted — the
     exact request/response schemas weren't confirmable from documentation
     alone.
+
+## ✅ Resolved — Playwright pass, fourth pass
+
+17. Playwright-crawled pages had weaker audit data than Cheerio-crawled
+    pages (`docs/01-...`) — `pageSizeBytes` and `brokenLinks` were
+    hardcoded to `0`/`[]`. Fixed both (pageSizeBytes now computed from
+    rendered HTML byte length — free, no extra request; brokenLinks reuses
+    the same `checkBrokenLinks()` helper). Found and fixed two related
+    bugs surfaced while doing this: Playwright-discovered links never fed
+    the shared inlink-count map, and Cheerio pages' `inlinkCount` was
+    finalized before the Playwright pass even ran — added a final re-sync
+    pass after both crawl passes complete so every page's inlink count
+    reflects links found by either pass.
 
 ## What's genuinely solid, no action needed
 - Site crawl (3-pass sitemap-first strategy, documented real bug fixes)

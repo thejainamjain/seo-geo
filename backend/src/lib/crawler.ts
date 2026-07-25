@@ -706,6 +706,17 @@ export function extractFromCheerio(
  *   function serialisation, no esbuild artefacts sent to the browser.
  *   We parse it on the Node side with Cheerio, reusing extractFromCheerio.
  *   This also eliminates 80 lines of duplicated extraction logic.
+ *
+ * pageSizeBytes: computed from the RENDERED HTML's byte length, not a
+ * network Content-Length header. Deliberately different from the Cheerio
+ * pass's measurement basis (which uses a HEAD request's Content-Length —
+ * the pre-JS-execution transfer size). For a JS-rendered page, the
+ * pre-render HTML is often just a near-empty SPA shell — measuring THAT
+ * would defeat the point of running Playwright on this page in the first
+ * place. The rendered DOM size is the more honest "how much page is
+ * there" signal for these pages specifically. This also comes for free —
+ * no extra network request needed, since Playwright already has the full
+ * rendered HTML in memory from page.content() above.
  */
 export async function extractFromPlaywright(
   page:   Page,
@@ -713,7 +724,7 @@ export async function extractFromPlaywright(
   domain: string,
 ): Promise<Omit<PageData,
   | 'statusCode' | 'renderedBy' | 'finalUrl' | 'redirectChain'
-  | 'hasRedirectChain' | 'responseTimeMs' | 'pageSizeBytes'
+  | 'hasRedirectChain' | 'responseTimeMs'
   | 'depth' | 'inlinkCount' | 'fromSitemap' | 'brokenLinks'
 > & { rawBodyText: string }> {
   // Wait for JS to finish rendering
@@ -726,7 +737,12 @@ export async function extractFromPlaywright(
   const { load } = await import('cheerio');
   const $ = load(html);
 
-  return extractFromCheerio($, url, domain);
+  const extracted = extractFromCheerio($, url, domain);
+
+  return {
+    ...extracted,
+    pageSizeBytes: Buffer.byteLength(html, 'utf-8'),
+  };
 }
 
 // ── Single page crawl (for competitor / SERP jobs) ────────────────────────

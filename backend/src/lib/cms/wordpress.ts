@@ -10,13 +10,23 @@
  *   Authorization: Basic base64(username:applicationPassword)
  *
  * FLOW:
- *   1. POST /wp-json/wp/v2/posts → create draft
+ *   0. GET /posts?slug=X&status=any → check if a post with this slug
+ *      already exists (idempotency — see docs/11-cms-integrations-audit.md)
+ *   1a. If found: PATCH that post directly (skip to step 4)
+ *   1b. If not found: POST /wp-json/wp/v2/posts → create draft
  *   2. If heroImageUrl → upload to WP media library → set featured_media
  *   3. PATCH post → status: publish
  *
  * WHY TWO STEPS (draft then publish):
  *   Creating as draft first lets us attach the featured image before publishing.
  *   Publishing in one step without featured image = post goes live without hero.
+ *
+ * IDEMPOTENCY: step 0 makes this safe to call twice for the same slug —
+ * a retry updates the existing post instead of creating a duplicate. This
+ * closes most of the duplicate-post risk described in
+ * docs/11-cms-integrations-audit.md (the narrow remaining gap is a crash
+ * between this API call succeeding and our own DB write recording it,
+ * which no CMS-side upsert can fix — see lib/blog-cms-publisher.ts).
  *
  * SQUARESPACE NOTE:
  *   When cmsType is 'squarespace', siteUrl points to our bridge WP install,
@@ -104,7 +114,8 @@ async function uploadFeaturedImage(
     const imgBuffer  = await imgResponse.arrayBuffer();
     const imgBytes   = new Uint8Array(imgBuffer);
     const contentType = imgResponse.headers.get('content-type') ?? 'image/jpeg';
-    const filename   = `${title.toLowerCase().replace(/\s+/g, '-').slice(0, 50)}.avif`;
+    const extension  = contentType.split('/')[1]?.split(';')[0] ?? 'jpg'; // e.g. "image/jpeg" -> "jpeg"
+    const filename   = `${title.toLowerCase().replace(/\s+/g, '-').slice(0, 50)}.${extension}`;
 
     // Upload to WP media library
     const uploadUrl = `${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2/media`;
@@ -148,12 +159,54 @@ async function uploadFeaturedImage(
   }
 }
 
-// ── Schema injection ───────────────────────────────────────────────────────
+// ── Idempotency: find existing post by slug ────────────────────────────────
 
 /**
- * Injects Schema.org JSON-LD into the blog HTML content.
- * Appended at the end — doesn't affect visual rendering.
+ * Checks whether a post with this slug already exists.
+ * Returns its numeric post ID, or null if none found.
+ *
+ * NOTE: `status=any` is required — otherwise WP's default posts endpoint
+ * only searches published posts, and would miss a post that was created
+ * as a draft in a previous attempt but never got promoted to publish
+ * (e.g. the featured-image-upload step failed and threw before step 4).
  */
+async function findPostBySlug(
+  siteUrl: string,
+  auth:    string,
+  slug:    string,
+  context: string,
+): Promise<number | null> {
+  const results = await wpFetchList(siteUrl, `/posts?slug=${encodeURIComponent(slug)}&status=any`, auth, context);
+  const existing = results[0];
+  if (!existing) return null;
+  return existing['id'] as number;
+}
+
+async function wpFetchList(
+  siteUrl: string,
+  path:    string,
+  auth:    string,
+  context: string,
+): Promise<Array<Record<string, unknown>>> {
+  const url = `${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2${path}`;
+
+  const response = await fetch(url, {
+    method:  'GET',
+    headers: { 'Authorization': auth },
+    signal:  AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(
+      `WordPress API error: HTTP ${response.status} on GET ${url}. ` +
+      `Context: ${context}. Body: ${text.slice(0, 300)}`
+    );
+  }
+
+  return response.json() as Promise<Array<Record<string, unknown>>>;
+}
+
 // ── Main publisher ─────────────────────────────────────────────────────────
 
 export async function publishToWordPress(
@@ -173,28 +226,49 @@ export async function publishToWordPress(
   // 1. Inject schema into content
   const fullContent = injectSchema(payload.content, payload.seoSchema);
 
-  // 2. Create post as draft first
-  const draftPost = await wpFetch(
-    creds.siteUrl,
-    '/posts',
-    'POST',
-    auth,
-    {
-      title:   payload.title,
-      slug:    payload.slug,
-      content: fullContent,
-      excerpt: payload.description,
-      status:  'draft',
-      meta: {
-        description: payload.description,
+  // 2. Idempotency check — reuse an existing post with this slug instead
+  //    of creating a duplicate (see file header comment for why)
+  let postId = await findPostBySlug(creds.siteUrl, auth, payload.slug, context);
+
+  if (postId) {
+    logger.info('Existing WordPress post found for slug — updating instead of creating', {
+      context, postId, slug: payload.slug,
+    });
+    await wpFetch(
+      creds.siteUrl,
+      `/posts/${postId}`,
+      'POST',
+      auth,
+      {
+        title:   payload.title,
+        content: fullContent,
+        excerpt: payload.description,
+        status:  'draft', // keep as draft through the featured-image step below, same as the create path
+        meta:    { description: payload.description },
       },
-    },
-    context,
-  );
-
-  const postId = draftPost['id'] as number;
-
-  logger.debug('WordPress draft created', { context, postId, slug: payload.slug });
+      context,
+    );
+  } else {
+    const draftPost = await wpFetch(
+      creds.siteUrl,
+      '/posts',
+      'POST',
+      auth,
+      {
+        title:   payload.title,
+        slug:    payload.slug,
+        content: fullContent,
+        excerpt: payload.description,
+        status:  'draft',
+        meta: {
+          description: payload.description,
+        },
+      },
+      context,
+    );
+    postId = draftPost['id'] as number;
+    logger.debug('WordPress draft created', { context, postId, slug: payload.slug });
+  }
 
   // 3. Upload featured image (non-fatal if fails)
   let featuredMediaId: number | null = null;

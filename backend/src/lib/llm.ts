@@ -84,6 +84,7 @@ function getGroq(): Groq {
  */
 async function waitForRateLimit(provider: 'gemini' | 'groq'): Promise<void> {
   const redis = getRedis();
+  // Gemini free: 14 RPM (buffer from 15). Groq free: 28 RPM (buffer from 30).
   const MAX_RPM = provider === 'groq' ? LLM_RATE_LIMIT.GROQ_RPM : LLM_RATE_LIMIT.GEMINI_RPM;
 
   while (true) {

@@ -1,9 +1,11 @@
 # CMS Platform Integrations (8 platforms): Backend Audit
 
 **Files:** `lib/cms/{wordpress,webflow,framer,wix,shopify,sanity,gohighlevel,custom-api}.ts`,
-plus `lib/cms/types.ts` and `lib/cms/index.ts` (shared dispatcher)
-**Status: 🔴 One critical finding. One real cross-cutting bug. Several
-medium/low content-completeness gaps.**
+plus `lib/cms/types.ts`, `lib/cms/index.ts` (shared dispatcher), and
+`lib/cms/shared.ts` (new — shared `injectSchema` helper)
+**Status: 🔴 One critical finding still open (Framer/RankAI domain — needs
+a product decision, not a code fix). Idempotency and schema-markup gaps
+resolved. One low-confidence item (Wix content format) needs a live test.**
 
 ## 🔴 CRITICAL — `framer.ts` calls out to RankAI's actual live infrastructure
 
@@ -150,14 +152,6 @@ guarantees the schema actually reaches the live page by default.
 
 ## 🟡 Medium — Wix content field likely wrong for HTML content (needs live verification, not certain)
 
-**Partially addressed:** the `seoSchema` piece above now also applies to
-Wix (`contentText` gets the same JSON-LD script tag appended). The
-underlying content-format question below is unchanged and still needs a
-live API test — if `contentText` doesn't actually render as HTML, neither
-the blog body nor the injected schema will display correctly, and this
-needs a real fix (likely building the Ricos rich-content JSON structure)
-rather than a content-string change.
-
 ```ts
 post: { contentText: payload.content, ... }
 ```
@@ -170,6 +164,14 @@ being interpreted as formatting. I don't have live API access to confirm
 this definitively, so flagging with appropriate uncertainty rather than
 certainty — worth a real test publish to Wix before trusting this path in
 production.
+
+**Partially addressed:** the `seoSchema` fix above now also applies to
+Wix (`contentText` gets the same JSON-LD script tag appended). The
+underlying content-format question is unchanged and still needs a live
+API test — if `contentText` doesn't actually render as HTML, neither the
+blog body nor the injected schema will display correctly, and this needs
+a real fix (likely building the Ricos rich-content JSON structure) rather
+than a content-string change.
 
 ## 🟢 Low-priority / minor
 - `wordpress.ts`: uploaded featured images are always named with a

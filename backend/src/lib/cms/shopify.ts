@@ -15,6 +15,24 @@
  *   In Shopify, a "Blog" is a channel (like a category).
  *   An "Article" is an individual post within a Blog.
  *   We create Articles under the first Blog found on the store.
+ *
+ * FLOW:
+ *   0. GET /blogs/{blogId}/articles.json?handle=X → check if an article
+ *      with this handle already exists (idempotency)
+ *   1a. If found: PUT /blogs/{blogId}/articles/{articleId}.json → update
+ *   1b. If not found: POST /blogs/{blogId}/articles.json → create
+ *
+ * IDEMPOTENCY: step 0 makes this safe to call twice for the same handle —
+ * confirmed the Article resource supports "Retrieve an article with a
+ * specific handle" directly via the handle query param on the list
+ * endpoint (shopify.dev Article resource docs).
+ *
+ * NOTE: seoSchema is injected directly into body_html (same pattern as
+ * the other raw-HTML publishers, see lib/cms/shared.ts) because it's
+ * rendered on the storefront unconditionally. The `seo.schema_json`
+ * metafield below is kept as well for any theme that's been customized
+ * to read it separately, but body_html is what actually guarantees the
+ * schema reaches the live page on a default theme.
  */
 
 import { logger } from '@/open-tele';
@@ -84,6 +102,26 @@ async function getFirstBlogId(
   return blogId;
 }
 
+/** Checks whether an article with this handle already exists in the blog.
+ *  Returns its numeric article ID, or null if none found. */
+async function findArticleByHandle(
+  storeName:   string,
+  accessToken: string,
+  blogId:      number,
+  handle:      string,
+  context:     string,
+): Promise<number | null> {
+  const data = await shopifyFetch(
+    storeName, accessToken,
+    `/blogs/${blogId}/articles.json?handle=${encodeURIComponent(handle)}`,
+    'GET', undefined, context,
+  );
+  const articles = data['articles'] as Array<Record<string, unknown>> | undefined;
+  const existing  = articles?.[0];
+  if (!existing) return null;
+  return existing['id'] as number;
+}
+
 export async function publishToShopify(
   creds:   ShopifyCredentials,
   payload: BlogPublishPayload,
@@ -102,47 +140,57 @@ export async function publishToShopify(
   // 1. Get the first blog ID
   const blogId = await getFirstBlogId(creds.storeName, accessToken, context);
 
-  // 2. Create the article
-  //    seoSchema is injected directly into body_html (same pattern as the
-  //    other raw-HTML publishers, see lib/cms/shared.ts) because it's
-  //    rendered on the storefront unconditionally. The `seo.schema_json`
-  //    metafield below is kept as well for any theme that's been
-  //    customized to read it separately, but body_html is what actually
-  //    guarantees the schema reaches the live page on a default theme.
-  const fullContent = injectSchema(payload.content, payload.seoSchema);
+  const articleFields = {
+    title:            payload.title,
+    body_html:        injectSchema(payload.content, payload.seoSchema),
+    summary_html:     payload.description,
+    handle:           payload.slug,
+    published:        true,
+    image: payload.heroImageUrl
+      ? { src: payload.heroImageUrl, alt: payload.title }
+      : undefined,
+    metafields: payload.seoSchema
+      ? [
+          {
+            key:       'schema_json',
+            value:     JSON.stringify(payload.seoSchema),
+            type:      'json',
+            namespace: 'seo',
+          },
+        ]
+      : [],
+  };
 
-  const data = await shopifyFetch(
-    creds.storeName,
-    accessToken,
-    `/blogs/${blogId}/articles.json`,
-    'POST',
-    {
-      article: {
-        title:            payload.title,
-        body_html:        fullContent,
-        summary_html:     payload.description,
-        handle:           payload.slug,
-        published:        true,
-        image: payload.heroImageUrl
-          ? { src: payload.heroImageUrl, alt: payload.title }
-          : undefined,
-        metafields: payload.seoSchema
-          ? [
-              {
-                key:       'schema_json',
-                value:     JSON.stringify(payload.seoSchema),
-                type:      'json',
-                namespace: 'seo',
-              },
-            ]
-          : [],
-      },
-    },
-    context,
-  );
+  // 2. Idempotency check — reuse an existing article with this handle
+  //    instead of creating a duplicate (see file header comment for why)
+  const existingArticleId = await findArticleByHandle(creds.storeName, accessToken, blogId, payload.slug, context);
 
-  const article    = data['article'] as Record<string, unknown>;
-  const articleId  = String(article['id'] ?? '');
+  let articleId: string;
+  if (existingArticleId) {
+    logger.info('Existing Shopify article found for handle — updating instead of creating', {
+      context, articleId: existingArticleId, handle: payload.slug,
+    });
+    const data = await shopifyFetch(
+      creds.storeName, accessToken,
+      `/blogs/${blogId}/articles/${existingArticleId}.json`,
+      'PUT',
+      { article: articleFields },
+      context,
+    );
+    const article = data['article'] as Record<string, unknown>;
+    articleId = String(article['id'] ?? existingArticleId);
+  } else {
+    const data = await shopifyFetch(
+      creds.storeName, accessToken,
+      `/blogs/${blogId}/articles.json`,
+      'POST',
+      { article: articleFields },
+      context,
+    );
+    const article = data['article'] as Record<string, unknown>;
+    articleId = String(article['id'] ?? '');
+  }
+
   const publishedUrl = `https://${payload.domain}/${payload.blogPostPath}/${payload.slug}`;
 
   logger.info('Shopify publish complete', { context, articleId, publishedUrl });

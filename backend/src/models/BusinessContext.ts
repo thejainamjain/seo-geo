@@ -105,6 +105,14 @@ export interface IBusinessContext extends Document {
 
   // Which steps a human has actually reviewed/confirmed via the onboarding
   // wizard (project.service.ts's step-save endpoint, one at a time).
+  //
+  // NOTE: this field used to also be set in bulk by business-profile.job.ts
+  // at the same time as the AI draft, conflating "AI generated a guess" with
+  // "a person confirmed this is right." That meant the UI could show every
+  // step as "completed" the moment the AI ran, even though nobody had
+  // reviewed any of it. Now AI-drafted-but-unreviewed status lives in
+  // aiDraftedSteps above; completedSteps only ever reflects steps the user
+  // has explicitly gone through the wizard for.
   completedSteps: number[]; // e.g. [1, 2, 3] means user confirmed steps 1-3
 
   createdAt: Date;

@@ -1,17 +1,27 @@
 /**
  * workers/jobs/gsc-monitor.job.ts
  *
- * WHAT: Fetches Google Search Console performance data for published blogs
- *       and creates BlogLearning documents for underperforming posts.
+ * WHAT: Fetches Google Search Console performance data for published blogs,
+ *       creates BlogLearning documents for underperforming posts, embeds
+ *       them for retrieval, and triggers the actual rewrite (previously
+ *       this job created insights and nothing ever acted on them — see
+ *       LEARNING_SYSTEM_ARCHITECTURE.md / docs/13-knowledge-learning-system.md).
  *
  * HOW IT WORKS:
  *   1. Load GoogleToken for project — refresh accessToken if expired
  *   2. Load all published blogs for project
  *   3. Call GSC Search Analytics API (REST) for each blog's URL
  *      — last 28 days of clicks, impressions, CTR, average position
+ *   3.5. Check any previously auto-applied tag optimization for this blog
+ *        for rollback — see checkAndRollbackTagOptimization() below
  *   4. Identify underperforming blogs (high impressions, low CTR OR
  *      ranking drops, OR new query opportunities)
- *   5. Create BlogLearning documents for each insight found
+ *   5. Create BlogLearning documents for each fresh (non-deduped) insight
+ *   6. Embed each new BlogLearning into ProjectLearningChunk so it becomes
+ *      retrievable by lib/vector-search.ts
+ *   7. Enqueue workers/jobs/blog-optimization.job.ts for the blog — the
+ *      actual rewrite engine, which auto-applies tag changes and proposes
+ *      a content rewrite for human review
  *
  * GSC API: REST (no SDK needed — just fetch with Bearer token)
  *   POST https://searchconsole.googleapis.com/webmasters/v3/sites/{siteUrl}/searchAnalytics/query
@@ -50,8 +60,30 @@
  */
 
 import type { Job } from 'bullmq';
+import { Queue }        from 'bullmq';
 import { logger }       from '@/open-tele';
-import { Project, BlogLearning, Blog, GoogleToken, Keyword } from '@/models';
+import { Project, BlogLearning, BlogOptimization, ProjectLearningChunk, Blog, GoogleToken, Keyword } from '@/models';
+import { embedText }    from '@/lib/embeddings';
+import { getConnectionOptions } from '@/loaders/redis';
+import { QUEUE_NAMES, JOB_RETRY_CONFIG } from '@/constants/seo-pipeline.constants';
+import type { BlogOptimizationJobData } from './blog-optimization.job';
+
+const blogOptimizationQueue = new Queue<BlogOptimizationJobData>(
+  QUEUE_NAMES.BLOG_OPTIMIZATION,
+  { connection: getConnectionOptions() },
+);
+
+// Auto-applied tag optimizations are checked for rollback starting this many
+// days after they went live (needs at least a week of fresh GSC data to be
+// a meaningful comparison, not noise) and stop being checked after this
+// many days (an old change that hasn't clearly hurt by now probably isn't
+// going to — no point checking forever).
+const ROLLBACK_CHECK_MIN_DAYS_AFTER_APPLY = 7;
+const ROLLBACK_CHECK_MAX_DAYS_AFTER_APPLY = 35;
+// A tag change is considered to have HURT performance if CTR drops by more
+// than this fraction relative to the pre-change baseline — small week-to-
+// week noise shouldn't trigger a revert, only a real regression.
+const ROLLBACK_CTR_DEGRADATION_THRESHOLD = 0.10; // 10% relative drop
 
 // Skip re-creating a BlogLearning for a blog+type pair if one was already
 // created within this window. Prevents an unresolved insight (e.g. a
@@ -228,6 +260,95 @@ async function fetchGscMetricsForPage(
   };
 }
 
+// ── Rollback check for auto-applied tag optimizations ──────────────────────
+
+/**
+ * Reverts a blog's title/description/schema back to their pre-optimization
+ * values if an auto-applied tag change appears to have made CTR worse.
+ * See blog-optimization.job.ts for why tag changes auto-apply without
+ * human review in the first place — this is the safety net that decision
+ * depends on.
+ *
+ * Deliberately conservative: only acts on optimizations that are
+ * ROLLBACK_CHECK_MIN_DAYS_AFTER_APPLY to ROLLBACK_CHECK_MAX_DAYS_AFTER_APPLY
+ * days old (enough fresh GSC data to mean something, not checked forever),
+ * requires a recorded baselineCtr to compare against (no baseline = no
+ * check, not treated as a regression), and only reverts on a
+ * ROLLBACK_CTR_DEGRADATION_THRESHOLD+ relative drop (week-to-week noise
+ * shouldn't trigger a revert).
+ */
+async function checkAndRollbackTagOptimization(
+  projectId: string,
+  blogId:    string,
+  currentCtr: number,
+): Promise<void> {
+  const now = new Date();
+  const minAppliedBefore = new Date(now.getTime() - ROLLBACK_CHECK_MIN_DAYS_AFTER_APPLY * 24 * 60 * 60 * 1000);
+  const maxAppliedAfter  = new Date(now.getTime() - ROLLBACK_CHECK_MAX_DAYS_AFTER_APPLY * 24 * 60 * 60 * 1000);
+
+  const candidate = await BlogOptimization.findOne({
+    blogId,
+    projectId,
+    'seoTagOptimization.appliedAt':   { $lte: minAppliedBefore, $gte: maxAppliedAfter },
+    'seoTagOptimization.rolledBackAt': { $exists: false },
+  }).sort({ 'seoTagOptimization.appliedAt': -1 });
+
+  if (!candidate?.seoTagOptimization) return;
+
+  const { baselineCtr, originalTitle, originalDescription, originalSchema } = candidate.seoTagOptimization;
+
+  if (typeof baselineCtr !== 'number' || baselineCtr <= 0) {
+    logger.debug('Rollback check skipped — no baseline CTR recorded', { projectId, blogId });
+    return;
+  }
+
+  const relativeDrop = (baselineCtr - currentCtr) / baselineCtr;
+
+  if (relativeDrop < ROLLBACK_CTR_DEGRADATION_THRESHOLD) {
+    logger.debug('Rollback check passed — CTR did not regress meaningfully', {
+      projectId, blogId, baselineCtr, currentCtr, relativeDrop,
+    });
+    return;
+  }
+
+  logger.warn('Auto-applied tag optimization appears to have hurt CTR — rolling back', {
+    projectId, blogId,
+    optimizationId: String(candidate._id),
+    baselineCtr, currentCtr, relativeDrop,
+  });
+
+  const blog = await Blog.findOne({ _id: blogId, projectId });
+  if (!blog) {
+    logger.warn('Rollback skipped — blog no longer exists', { projectId, blogId });
+    return;
+  }
+
+  await Blog.findByIdAndUpdate(blogId, {
+    $push: {
+      history: {
+        $each: [{
+          content:     blog.content ?? '',
+          description: blog.description,
+          status:      blog.status,
+          writer:      'system',
+          createdAt:   now,
+        }],
+        $slice: -50,
+      },
+    },
+  });
+
+  if (originalTitle !== undefined)       blog.title       = originalTitle;
+  if (originalDescription !== undefined) blog.description = originalDescription;
+  if (originalSchema !== undefined)      blog.seoSchema    = originalSchema;
+  await blog.save();
+
+  candidate.seoTagOptimization.rolledBackAt = now;
+  await candidate.save();
+
+  logger.info('Tag optimization rolled back', { projectId, blogId, optimizationId: String(candidate._id) });
+}
+
 // ── Learning generation ────────────────────────────────────────────────────
 
 function detectInsights(
@@ -365,6 +486,14 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
         continue; // No GSC data yet for this page
       }
 
+      // ── Rollback check for previously auto-applied tag optimizations ────
+      // blog-optimization.job.ts auto-applies seoTagOptimization changes
+      // without human review (see that file for the risk-tiering rationale).
+      // This is the safety net that makes that defensible: if CTR got
+      // meaningfully WORSE after the change, revert using the exact
+      // original values already stored on the BlogOptimization record.
+      await checkAndRollbackTagOptimization(projectId, blogId, metrics.ctr);
+
       processedCount++;
 
       logger.debug('GSC metrics fetched for blog', {
@@ -441,8 +570,8 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
         },
       }));
 
-      await BlogLearning.insertMany(learningDocs);
-      learningCount += learningDocs.length;
+      const createdLearnings = await BlogLearning.insertMany(learningDocs);
+      learningCount += createdLearnings.length;
 
       logger.info('BlogLearning docs created', {
         projectId,
@@ -450,6 +579,55 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
         insightCount: freshInsights.length,
         types:        freshInsights.map(i => i.type),
       });
+
+      // Embed each new learning so it becomes retrievable by
+      // lib/vector-search.ts (sourceType: "learning") — without this step
+      // the insight sits in BlogLearning forever but blog-optimization.job.ts
+      // (and any future blog generation) can never find it via hybrid search.
+      // Embedding failure here is non-fatal — the BlogLearning record itself
+      // is already saved; a chunk that fails to embed just isn't retrievable
+      // yet, same degraded-but-not-lost philosophy as everywhere else this
+      // system embeds something.
+      for (const learning of createdLearnings) {
+        try {
+          const embeddingInputText = `${learning.insight}\n\nEvidence: ${learning.evidence}`;
+          const embedding = await embedText(embeddingInputText);
+          await ProjectLearningChunk.create({
+            projectId,
+            sourceType:          'learning',
+            content:             learning.insight,
+            embeddingInputText,
+            embedding,
+            blogId:              learning.blogId,
+            learningId:          learning._id,
+            confidence:          learning.confidence,
+            keyword:             learning.keyword,
+          });
+        } catch (err) {
+          logger.warn('Failed to embed BlogLearning — insight saved but not yet retrievable by vector search', {
+            projectId, blogId,
+            learningId: String(learning._id),
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Trigger the actual rewrite — this is the step that was completely
+      // missing before: BlogLearning insights got created and then nothing
+      // ever acted on them. See workers/jobs/blog-optimization.job.ts.
+      await blogOptimizationQueue.add(
+        'optimize-blog',
+        {
+          projectId,
+          blogId,
+          keyword,
+          learningIds: createdLearnings.map(l => String(l._id)),
+        },
+        {
+          attempts: JOB_RETRY_CONFIG.BLOG_OPTIMIZATION.attempts,
+          backoff:  { type: 'exponential', delay: JOB_RETRY_CONFIG.BLOG_OPTIMIZATION.backoffDelay },
+        },
+      );
 
     } catch (err) {
       logger.warn('GSC metrics fetch failed for blog — skipping', {

@@ -70,6 +70,7 @@ import { Project }         from '@/models/Project';
 import { BusinessContext } from '@/models/BusinessContext';
 import { generateBlogPost } from '@/lib/llm';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
+import { findRelevantKnowledge, findRelevantLearnings, formatChunksForPrompt } from '@/lib/vector-search';
 import type { BlogJobData } from '../seo-pipeline.worker';
 import { formatBusinessContext } from '@/lib/business-context-formatter';
 
@@ -224,7 +225,25 @@ export async function runBlogGenerationJob(job: Job<BlogJobData>): Promise<void>
 
   let knowledgeChunks = '';
   try {
-    knowledgeChunks = await loadKnowledgeChunks(projectId);
+    // Real retrieval first — relevant to THIS keyword specifically, plus
+    // past learnings so a new blog doesn't repeat a mistake a previous
+    // similar post already needed a rewrite to fix. Previously this always
+    // dumped the first few uploaded files' full text, truncated, regardless
+    // of relevance to the keyword being generated.
+    const [retrievedKnowledge, retrievedLearnings] = await Promise.all([
+      findRelevantKnowledge(projectId, keyword.keyword, 5),
+      findRelevantLearnings(projectId, keyword.keyword, 5),
+    ]);
+    const knowledgeBlock = formatChunksForPrompt(retrievedKnowledge, 'BRAND CONTEXT');
+    const learningsBlock = formatChunksForPrompt(retrievedLearnings, 'PAST LEARNINGS FOR THIS KEYWORD CATEGORY');
+    knowledgeChunks = [knowledgeBlock, learningsBlock].filter(Boolean).join('\n\n');
+
+    // Fallback for projects with no embedded chunks yet — degrade to the
+    // old whole-file approach rather than generating with zero brand context.
+    if (!knowledgeChunks) {
+      knowledgeChunks = await loadKnowledgeChunks(projectId);
+    }
+
     logger.debug('Knowledge chunks loaded', {
       projectId,
       keywordId,

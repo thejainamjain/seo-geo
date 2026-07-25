@@ -1,7 +1,16 @@
-import { ProjectKnowledgeFile, Project, OrganizationMember } from '../models';
+import { Queue } from 'bullmq';
+import { ProjectKnowledgeFile, ProjectLearningChunk, Project, OrganizationMember } from '../models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { uploadToCloudinary, deleteFromCloudinary } from '../lib/cloudinary';
+import { getConnectionOptions } from '../loaders/redis';
+import { QUEUE_NAMES, JOB_RETRY_CONFIG } from '../constants/seo-pipeline.constants';
 import { logger } from '../open-tele';
+import type { KnowledgeProcessingJobData } from '../workers/jobs/knowledge-processing.job';
+
+const knowledgeProcessingQueue = new Queue<KnowledgeProcessingJobData>(
+  QUEUE_NAMES.KNOWLEDGE_PROCESSING,
+  { connection: getConnectionOptions() },
+);
 
 const MAX_FILES     = 25;
 const MAX_BYTES     = 10 * 1024 * 1024; // 10MB
@@ -88,6 +97,18 @@ export const knowledgeService = {
       sizeBytes: file.size,
     });
 
+    // Enqueue the extract → classify → chunk → embed pipeline. Previously
+    // nothing did this — files were created at status: 'pending' and just
+    // stayed there forever. See workers/jobs/knowledge-processing.job.ts.
+    await knowledgeProcessingQueue.add(
+      'process-knowledge-file',
+      { projectId, fileId: String(knowledgeFile._id) },
+      {
+        attempts: JOB_RETRY_CONFIG.KNOWLEDGE_PROCESSING.attempts,
+        backoff:  { type: 'exponential', delay: JOB_RETRY_CONFIG.KNOWLEDGE_PROCESSING.backoffDelay },
+      },
+    );
+
     return knowledgeFile;
   },
 
@@ -107,6 +128,10 @@ export const knowledgeService = {
 
     await deleteFromCloudinary(publicId);
     await file.deleteOne();
+    // Was previously left behind — orphaned chunks would keep showing up in
+    // vector search results (and being embedded in blog prompts) forever
+    // after the source file was deleted.
+    await ProjectLearningChunk.deleteMany({ fileId, projectId });
 
     logger.info('Knowledge file deleted', { projectId, fileId });
     return file;

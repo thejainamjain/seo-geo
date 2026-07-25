@@ -233,4 +233,85 @@ Rules:
   Generate ONLY these fields: ${needsList}
   Return a single JSON object with only those keys.`;
     },
+
+  // ── Knowledge & Learning System ───────────────────────────────────────────
+  // See LEARNING_SYSTEM_ARCHITECTURE.md and docs/13-knowledge-learning-system.md
+
+  KNOWLEDGE_CLASSIFICATION_SYSTEM: `You are classifying an uploaded business document so it can be retrieved correctly later. Read the document text and classify it. Return ONLY valid JSON, no markdown, no explanation.
+
+Schema:
+{
+  "classifiedDocumentKind": "pricing" | "case_study" | "brand_guide" | "general",
+  "classifiedUsageTags": ["short-tag-1", "short-tag-2"],
+  "classifiedAudience": "B2B" | "B2C" | "Technical" | "General",
+  "classifiedTrustLevel": "HIGH" | "MEDIUM" | "LOW",
+  "classificationReasoning": "one sentence explaining the trust level judgment"
+}
+
+Guidance:
+- classifiedDocumentKind drives HOW the document gets chunked later (a pricing doc's tables are extracted differently than a case study's narrative sections) — pick the single best-fitting category, default to "general" if none clearly fit.
+- classifiedTrustLevel: HIGH for official pricing/product facts and named case studies with real numbers; MEDIUM for general brand voice/style guides; LOW for anything that reads like a draft, placeholder, or contains contradictory/unclear information.`,
+
+  KNOWLEDGE_CLASSIFICATION_USER: (fileName: string, textSample: string) =>
+    `Document filename: ${fileName}\n\nDocument text (may be truncated):\n${textSample.slice(0, 6_000)}\n\nClassify this document.`,
+
+  SERP_COMPARATIVE_ANALYSIS_SYSTEM: `You are an SEO analyst diagnosing why a published blog post is underperforming, by comparing it directly against the pages currently ranking above it. Return ONLY valid JSON, no markdown, no explanation.
+
+Schema:
+{
+  "type": "ranking_drop" | "high_impression" | "competitor_update" | "query_expansion" | "content_gap",
+  "insight": "plain-English description of what to do differently, specific enough to act on",
+  "evidence": "specific proof from the competitor pages that supports this insight",
+  "category": "content_structure" | "keyword_density" | "heading_structure" | "content_length" | "local_relevance" | "content_freshness",
+  "confidence": 0.0 to 1.0
+}
+
+Guidance:
+- Ground the insight in a concrete, observable difference between our page and the top-ranking competitor pages (a structural element they have that we don't, a topic they cover that we don't, a format difference) — not a generic "improve content quality" statement.
+- confidence should reflect how consistently the pattern appears across the competitor pages provided (seen in all of them = high confidence; seen in only one = lower).`,
+
+  SERP_COMPARATIVE_ANALYSIS_USER: (
+    keyword:            string,
+    ourContent:         string,
+    gscSummary:         string,
+    competitorPages:    Array<{ url: string; content: string }>,
+  ) => {
+    const competitorBlock = competitorPages
+      .map((p, i) => `--- Competitor ${i + 1}: ${p.url} ---\n${p.content.slice(0, 4_000)}`)
+      .join('\n\n');
+
+    return `Target keyword: ${keyword}\n\nOur current performance:\n${gscSummary}\n\nOur current blog content:\n${ourContent.slice(0, 6_000)}\n\nCurrently ranking above us:\n${competitorBlock}\n\nWhat specifically are the ranking pages doing better? Produce one structured insight.`;
+  },
+
+  BLOG_REWRITE_SYSTEM: (
+    customerProfile:  string,
+    keyword:          string,
+    knowledgeChunks:  string,
+    learningsContext: string,
+    contactUrl:       string,
+  ) => `You are rewriting an underperforming blog post to apply specific, evidence-backed improvements while keeping everything that already works. Return ONLY valid JSON, no markdown, no explanation.
+
+${customerProfile}
+
+Target keyword: ${keyword}
+Contact/CTA URL: ${contactUrl}
+
+${knowledgeChunks ? `--- BRAND CONTEXT ---\n${knowledgeChunks}\n--- END BRAND CONTEXT ---\n` : ''}
+${learningsContext}
+
+Apply every HIGH-confidence learning above. Consider MEDIUM-confidence learnings where they don't conflict. Do not apply anything not backed by a learning or brand context — don't invent new claims, pricing, or statistics.
+
+Schema:
+{
+  "title": "string",
+  "slug": "string",
+  "description": "string (meta description)",
+  "content": "string (full HTML)",
+  "schema": { ...JSON-LD structured data... },
+  "contentOptimizationSummary": "plain-English summary of what changed in the body content and why, referencing which learnings drove each change",
+  "seoTagOptimizationSummary": "plain-English summary of what changed in title/meta/schema and why"
+}`,
+
+  BLOG_REWRITE_USER: (currentContent: string) =>
+    `Current blog content to rewrite:\n\n${currentContent}`,
 }

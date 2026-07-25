@@ -43,8 +43,11 @@ import { Blog }              from '@/models/Blog';
 import { CmsConfig }         from '@/models/CmsConfig';
 import { searchOrganic, deriveCountryCodeFromRegions } from '@/lib/serp';
 import { analyzeSerpResults, generateBlogPost }        from '@/lib/llm';
-import { publishBlogToCms, isNowAllowedPublishTime }  from '@/lib/blog-cms-publisher';
+import { publishBlog }       from '@/lib/cms';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
+import { findRelevantKnowledge, findRelevantLearnings, formatChunksForPrompt } from '@/lib/vector-search';
+import { formatBusinessContext } from '@/lib/business-context-formatter';
+import type { BlogPublishPayload } from '@/lib/cms';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -77,29 +80,6 @@ function keywordToSlug(keyword: string): string {
 
 // ── Business context formatter (same as blog-generation.job.ts) ────────────
 
-function formatBusinessContext(bc: {
-  company?:     { name?: string; description?: string; targetRegions?: string[] };
-  product?:     { whatItSells?: string; keyFeatures?: string; pricingTiers?: string };
-  customers?:   { segments?: string[]; painPoints?: string; topUseCases?: string };
-  competition?: { differentiation?: string; uniqueStrengths?: string };
-  socialProof?: { caseStudies?: string };
-}): string {
-  const lines: string[] = [];
-  if (bc.company?.name)                lines.push(`Company: ${bc.company.name}`);
-  if (bc.company?.description)         lines.push(`About: ${bc.company.description}`);
-  if (bc.company?.targetRegions)       lines.push(`Markets: ${bc.company.targetRegions.join(', ')}`);
-  if (bc.product?.whatItSells)         lines.push(`Product: ${bc.product.whatItSells}`);
-  if (bc.product?.keyFeatures)         lines.push(`Features: ${bc.product.keyFeatures}`);
-  if (bc.product?.pricingTiers)        lines.push(`Pricing: ${bc.product.pricingTiers}`);
-  if (bc.customers?.segments)          lines.push(`Customer segments: ${bc.customers.segments.join(', ')}`);
-  if (bc.customers?.painPoints)        lines.push(`Pain points: ${bc.customers.painPoints}`);
-  if (bc.customers?.topUseCases)       lines.push(`Top use cases: ${bc.customers.topUseCases}`);
-  if (bc.competition?.differentiation) lines.push(`Differentiation: ${bc.competition.differentiation}`);
-  if (bc.competition?.uniqueStrengths) lines.push(`Strengths: ${bc.competition.uniqueStrengths}`);
-  if (bc.socialProof?.caseStudies)     lines.push(`Case studies: ${bc.socialProof.caseStudies}`);
-  return lines.join('\n').slice(0, 2_000);
-}
-
 // ── SERP brief formatter (same as blog-generation.job.ts) ─────────────────
 
 function formatSerpBrief(briefJson: string | undefined): string {
@@ -119,6 +99,15 @@ function formatSerpBrief(briefJson: string | undefined): string {
   } catch {
     return '';
   }
+}
+
+// ── Day check (same as cms-publish.job.ts) ────────────────────────────────
+
+function isNowAllowedPublishTime(allowedDays: number[], publishHourUtc: number): boolean {
+  const now      = new Date();
+  const todayUtc = now.getUTCDay();
+  const hourUtc  = now.getUTCHours();
+  return allowedDays.includes(todayUtc) && hourUtc >= publishHourUtc;
 }
 
 // ── Main job handler ───────────────────────────────────────────────────────
@@ -263,7 +252,30 @@ export async function runContentGenerationJob(
 
     let knowledgeChunks = '';
     try {
-      knowledgeChunks = await loadKnowledgeChunks(projectId);
+      // Real retrieval first — only returns chunks that are actually
+      // relevant to this specific keyword (previously this always dumped
+      // the first few uploaded files' full text, truncated, regardless of
+      // relevance to the keyword being generated).
+      const [retrievedKnowledge, retrievedLearnings] = await Promise.all([
+        findRelevantKnowledge(projectId, keyword.keyword, 5),
+        findRelevantLearnings(projectId, keyword.keyword, 5),
+      ]);
+      const knowledgeBlock = formatChunksForPrompt(retrievedKnowledge, 'BRAND CONTEXT');
+      const learningsBlock = formatChunksForPrompt(retrievedLearnings, 'PAST LEARNINGS FOR THIS KEYWORD CATEGORY');
+      // Applying past learnings to NEW content (not just rewrites of
+      // existing underperformers) is the actual point of this system —
+      // a new blog on a similar topic to one that previously needed a
+      // CTR fix shouldn't repeat the same mistake from scratch.
+      knowledgeChunks = [knowledgeBlock, learningsBlock].filter(Boolean).join('\n\n');
+
+      // Fallback for projects with no embedded knowledge chunks yet
+      // (files uploaded before knowledge-processing.job.ts existed, or
+      // still mid-processing, or Atlas Search unavailable in this
+      // deployment) — degrade to the old whole-file approach rather than
+      // generating with zero brand context.
+      if (!knowledgeChunks) {
+        knowledgeChunks = await loadKnowledgeChunks(projectId);
+      }
     } catch {
       // Non-fatal — blog generates without brand context
     }
@@ -399,24 +411,43 @@ async function handlePublish(
   const blog = await Blog.findById(blogId).lean();
   if (!blog) return;
 
+  const payload: BlogPublishPayload = {
+    blogId,
+    title:        blog.title,
+    slug:         blog.slug,
+    description:  blog.description ?? '',
+    content:      blog.content ?? '',
+    heroImageUrl: blog.heroImageUrl,
+    seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
+    blogPostPath: cmsConfig.blogPostPath,
+    domain,
+  };
+
   try {
-    const result = await publishBlogToCms({
-      blogId,
-      projectId,
-      domain,
-      cmsConfig,
-    });
+    const result = await publishBlog(cmsConfig, payload, projectId);
 
     if (!result.success) {
       throw new Error(result.error ?? 'CMS publish returned success:false');
     }
 
-    if (result.skipped) {
-      logger.info('Publish skipped — blog already had a cmsReference (idempotency guard)', {
-        projectId, blogId, keywordId, cmsReference: result.cmsReference,
-      });
-      return;
-    }
+    const now = new Date();
+    await Blog.findByIdAndUpdate(blogId, {
+      $set: {
+        status:           'published',
+        cmsReference:     result.cmsReference,
+        publishedUrl:     result.publishedUrl,
+        publishedDate:    now,
+        publishedContent: blog.content ?? '',
+      },
+      $push: {
+        history: {
+          $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
+          $slice: -50,
+        },
+      },
+    });
+
+    await Keyword.findByIdAndUpdate(keywordId, { $set: { status: 'published' } });
 
     logger.info('Blog published to CMS', {
       projectId,

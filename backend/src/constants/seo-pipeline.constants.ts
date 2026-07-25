@@ -62,6 +62,8 @@ export const QUEUE_NAMES = {
   CMS_PUBLISH_CRON: 'seo-cms-publish',
   CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
   WEEKLY_GENERATION_TRIGGER: 'seo-weekly-generation-trigger', // per-project, per-week — fans out to CONTENT_GENERATION
+  KNOWLEDGE_PROCESSING: 'seo-knowledge-processing', // per-file: extract → chunk → classify → embed → ProjectLearningChunk
+  BLOG_OPTIMIZATION:    'seo-blog-optimization',    // per-underperforming-blog: analyse → learn → rewrite → (auto-apply tags / propose content)
 } as const
 
 export const CODE_CHANGE_TYPE = {
@@ -131,6 +133,8 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
   CONTENT_GENERATION:   { attempts: 3,  backoffDelay: 15_000 },
+  KNOWLEDGE_PROCESSING: { attempts: 3,  backoffDelay: 10_000 },
+  BLOG_OPTIMIZATION:    { attempts: 3,  backoffDelay: 20_000 },
 }
 
 /**

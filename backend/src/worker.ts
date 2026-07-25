@@ -3,8 +3,10 @@ initOtel();
 
 import { connectDB }           from './loaders/db';
 import { getRedis, closeRedis } from './loaders/redis';
-import { createSeoPipelineWorker }   from './workers/seo-pipeline.worker';
+import { createSeoPipelineWorker}   from './workers/seo-pipeline.worker';
 import { createContentGenerationWorker } from './workers/content-generation.worker';
+import { createKnowledgeProcessingWorker } from './workers/knowledge-processing.worker';
+import { createBlogOptimizationWorker }    from './workers/blog-optimization.worker';
 import { bootSchedulers }            from './workers/scheduler.worker';
 
 async function start(): Promise<void> {
@@ -16,6 +18,8 @@ async function start(): Promise<void> {
 
     const seoPipelineWorker        = createSeoPipelineWorker();
     const contentGenerationWorker  = createContentGenerationWorker();
+    const knowledgeProcessingWorker = createKnowledgeProcessingWorker();
+    const blogOptimizationWorker    = createBlogOptimizationWorker();
     const schedulers               = await bootSchedulers();
 
     logger.info('All workers started', {
@@ -23,6 +27,8 @@ async function start(): Promise<void> {
       workers: [
         'seoPipelineWorker',
         'contentGenerationWorker',
+        'knowledgeProcessingWorker',
+        'blogOptimizationWorker',
         'schedulerWorker',
         'cmsPublishWorker',
       ],
@@ -33,6 +39,8 @@ async function start(): Promise<void> {
       try {
         await seoPipelineWorker.close();
         await contentGenerationWorker.close();
+        await knowledgeProcessingWorker.close();
+        await blogOptimizationWorker.close();
         await schedulers.close();
         await closeRedis();
         await shutdownOtel();

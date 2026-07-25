@@ -81,6 +81,25 @@ Week 1 generates immediately on project creation; every subsequent week
 schedules a delayed BullMQ trigger 24h before its start date, reusing the
 existing generate+conditional-publish logic untouched.
 
+## New feature — knowledge (RAG) + learning system
+
+Not an audit finding — a major feature build (`docs/13-knowledge-learning-system.md`).
+Two engines: real RAG retrieval over uploaded brand documents (previously
+uploaded files sat unprocessed forever), and a closed GSC feedback loop
+(previously `BlogLearning` insights were created but never acted on — now
+they drive an actual rewrite engine, tiered by risk: tag changes auto-apply
+with a rollback safety net, content rewrites need human approval).
+
+Merged carefully against this session's CMS idempotency and content-
+generation work — see the conversation for the full merge trace. One
+correction made while merging: the doc's "CMS re-sync gap" follow-up
+originally assumed 7 of 8 CMS platforms couldn't update an existing post;
+that was true when written, but the CMS idempotency work (`docs/11-...`)
+has since made 6 of 8 capable of it. Actually wiring that up is still an
+open decision (not a mechanical fix — needs to distinguish "legitimate
+update" from "duplicate-avoiding skip" in `lib/blog-cms-publisher.ts`),
+flagged but not built.
+
 ## ✅ Resolved — narrow/low-urgency items, third pass
 
 10. `sanity.ts`'s RankAI-branded schema type (`RankAIBlogPosts`) renamed

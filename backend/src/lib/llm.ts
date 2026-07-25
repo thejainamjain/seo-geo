@@ -51,7 +51,7 @@ const GROQ_COMPOUND_MODEL = 'compound-beta';
 let _genAI: GoogleGenerativeAI | null = null;
 
 
-function getGenAI(): GoogleGenerativeAI {
+export function getGenAI(): GoogleGenerativeAI {
   if (!_genAI) {
     const apiKey = config.gemini.apiKey();
     if (!apiKey) throw new Error('GEMINI_API_KEY is not defined in environment');
@@ -84,7 +84,6 @@ function getGroq(): Groq {
  */
 async function waitForRateLimit(provider: 'gemini' | 'groq'): Promise<void> {
   const redis = getRedis();
-  // Gemini free: 14 RPM (buffer from 15). Groq free: 28 RPM (buffer from 30).
   const MAX_RPM = provider === 'groq' ? LLM_RATE_LIMIT.GROQ_RPM : LLM_RATE_LIMIT.GEMINI_RPM;
 
   while (true) {
@@ -741,4 +740,114 @@ export async function generateSeoScore(
   result.score = Math.min(100, Math.max(1, Math.round(result.score)));
 
   return result;
+}
+
+export interface KnowledgeClassificationLlmResponse {
+  classifiedDocumentKind:  'pricing' | 'case_study' | 'brand_guide' | 'general';
+  classifiedUsageTags:     string[];
+  classifiedAudience:      'B2B' | 'B2C' | 'Technical' | 'General';
+  classifiedTrustLevel:    'HIGH' | 'MEDIUM' | 'LOW';
+  classificationReasoning: string;
+}
+
+export interface UnderperformerAnalysisLlmResponse {
+  type:       'ranking_drop' | 'high_impression' | 'competitor_update' | 'query_expansion' | 'content_gap';
+  insight:    string;
+  evidence:   string;
+  category:   'content_structure' | 'keyword_density' | 'heading_structure' | 'content_length' | 'local_relevance' | 'content_freshness';
+  confidence: number;
+}
+
+export interface BlogRewriteLlmResponse {
+  title:                       string;
+  slug:                        string;
+  description:                 string;
+  content:                     string;
+  schema:                      Record<string, unknown>;
+  contentOptimizationSummary:  string;
+  seoTagOptimizationSummary:   string;
+}
+
+
+/**
+ * Classifies an uploaded knowledge file — one LLM call per FILE, not per
+ * chunk. See models/BlogLearning.ts (ProjectLearningChunk.classifiedTrustLevel
+ * doc comment) for why: chunks from the same file denormalize this file-level
+ * classification rather than each chunk getting its own classification call,
+ * trading a small amount of precision (a 20-page doc could in theory mix
+ * HIGH and LOW trust sections) for meaningfully lower cost — one call per
+ * upload instead of one call per chunk.
+ * Used by: knowledge-processing.job.ts
+ */
+export async function classifyKnowledgeFile(
+  fileName:  string,
+  textSample: string,
+  projectId: string,
+  fileId:    string,
+): Promise<KnowledgeClassificationLlmResponse> {
+  const context = `knowledge-classify:${projectId}:${fileId}`;
+
+  const raw = await callLLM(
+    PROMPTS.KNOWLEDGE_CLASSIFICATION_SYSTEM,
+    PROMPTS.KNOWLEDGE_CLASSIFICATION_USER(fileName, textSample),
+    context,
+  );
+
+  return extractJson<KnowledgeClassificationLlmResponse>(raw, context);
+}
+
+/**
+ * Diagnoses why an underperforming blog is underperforming by comparing it
+ * directly against the pages currently outranking it. Produces one
+ * structured insight — the same shape BlogLearning already stores, this
+ * function just replaces the previous purely-metric-based detectInsights()
+ * heuristic (gsc-monitor.job.ts) with an LLM call grounded in actual
+ * competitor page content for cases where a rewrite is being considered.
+ * Used by: blog-optimization.job.ts
+ */
+export async function analyzeUnderperformer(
+  keyword:         string,
+  ourContent:      string,
+  gscSummary:      string,
+  competitorPages: Array<{ url: string; content: string }>,
+  projectId:       string,
+  blogId:          string,
+): Promise<UnderperformerAnalysisLlmResponse> {
+  const context = `underperformer-analysis:${projectId}:${blogId}`;
+
+  const raw = await callLLM(
+    PROMPTS.SERP_COMPARATIVE_ANALYSIS_SYSTEM,
+    PROMPTS.SERP_COMPARATIVE_ANALYSIS_USER(keyword, ourContent, gscSummary, competitorPages),
+    context,
+  );
+
+  return extractJson<UnderperformerAnalysisLlmResponse>(raw, context);
+}
+
+/**
+ * Rewrites an underperforming blog post, applying retrieved learnings and
+ * brand-knowledge context. Structurally similar to generateBlogPost() but
+ * takes the EXISTING content as input (to rewrite, not replace from
+ * scratch) and a learnings block instead of fresh SERP analysis.
+ * Used by: blog-optimization.job.ts
+ */
+export async function rewriteBlogPost(
+  currentContent:   string,
+  customerProfile:  string,
+  keyword:          string,
+  knowledgeChunks:  string,
+  learningsContext: string,
+  contactUrl:       string,
+  projectId:        string,
+  blogId:           string,
+): Promise<BlogRewriteLlmResponse> {
+  const context = `blog-rewrite:${projectId}:${blogId}`;
+
+  const raw = await callLLM(
+    PROMPTS.BLOG_REWRITE_SYSTEM(customerProfile, keyword, knowledgeChunks, learningsContext, contactUrl),
+    PROMPTS.BLOG_REWRITE_USER(currentContent),
+    context,
+  );
+
+  return extractJson<BlogRewriteLlmResponse>(raw, context);
 }

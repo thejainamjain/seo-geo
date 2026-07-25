@@ -43,9 +43,8 @@ import { Blog }              from '@/models/Blog';
 import { CmsConfig }         from '@/models/CmsConfig';
 import { searchOrganic, deriveCountryCodeFromRegions } from '@/lib/serp';
 import { analyzeSerpResults, generateBlogPost }        from '@/lib/llm';
-import { publishBlog }       from '@/lib/cms';
+import { publishBlogToCms, isNowAllowedPublishTime }  from '@/lib/blog-cms-publisher';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
-import type { BlogPublishPayload } from '@/lib/cms';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -120,15 +119,6 @@ function formatSerpBrief(briefJson: string | undefined): string {
   } catch {
     return '';
   }
-}
-
-// ── Day check (same as cms-publish.job.ts) ────────────────────────────────
-
-function isNowAllowedPublishTime(allowedDays: number[], publishHourUtc: number): boolean {
-  const now      = new Date();
-  const todayUtc = now.getUTCDay();
-  const hourUtc  = now.getUTCHours();
-  return allowedDays.includes(todayUtc) && hourUtc >= publishHourUtc;
 }
 
 // ── Main job handler ───────────────────────────────────────────────────────
@@ -409,43 +399,24 @@ async function handlePublish(
   const blog = await Blog.findById(blogId).lean();
   if (!blog) return;
 
-  const payload: BlogPublishPayload = {
-    blogId,
-    title:        blog.title,
-    slug:         blog.slug,
-    description:  blog.description ?? '',
-    content:      blog.content ?? '',
-    heroImageUrl: blog.heroImageUrl,
-    seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
-    blogPostPath: cmsConfig.blogPostPath,
-    domain,
-  };
-
   try {
-    const result = await publishBlog(cmsConfig, payload, projectId);
+    const result = await publishBlogToCms({
+      blogId,
+      projectId,
+      domain,
+      cmsConfig,
+    });
 
     if (!result.success) {
       throw new Error(result.error ?? 'CMS publish returned success:false');
     }
 
-    const now = new Date();
-    await Blog.findByIdAndUpdate(blogId, {
-      $set: {
-        status:           'published',
-        cmsReference:     result.cmsReference,
-        publishedUrl:     result.publishedUrl,
-        publishedDate:    now,
-        publishedContent: blog.content ?? '',
-      },
-      $push: {
-        history: {
-          $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
-          $slice: -50,
-        },
-      },
-    });
-
-    await Keyword.findByIdAndUpdate(keywordId, { $set: { status: 'published' } });
+    if (result.skipped) {
+      logger.info('Publish skipped — blog already had a cmsReference (idempotency guard)', {
+        projectId, blogId, keywordId, cmsReference: result.cmsReference,
+      });
+      return;
+    }
 
     logger.info('Blog published to CMS', {
       projectId,

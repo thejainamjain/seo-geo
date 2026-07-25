@@ -522,6 +522,16 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
 
   // 9. Upsert all keywords — idempotent, safe on retry
   //    bulkWrite with upsert:true keyed on { projectId, keyword }
+  //
+  //    status is in $setOnInsert, NOT $set — only applied when a keyword
+  //    is first created. Previously this was in $set and ran on every
+  //    invocation, which meant a forced pipeline resume from
+  //    KEYWORD_RESEARCH (an admin-only action, but a real one — see
+  //    docs/06-phase5-keyword-research-audit.md) could silently reset a
+  //    keyword's status back to 'upcoming' even after content had already
+  //    been generated or published for it. Status now only gets set once,
+  //    at creation; any status a keyword has since progressed to
+  //    (generating/draft/ready/published) survives a re-run untouched.
   const bulkOps = scheduled.map(kw => ({
     updateOne: {
       filter: { projectId: projectObjectId, keyword: kw.keyword },
@@ -530,7 +540,6 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
           searchVolume:    kw.searchVolume,
           difficulty:      kw.difficulty,
           cpc:             kw.cpc,
-          status:          'upcoming' as const,
           source:          kw.source,
           alignmentScore:  kw.alignmentScore,
           relevanceReason: kw.relevanceReason,
@@ -540,7 +549,8 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
         },
         $setOnInsert: {
           projectId: projectObjectId,
-          keyword: kw.keyword,
+          keyword:   kw.keyword,
+          status:    'upcoming' as const,
         },
       },
       upsert: true,

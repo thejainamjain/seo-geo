@@ -4,8 +4,10 @@
 plus `lib/cms/types.ts`, `lib/cms/index.ts` (shared dispatcher), and
 `lib/cms/shared.ts` (new — shared `injectSchema` helper)
 **Status: 🔴 One critical finding still open (Framer/RankAI domain — needs
-a product decision, not a code fix). Idempotency and schema-markup gaps
-resolved. One low-confidence item (Wix content format) needs a live test.**
+a product decision, not a code fix). Everything else — idempotency, schema
+markup, Sanity branding, Wix content format — resolved (Wix and GoHighLevel
+still want a live test to confirm, honestly flagged where confidence is
+lower than "verified").**
 
 ## 🔴 CRITICAL — `framer.ts` calls out to RankAI's actual live infrastructure
 
@@ -41,52 +43,86 @@ resolve alone — flagging rather than guessing:
 - If a plugin exists under a different domain, this needs to point there
   instead.
 
-## 🟠 Related — `sanity.ts` bakes "RankAI" into the schema contract with users' own Sanity projects
+## ✅ RESOLVED — `sanity.ts` baked "RankAI" into the schema contract with users' own Sanity projects
 
 ```ts
-// lib/cms/sanity.ts
+// lib/cms/sanity.ts (before)
 const documentId = `rankAiBlogPost-${payload.slug}`;
 // ...
 _type: 'RankAIBlogPosts',
 ```
 
-Unlike the Framer issue, this doesn't call out to any external server —
-but it means **for Sanity publishing to work at all, the connecting
-customer's own Sanity project must have a custom schema type literally
-named `RankAIBlogPosts`** (presumably from installing a RankAI-branded
-schema package). This only makes sense if this product ships its own
-identically-named schema package — otherwise every Sanity publish will
-fail with a schema-type-not-found error. Needs renaming to match this
-product's actual name once decided.
+Unlike the Framer issue, this didn't call out to any external server —
+but it meant **for Sanity publishing to work at all, the connecting
+customer's own Sanity project needed a custom schema type literally
+named `RankAIBlogPosts`**, which only made sense if this product shipped
+its own identically-named schema package — otherwise every Sanity publish
+would fail with a schema-type-not-found error.
 
-Also worth a look before any Sanity setup docs ship: the file's own
-comments (not runtime code, but written as if they were setup
-instructions) tell users to fetch content from `rankai.ai/api/v1/...` and
-whitelist `https://rankai.ai` in their Sanity CORS settings. If this
-phrasing made it into user-facing docs anywhere (not checked — frontend
-wasn't in this pass), it would tell users to whitelist the wrong domain.
+The old CORS/fetch-URL comments (pointing at `rankai.ai/api/v1/...`) were
+never live code — just misleading documentation-style comments in the
+file, written as if they were setup instructions. Not checked against
+user-facing docs/frontend in this pass, but flagging: if that exact
+phrasing appears anywhere in real setup instructions, it should be fixed
+too.
 
-## 🟠 Real cross-cutting bug: no idempotency in 7 of 8 publishers
+Fix: renamed to `post` / `post-${slug}` — matches Sanity's own official
+blog starter template convention (and the community-standard
+`sanity-plugin-blog` package), so this now works against any Sanity
+project with a standard blog schema already, rather than requiring a
+product-specific schema package that doesn't exist yet. If this product
+ever ships its own installable Sanity schema package, the type name
+should be updated to match that package exactly rather than this generic
+default.
 
-`sanity.ts` is the **only** publisher that's actually retry-safe — it uses
-Sanity's `createOrReplace` mutation with a deterministic document ID
+## ✅ RESOLVED — no idempotency in 7 of 8 publishers
+
+`sanity.ts` was the **only** publisher that was actually retry-safe — it
+uses Sanity's `createOrReplace` mutation with a deterministic document ID
 derived from the slug, so calling it twice updates the same document
 instead of creating a duplicate.
 
-**Every other publisher blindly creates a new post/item on every call,
+**Every other publisher blindly created a new post/item on every call,
 with no check for "does content with this slug already exist."** Since
 `publishBlog()` runs inside a BullMQ job with `attempts: 3` (both the
 on-demand path in `content-generation.job.ts` and the cron path in
 `cms-publish.job.ts`), a transient failure **after** the post was
-successfully created but **before** the job function returns (e.g. the
+successfully created but **before** the job function returned (e.g. the
 network blip happens on WordPress's step 4 "publish" call, or on parsing
-the response) means the retry runs the whole function again from
-scratch — creating a second post. Most platforms will auto-suffix the
-slug (e.g. `-2`) rather than reject it, so this fails silently: the user
-ends up with duplicate published posts and no error surfaced anywhere.
+the response) meant the retry ran the whole function again from
+scratch — creating a second post. Most platforms auto-suffix the slug
+(e.g. `-2`) rather than reject it, so this failed silently: the user ended
+up with duplicate published posts and no error surfaced anywhere.
 
 Affected: `wordpress.ts`, `webflow.ts`, `framer.ts`, `wix.ts`,
 `shopify.ts`, `gohighlevel.ts`, `custom-api.ts`.
+
+**Fix, done two ways:**
+- **Consolidated the publish path**: three independently-duplicated
+  "publish then persist" implementations (`blog.service.ts`,
+  `content-generation.job.ts`, `cms-publish.job.ts`) merged into one
+  shared `lib/blog-cms-publisher.ts`, with a guard — if `Blog.cmsReference`
+  is already set, skip the CMS call entirely and return the existing
+  result. This closes the duplicate-post risk across all 8 platforms at
+  once from a single choke point, rather than needing every platform's
+  API-specific upsert logic to be the only line of defense.
+- **Per-platform upsert-by-slug, added anyway** (defense in depth — closes
+  the narrower gap where the guard above can't help, i.e. a crash between
+  the CMS call succeeding and the DB write recording it): WordPress
+  (`GET /posts?slug=X&status=any`), Webflow (`slug` query param on List
+  Collection Items, v2 API), Wix (`GET /v3/posts/slugs/{slug}`), Shopify
+  (`handle` query param on the Article list endpoint — this actually
+  contradicts what the original finding below assumed was hard to do),
+  and GoHighLevel (`url-slug-exists` + list-and-match fallback, since the
+  exact response shape of the existence check wasn't fully confirmed from
+  docs alone). Each verified against real platform API documentation, not
+  guessed. Framer deliberately excluded — no real, owned API to query yet
+  (see the critical finding above). Custom API given a stable `blogId` in
+  the outbound payload as an idempotency key the receiving endpoint can
+  use if it wants to, since we don't control its schema.
+
+<details>
+<summary>Original finding (for reference)</summary>
 
 **Fix direction** (pattern to copy from `sanity.ts`, adapted per platform):
 - **Easiest fix, checked and confirmed available**: `Blog.cmsReference` is
@@ -105,6 +141,8 @@ Affected: `wordpress.ts`, `webflow.ts`, `framer.ts`, `wix.ts`,
   checking. Shopify Articles don't have a natural upsert-by-handle in the
   REST API — would need to query existing articles by handle first.
   GoHighLevel/Framer/CustomApi depend on what each API actually supports.
+
+</details>
 
 ## ✅ RESOLVED — `seoSchema` (JSON-LD structured data) was silently dropped on 3 platforms
 
@@ -150,28 +188,39 @@ unconditionally, regardless of theme customization. Kept the
 has been customized to read it separately, but `body_html` is what now
 guarantees the schema actually reaches the live page by default.
 
-## 🟡 Medium — Wix content field likely wrong for HTML content (needs live verification, not certain)
+## 🟡 Best-effort fix applied — Wix content format (confirmed real bug, fix confidence still needs a live test)
 
 ```ts
+// before
 post: { contentText: payload.content, ... }
 ```
 
-`payload.content` is full HTML. Wix's Blog API v3 content model is
-generally structured "Ricos" rich-content JSON, not raw HTML — a plain
-`contentText`-style field is more likely meant for plain text, which would
-mean HTML tags render literally as text in the published post rather than
-being interpreted as formatting. I don't have live API access to confirm
-this definitively, so flagging with appropriate uncertainty rather than
-certainty — worth a real test publish to Wix before trusting this path in
-production.
+This was confirmed to be a real problem, not just a hunch — Wix's own
+docs and multiple developer forum threads confirm the blog post content
+field expects a "Ricos Document" (structured JSON node tree), not raw
+HTML. Sending HTML in `contentText` was very likely producing literal
+HTML-tags-as-text rather than formatted content, and the injected schema
+`<script>` tag (from the fix above) would have had the same problem.
 
-**Partially addressed:** the `seoSchema` fix above now also applies to
-Wix (`contentText` gets the same JSON-LD script tag appended). The
-underlying content-format question is unchanged and still needs a live
-API test — if `contentText` doesn't actually render as HTML, neither the
-blog body nor the injected schema will display correctly, and this needs
-a real fix (likely building the Ricos rich-content JSON structure) rather
-than a content-string change.
+**Fix:** now calls Wix's own "Convert To Ricos Document" endpoint
+(`POST /ricos/v1/ricos-document/convert/to-ricos`, confirmed to exist and
+documented as accepting HTML input) to do the conversion server-side,
+instead of hand-writing an HTML→Ricos parser — multiple forum threads
+show other developers struggling to do this by hand, since Ricos' node
+structure has non-trivial nesting rules. Falls back to a minimal,
+manually-built single-paragraph Ricos document (plain text, HTML tags
+stripped) if the conversion call fails for any reason.
+
+**Being upfront about confidence here**: the endpoint's existence and
+purpose are confirmed from Wix's official docs. The exact request/response
+field names were NOT confirmable — Wix's interactive API reference renders
+the schema client-side in a way I couldn't extract via fetch. The
+implementation uses a best-effort body shape based on Wix's conventions
+elsewhere in the same API family. This is meaningfully better than the
+previous state (which was confirmed wrong), but **still needs a real live
+test against a Wix account** before being trusted in production — also
+requires the "Manage Ricos Document" permission to be enabled on whatever
+Wix API key/app is used, which is worth checking is granted.
 
 ## 🟢 Low-priority / minor
 - `wordpress.ts`: uploaded featured images are always named with a

@@ -75,12 +75,11 @@ body fields should be double-checked against `cms.handler.ts` directly).
   distinct hour.
 
 ## Other observations (minor)
-- `isNowAllowedPublishTime` is duplicated verbatim across
-  `content-generation.job.ts` and `cms-publish.job.ts` (the code comment in
-  the former even says "same as cms-publish.job.ts") — small DRY violation,
-  worth extracting to a shared helper (e.g. in `lib/`) since it's exactly
-  the kind of logic that could drift out of sync if edited in one place
-  only.
+- ✅ **RESOLVED** — `isNowAllowedPublishTime` was duplicated verbatim across
+  `content-generation.job.ts` and `cms-publish.job.ts`. Extracted into
+  `lib/blog-cms-publisher.ts` (the shared module both files already import
+  from for the publish-idempotency fix — see `docs/11-...`), both call
+  sites now import the one definition instead.
 - `MIN_CONTENT_LENGTH = 500` chars as the validity check on generated blog
   content is a reasonable sanity floor, not a real gap.
 - Slug collision handling (`${slug}-${Date.now()}`) is simple and correct

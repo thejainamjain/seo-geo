@@ -4,15 +4,28 @@
  * Sanity CMS publisher via Sanity HTTP API.
  * API DOCS: https://www.sanity.io/docs/http-api-mutations
  *
- * SCHEMA TYPE: RankAIBlogPosts (custom schema type installed by user)
- * Users fetch blog content via:
- *   GET https://rankai.ai/api/v1/{projectId}/articles?page=X&limit=Y
- *   GET https://rankai.ai/api/v1/{projectId}/articles/{slug}?format=html|markdown
+ * SCHEMA TYPE: `post` — matches Sanity's own official blog starter
+ * template convention (sanity.io/create, "Blog (Personal)" template, and
+ * the community-standard `sanity-plugin-blog` package all use `post` as
+ * the document type name). Chosen instead of a product-specific name so
+ * this integration works against any Sanity project that has a standard
+ * blog schema already, rather than requiring a schema package specific to
+ * this product. Previously this was hardcoded to `RankAIBlogPosts` — a
+ * leftover from referencing RankAI's actual implementation while building
+ * this clone (see docs/11-cms-integrations-audit.md) — which only worked
+ * if the user's Sanity project happened to have a RankAI-specific schema
+ * installed, which no other user's project would.
  *
  * FLOW:
  *   POST /v{apiVersion}/data/mutate/{dataset} with createOrReplace mutation
  *
- * CORS: User must add https://rankai.ai to Sanity CORS origins.
+ * NOTE: the schema type name (and field names below — title, slug,
+ * description, content, heroImage, seoSchema, publishedAt) still need to
+ * match whatever schema actually exists in the connecting user's Sanity
+ * project. `post` + these field names match the most common blog schema
+ * convention, but if this product ever ships its own installable Sanity
+ * schema package, the type name here should match that package's schema
+ * exactly, not just a generic guess.
  */
 
 import { logger } from '@/open-tele';
@@ -39,14 +52,14 @@ export async function publishToSanity(
 
   // Sanity document ID — stable, derived from slug
   // Using slug as ID means re-publishing the same post updates it (idempotent)
-  const documentId = `rankAiBlogPost-${payload.slug}`;
+  const documentId = `post-${payload.slug}`;
 
   const mutation = {
     mutations: [
       {
         createOrReplace: {
           _id:   documentId,
-          _type: 'RankAIBlogPosts',
+          _type: 'post',
           title:       payload.title,
           slug:        { _type: 'slug', current: payload.slug },
           description: payload.description,

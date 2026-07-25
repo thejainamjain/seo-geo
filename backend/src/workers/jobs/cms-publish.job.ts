@@ -41,25 +41,14 @@
 import { logger }             from '@/open-tele';
 import { Project }            from '@/models/Project';
 import { Blog }               from '@/models/Blog';
-import { Keyword }            from '@/models/Keyword';
 import { CmsConfig }          from '@/models/CmsConfig';
-import { publishBlog }        from '@/lib/cms';
+import { publishBlogToCms, isNowAllowedPublishTime } from '@/lib/blog-cms-publisher';
 import { fetchHeroImageUrl }  from '@/lib/unsplash';
-import type { BlogPublishPayload } from '@/lib/cms';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface CmsPublishJobData {
   projectId: string;
-}
-
-// ── Time check ─────────────────────────────────────────────────────────────
-
-function isNowAllowedPublishTime(allowedDays: number[], publishHourUtc: number): boolean {
-  const now      = new Date();
-  const todayUtc = now.getUTCDay();
-  const hourUtc  = now.getUTCHours();
-  return allowedDays.includes(todayUtc) && hourUtc >= publishHourUtc;
 }
 
 // ── Main job handler ───────────────────────────────────────────────────────
@@ -147,51 +136,28 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
       heroImageUrl = await fetchHeroImageUrl(imageQuery, context);
     }
 
-    // ── 7b. Build publish payload ──────────────────────────────────────────
-
-    const payload: BlogPublishPayload = {
-      blogId,
-      title:        blog.title,
-      slug:         blog.slug,
-      description:  blog.description ?? '',
-      content:      blog.content     ?? '',
-      heroImageUrl: heroImageUrl ?? undefined,
-      seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
-      blogPostPath: cmsConfig.blogPostPath,
-      domain:       project.domain,
-    };
+    // ── 7b. Publish via the shared helper ────────────────────────────────
+    //     (heroImageUrl resolved above stays caller-side — it's specific
+    //      to this cron path's "fetch from Unsplash if unset" behavior)
 
     try {
-      const result = await publishBlog(cmsConfig, payload, projectId);
+      const result = await publishBlogToCms({
+        blogId,
+        projectId,
+        domain:    project.domain,
+        cmsConfig,
+        resolvedHeroImageUrl: heroImageUrl,
+      });
 
       if (!result.success) {
         throw new Error(result.error ?? 'Publisher returned success:false');
       }
 
-      const now = new Date();
-
-      await Blog.findByIdAndUpdate(blogId, {
-        $set: {
-          status:           'published',
-          heroImageUrl:     heroImageUrl,   // persist resolved URL for future reference
-          cmsReference:     result.cmsReference,
-          publishedUrl:     result.publishedUrl,
-          publishedDate:    now,
-          publishedContent: blog.content ?? '',
-        },
-        $push: {
-          history: {
-            $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
-            $slice: -50,
-          },
-        },
-      });
-
-      // Update keyword status if linked
-      if (blog.keywordId) {
-        await Keyword.findByIdAndUpdate(blog.keywordId, {
-          $set: { status: 'published' },
+      if (result.skipped) {
+        logger.info('Publish skipped — blog already had a cmsReference (idempotency guard)', {
+          context, blogId, cmsReference: result.cmsReference,
         });
+        continue;
       }
 
       successCount++;

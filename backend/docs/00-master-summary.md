@@ -56,7 +56,7 @@ handful of narrow, low-severity items.
    `Blog.cmsReference` already set); and added real upsert-by-slug logic to
    WordPress, Webflow, Wix, Shopify, and GoHighLevel individually, each
    verified against actual platform API docs. Sanity already had this.
-   Framer deliberately excluded — see #10 below. Custom API given a stable
+   Framer deliberately excluded — see #14 below. Custom API given a stable
    `blogId` idempotency key for the receiving endpoint to use if it wants.
 5. **`seoSchema` (JSON-LD) silently dropped** on Webflow/Wix/GoHighLevel,
    and Shopify's copy was stored but never rendered — new shared
@@ -81,29 +81,45 @@ Week 1 generates immediately on project creation; every subsequent week
 schedules a delayed BullMQ trigger 24h before its start date, reusing the
 existing generate+conditional-publish logic untouched.
 
+## ✅ Resolved — narrow/low-urgency items, third pass
+
+10. `sanity.ts`'s RankAI-branded schema type (`RankAIBlogPosts`) renamed
+    to `post` — matches Sanity's own official blog starter convention, so
+    it now works against any Sanity project with a standard blog schema.
+11. Keyword status reset on forced pipeline resume (`docs/06-...`) — moved
+    `status: 'upcoming'` from `$set` to `$setOnInsert` in the bulk upsert;
+    a re-run no longer touches keywords that have already progressed past
+    `upcoming`.
+12. `isNowAllowedPublishTime` duplication (`docs/07-...`) — extracted into
+    `lib/blog-cms-publisher.ts`, both call sites now import one definition.
+13. Wix content format (`docs/11-...`) — confirmed via Wix's own docs and
+    developer forum threads that raw HTML in `contentText` was genuinely
+    wrong (not just a hunch); now converts via Wix's own "Convert To Ricos
+    Document" API before publishing, with a safe plain-text fallback if
+    that call fails. Exact request schema wasn't fully confirmable without
+    live API access — implemented with a well-reasoned best guess, flagged
+    for a live test.
+
 ## 🔴 Still open — real, needs a decision
 
-10. **`framer.ts` calls out to RankAI's actual live infrastructure**
+14. **`framer.ts` calls out to RankAI's actual live infrastructure**
     (`docs/11-cms-integrations-audit.md`) — not a comment, a live `fetch()`
-    call in the runtime publish path. This is the one finding across both
-    audit passes that's a product decision, not a code fix: either this
+    call in the runtime publish path. This is the one finding across all
+    three passes that's a product decision, not a code fix: either this
     product needs its own Framer plugin/webhook to point at, or Framer
     needs to be disabled as a CMS option until it has one.
 
 ## 🟡 Still open — narrow, low urgency
 
-11. `sanity.ts` bakes a RankAI-specific schema type name
-    (`RankAIBlogPosts`) into the contract with users' own Sanity projects
-    — needs renaming once this product's actual name/branding is settled.
-12. Keyword status can be reset by a forced pipeline resume after content
-    generation has already started (`docs/06-...-audit.md`) — narrow,
-    admin-only trigger path.
-13. `isNowAllowedPublishTime` duplicated verbatim in two files.
-14. Wix's `contentText` field format for HTML content is unverified
-    against the live API (`docs/11-...`) — needs a real test publish.
 15. Weaker audit data for Playwright-rendered pages (`docs/01-...`), crude
     `freeTrialAvailable` string-match (`docs/02-...`) — both documented,
-    low-impact simplifications.
+    low-impact simplifications, not touched.
+16. Wix's Ricos conversion (item 13 above) and GoHighLevel's
+    slug-existence-check response shape (`docs/11-...`) are both
+    implemented and reasoned through, but honestly flagged as needing a
+    real live test against each platform before being fully trusted — the
+    exact request/response schemas weren't confirmable from documentation
+    alone.
 
 ## What's genuinely solid, no action needed
 - Site crawl (3-pass sitemap-first strategy, documented real bug fixes)
@@ -117,7 +133,8 @@ existing generate+conditional-publish logic untouched.
   handling, and (as of this pass) idempotency and schema delivery
 
 ## Suggested next step
-The one finding left with real product/trust implications is #10
+The one finding left with real product/trust implications is #14
 (Framer/RankAI domain) — that needs your call on whether/how this product's
 own Framer plugin gets built, not more code archaeology. Everything else
-remaining is narrow edge cases or documented, accepted simplifications.
+remaining is narrow edge cases, documented accepted simplifications, or
+implemented-but-needs-a-live-test items.

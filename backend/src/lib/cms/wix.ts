@@ -9,6 +9,10 @@
  * FLOW:
  *   0. GET /v3/posts/slugs/{slug} → check if a post with this slug
  *      already exists (idempotency)
+ *   0.5 POST /ricos/v1/ricos-document/convert/to-ricos → convert the HTML
+ *       content (with JSON-LD schema already appended) into a real Ricos
+ *       document, since Wix's post content field expects Ricos JSON, not
+ *       raw HTML — see CONTENT FORMAT note below.
  *   1a. If found: PATCH /v3/posts/{postId} → update directly
  *   1b. If not found: POST /v3/posts → create draft
  *   2. POST /v3/posts/{postId}/publish → publish
@@ -20,16 +24,107 @@
  * relying on it in production, since the exact update endpoint wasn't
  * directly documented in what I could verify.
  *
- * NOTE: seoSchema is appended into `contentText` the same way as the
- * other raw-HTML publishers (see lib/cms/shared.ts). Whether Wix's
- * `contentText` field actually renders HTML (including this script tag)
- * or shows it as literal text is unconfirmed — see
- * docs/11-cms-integrations-audit.md.
+ * CONTENT FORMAT — the real fix, not just a caveat anymore:
+ *   Confirmed via Wix's own docs and multiple developer forum threads:
+ *   Wix's blog post content field expects a "Ricos Document" — a
+ *   structured JSON node tree (paragraphs/headings/text nodes with
+ *   decorations), NOT an HTML string. Sending raw HTML in `contentText`
+ *   was very likely wrong (this is exactly the problem multiple other
+ *   developers hit trying to integrate with this API — several forum
+ *   threads exist about it).
+ *
+ *   Fix: call Wix's own "Convert To Ricos Document" endpoint
+ *   (POST /ricos/v1/ricos-document/convert/to-ricos, confirmed to exist
+ *   and documented as accepting HTML/Markdown/plain text input) to do the
+ *   HTML→Ricos conversion server-side, rather than hand-writing an
+ *   HTML→Ricos parser — Ricos' node structure is non-trivial (nested
+ *   paragraph/text/decoration nodes with strict validation) and getting it
+ *   wrong produces confusing parse errors, per the same forum threads.
+ *
+ *   HONEST CONFIDENCE LEVEL: the endpoint's existence and purpose are
+ *   confirmed from Wix's official docs. The exact request/response body
+ *   field names were NOT confirmable — Wix's interactive API reference
+ *   renders the schema client-side in a way that wasn't extractable.
+ *   convertToRicosDocument() below uses a best-effort body shape based on
+ *   Wix's general REST conventions elsewhere in this same API family, with
+ *   a safe fallback (a minimal, manually-built single-paragraph Ricos
+ *   document, using the node structure that IS confirmed from Wix's docs)
+ *   if the conversion call fails for any reason — so a wrong guess here
+ *   degrades to "plain text paragraph" rather than breaking the publish
+ *   entirely. This whole path needs a real live test before being trusted
+ *   in production — see docs/11-cms-integrations-audit.md.
+ *
+ *   Also requires the "Manage Ricos Document" permission to be enabled on
+ *   the Wix API key/app used — worth checking that's granted.
  */
 
 import { logger } from '@/open-tele';
 import type { WixCredentials, BlogPublishPayload, PublishResult } from './types';
 import { injectSchema } from './shared';
+
+const WIX_RICOS_API_BASE = 'https://www.wixapis.com/ricos/v1';
+
+/**
+ * Converts HTML content to a Ricos document via Wix's own conversion API.
+ * Falls back to a minimal manually-built Ricos document (a single
+ * paragraph containing the HTML stripped to plain text) if the API call
+ * fails — see file header for why this fallback exists and how confident
+ * this implementation actually is.
+ */
+async function convertToRicosDocument(
+  html:    string,
+  apiKey:  string,
+  siteId:  string,
+  context: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const response = await fetch(`${WIX_RICOS_API_BASE}/ricos-document/convert/to-ricos`, {
+      method:  'POST',
+      headers: {
+        'Authorization': apiKey,
+        'Content-Type':  'application/json',
+        'wix-site-id':   siteId,
+      },
+      // Best-effort body shape — see file header "HONEST CONFIDENCE LEVEL"
+      body: JSON.stringify({
+        content:    html,
+        fromFormat: 'HTML',
+      }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json() as { ricosDocument?: Record<string, unknown> };
+    if (!data.ricosDocument) {
+      throw new Error('No ricosDocument in response');
+    }
+
+    return data.ricosDocument;
+
+  } catch (err) {
+    logger.warn('Wix Ricos conversion failed — falling back to plain-text paragraph', {
+      context, error: err instanceof Error ? err.message : String(err),
+    });
+
+    // Fallback: minimal valid Ricos document, one paragraph, plain text
+    // (HTML tags stripped) — confirmed node structure from Wix's own docs.
+    const plainText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return {
+      nodes: [
+        {
+          type: 'PARAGRAPH',
+          nodes: [
+            { type: 'TEXT', textData: { text: plainText, decorations: [] } },
+          ],
+          paragraphData: {},
+        },
+      ],
+    };
+  }
+}
 
 const WIX_API_BASE     = 'https://www.wixapis.com/blog/v3';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -108,9 +203,12 @@ export async function publishToWix(
     title: payload.title,
   });
 
+  const fullHtml = injectSchema(payload.content, payload.seoSchema);
+  const ricosDocument = await convertToRicosDocument(fullHtml, creds.apiKey, creds.siteId, context);
+
   const postFields = {
     title:               payload.title,
-    contentText:         injectSchema(payload.content, payload.seoSchema),
+    richContent:         ricosDocument,
     excerpt:             payload.description,
     slug:                payload.slug,
     coverMedia: payload.heroImageUrl

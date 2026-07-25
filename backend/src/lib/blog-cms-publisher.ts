@@ -44,6 +44,23 @@ import { Keyword } from '@/models/Keyword';
 import { logger } from '@/open-tele';
 import { publishBlog as cmsPushBlog, type BlogPublishPayload, type CmsConfigForPublish } from '@/lib/cms';
 
+/**
+ * True if right now falls within a project's configured publish window
+ * (allowed day-of-week + hour, both UTC).
+ *
+ * Previously duplicated verbatim in both cms-publish.job.ts and
+ * content-generation.job.ts — extracted here since both already import
+ * from this module, and a timing check like this drifting out of sync
+ * between the two publish paths would be an easy, quiet bug to introduce
+ * later. See docs/00-master-summary.md.
+ */
+export function isNowAllowedPublishTime(allowedDays: number[], publishHourUtc: number): boolean {
+  const now      = new Date();
+  const todayUtc = now.getUTCDay();
+  const hourUtc  = now.getUTCHours();
+  return allowedDays.includes(todayUtc) && hourUtc >= publishHourUtc;
+}
+
 export interface PublishBlogToCmsOptions {
   blogId:        string;
   projectId:     string;

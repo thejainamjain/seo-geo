@@ -8,7 +8,7 @@
 export function formatBusinessContext(bc: {
   company?:     { name?: string; description?: string; targetRegions?: string[] };
   product?:     { whatItSells?: string; keyFeatures?: string; pricingTiers?: string };
-  customers?:   { segments?: string[]; painPoints?: string; topUseCases?: string };
+  customers?:   { segments?: string[]; painPoints?: string; topUseCases?: string; keywordsTheyUse?: string };
   competition?: { differentiation?: string; uniqueStrengths?: string };
   socialProof?: { caseStudies?: string };
 }): string {
@@ -25,6 +25,13 @@ export function formatBusinessContext(bc: {
     lines.push(`Customer segments: ${bc.customers.segments.join(', ')}`);
   if (bc.customers?.painPoints)        lines.push(`Pain points: ${bc.customers.painPoints}`);
   if (bc.customers?.topUseCases)       lines.push(`Top use cases: ${bc.customers.topUseCases}`);
+  // Added when keyword-research.job.ts switched from its own narrower,
+  // ad-hoc description to this shared formatter — this field ("words
+  // customers actually search with") was in that job's old description
+  // but missing here entirely, and is arguably the single most
+  // keyword-relevant field BusinessContext has. Every caller benefits
+  // from it, not just keyword research.
+  if (bc.customers?.keywordsTheyUse)   lines.push(`Keywords customers use: ${bc.customers.keywordsTheyUse}`);
   if (bc.competition?.differentiation) lines.push(`Differentiation: ${bc.competition.differentiation}`);
   if (bc.competition?.uniqueStrengths) lines.push(`Strengths: ${bc.competition.uniqueStrengths}`);
   if (bc.socialProof?.caseStudies)     lines.push(`Case studies: ${bc.socialProof.caseStudies}`);

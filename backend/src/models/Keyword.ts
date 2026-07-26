@@ -79,6 +79,16 @@ export interface IKeyword extends Document {
   /** AI-generated content brief for this keyword (JSON string from SERP analysis) */
   brief?: string;
 
+  /**
+   * Draft blog title suggested at keyword-discovery time (from
+   * generateMarketSizing()'s per-keyword title field, previously computed
+   * and discarded — see workers/jobs/keyword-research.job.ts). Distinct
+   * from the Blog document's own title, which is generated fresh once
+   * content generation actually runs and can differ from this suggestion.
+   * Purely a "here's roughly what this will become" preview for the UI.
+   */
+  suggestedTitle?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -111,6 +121,7 @@ const KeywordSchema = new Schema<IKeyword>(
     },
     alignmentScore: { type: Number, min: 0, max: 100 },
     brief:          { type: String },
+    suggestedTitle: { type: String },
   },
   { timestamps: true },
 );

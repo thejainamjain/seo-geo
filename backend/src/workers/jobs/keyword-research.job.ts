@@ -69,6 +69,7 @@ import { deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData }          from '../seo-pipeline.worker';
 import type { DataForSeoKeyword }        from '@/lib/dataforseo';
 import { scheduleWeeklyGeneration }     from '@/lib/keyword-generation-scheduler';
+import { formatBusinessContext }        from '@/lib/business-context-formatter';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -87,11 +88,24 @@ interface RawKeyword {
   difficulty:   number;
   cpc:          number;
   source:       'ai_suggested' | 'dataforseo';
+  /** From generateMarketSizing()'s per-keyword title — undefined for DataForSEO-sourced keywords (that source doesn't suggest titles). */
+  suggestedTitle?: string;
 }
 
 interface ScoredKeyword extends RawKeyword {
   alignmentScore:  number;
   relevanceReason: string;
+  /**
+   * True when the LLM call for this keyword's batch failed (network error,
+   * rate limit, malformed JSON) — as opposed to the LLM genuinely scoring
+   * it low. Matters because selectTopKeywords() below documents these
+   * keywords as being "kept, sorted to the bottom" on failure — but until
+   * this flag existed, they were actually being silently deleted by the
+   * MIN_ALIGNMENT_SCORE filter, since a failed call also produces
+   * alignmentScore: 0, indistinguishable from a real low score. See that
+   * function for how this flag is used.
+   */
+  scoringFailed?: boolean;
 }
 
 // ── Keyword normalisation ──────────────────────────────────────────────────
@@ -126,11 +140,15 @@ async function fetchMarketSizingKeywords(
     );
 
     const keywords: RawKeyword[] = result.keywords.map(k => ({
-      keyword:      k.keyword,
-      searchVolume: k.search_volume,
-      difficulty:   k.difficulty,
-      cpc:          0, // LLM doesn't estimate CPC
-      source:       'ai_suggested' as const,
+      keyword:        k.keyword,
+      searchVolume:   k.search_volume,
+      difficulty:     k.difficulty,
+      cpc:            0, // LLM doesn't estimate CPC
+      source:         'ai_suggested' as const,
+      // Previously discarded here despite the LLM already generating it —
+      // now carried through to Keyword.suggestedTitle so the UI can show
+      // a real preview instead of "To be determined" before generation runs.
+      suggestedTitle: k.title,
     }));
 
     logger.info('Market sizing keywords fetched', {
@@ -348,7 +366,7 @@ async function scoreKeywords(
       );
 
       for (const kw of batch) {
-        scored.push({ ...kw, alignmentScore: 0, relevanceReason: '' });
+        scored.push({ ...kw, alignmentScore: 0, relevanceReason: '', scoringFailed: true });
       }
     }
     // No manual rate-limit delay — scoreKeywordAlignment() already
@@ -372,9 +390,32 @@ function selectTopKeywords(
 ): ScoredKeyword[] {
   const beforeFilter = keywords.length;
 
-  const filtered = keywords.filter(k => k.alignmentScore >= MIN_ALIGNMENT_SCORE);
+  // Keywords whose scoring batch failed bypass the threshold filter —
+  // alignmentScore: 0 for these means "never evaluated," not "evaluated
+  // and found irrelevant." Previously both cases were filtered identically
+  // by this line, silently deleting up to ALIGNMENT_BATCH_SIZE (50)
+  // legitimate keywords whenever a single LLM call had a transient
+  // failure — contradicting this job's own doc comment, which says failed
+  // keywords are "kept... at the bottom of the list."  They still land at
+  // the bottom via the sort below (score 0 sorts last among real scores in
+  // the common case), just not dropped outright.
+  const filtered = keywords.filter(
+    k => k.scoringFailed || k.alignmentScore >= MIN_ALIGNMENT_SCORE,
+  );
+
+  const failedCount = filtered.filter(k => k.scoringFailed).length;
+  if (failedCount > 0) {
+    logger.warn('Some keywords kept despite failed alignment scoring — see scoringFailed', {
+      projectId,
+      failedCount,
+    });
+  }
 
   const sorted = filtered.sort((a, b) => {
+    // scoringFailed keywords always sort below successfully-scored ones,
+    // regardless of tied alignmentScore (both 0) — we have zero confidence
+    // in them, whereas a genuine score of 0 is at least a real judgment.
+    if (a.scoringFailed !== b.scoringFailed) return a.scoringFailed ? 1 : -1;
     if (b.alignmentScore !== a.alignmentScore) return b.alignmentScore - a.alignmentScore;
     if (b.searchVolume   !== a.searchVolume)   return b.searchVolume   - a.searchVolume;
     return a.difficulty - b.difficulty; // lower difficulty = better
@@ -454,14 +495,14 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
     projectId,
   );
 
-  // Build business description for LLM calls
-  // Combine the most signal-rich fields into one string
-  const businessDescription = [
-    bc.product?.whatItSells,
-    bc.customers?.topUseCases,
-    bc.customers?.keywordsTheyUse,
-    bc.competition?.differentiation,
-  ].filter(Boolean).join('\n');
+  // Build business description for LLM calls (market sizing + alignment
+  // scoring). Previously an ad-hoc 4-field join built just for this job —
+  // switched to the same formatBusinessContext() helper blog generation
+  // and rewrites use, which also includes pricing tiers, pain points, and
+  // social proof. Those fields were sitting in BusinessContext unused by
+  // this job even though they're directly relevant to judging whether a
+  // keyword fits the business.
+  const businessDescription = formatBusinessContext(bc);
 
   logger.info('Keyword research context loaded', {
     projectId,
@@ -543,6 +584,7 @@ export async function runKeywordResearchJob(job: Job<PipelineJobData>): Promise<
           source:          kw.source,
           alignmentScore:  kw.alignmentScore,
           relevanceReason: kw.relevanceReason,
+          suggestedTitle:  kw.suggestedTitle,
           weekNumber:      kw.weekNumber,
           startDate:       kw.startDate,
           pageType:        'blog' as const,

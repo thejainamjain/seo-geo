@@ -44,12 +44,21 @@ function validateCredentials(cmsType: string, credentials: Record<string, unknow
 }
 
 export const cmsService = {
+  /**
+   * Returns CMS connection status/settings — NEVER the encrypted
+   * credentials blob itself. There's no reason for the client to ever see
+   * that ciphertext (it's AES-256 encrypted, but "encrypted" isn't a
+   * reason to ship it anyway — if the encryption key were ever
+   * compromised or misconfigured, exposing this blob hands over every
+   * credential for offline attack). Same principle gsc.service.ts's
+   * getStatus() already follows correctly for GoogleToken.
+   */
   async getCmsConfig(userId: string, projectId: string) {
     logger.debug('cmsService.getCmsConfig', { userId, projectId });
 
     await assertProjectAccess(userId, projectId);
 
-    const config = await CmsConfig.findOne({ projectId }).lean();
+    const config = await CmsConfig.findOne({ projectId }).select('-encryptedCredentials').lean();
     if (!config) throw new NotFoundError('CmsConfig');
 
     logger.info('CmsConfig fetched', { projectId });
@@ -81,7 +90,7 @@ export const cmsService = {
         ...(input.blogPostPath ? { blogPostPath: input.blogPostPath } : {}),
       },
       { upsert: true, new: true },
-    );
+    ).select('-encryptedCredentials');
 
     await Project.findByIdAndUpdate(project._id, { isCmsConnected: true });
 
@@ -112,7 +121,7 @@ export const cmsService = {
       { projectId },
       { ...input },
       { new: true },
-    );
+    ).select('-encryptedCredentials');
     if (!config) throw new NotFoundError('CmsConfig');
 
     // Keep the per-project publish schedule in sync with the new state —

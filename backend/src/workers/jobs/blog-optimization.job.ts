@@ -192,7 +192,7 @@ export async function runBlogOptimizationJob(
   // (Framer) that don't have a safe update path yet.
   let resyncSucceeded = false;
   if (cmsResyncPending) {
-    const cmsConfig = await CmsConfig.findOne({ projectId }).lean();
+    const cmsConfig = await CmsConfig.findOne({ projectId }).select('+encryptedCredentials').lean();
     if (cmsConfig?.cmsType && cmsConfig.encryptedCredentials) {
       const resyncResult = await updateBlogOnCms(blogId, projectId, project.domain, {
         cmsType:              cmsConfig.cmsType,

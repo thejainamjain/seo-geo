@@ -134,9 +134,9 @@ export const keywordService = {
       status:          'upcoming',
       searchVolume:    volumeResult?.searchVolume ?? undefined,
       cpc:             volumeResult?.cpc || undefined,
-      // Falls back to 89(trust the user) if the alignment check itself
+      // Falls back to 100 (trust the user) if the alignment check itself
       // was unavailable — never punish the user for our infra being down.
-      alignmentScore:  alignment?.alignmentScore ?? 89,
+      alignmentScore:  alignment?.alignmentScore ?? 100,
       relevanceReason: alignment?.reasoning,
     });
 

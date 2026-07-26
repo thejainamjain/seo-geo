@@ -201,7 +201,7 @@ export async function runCmsResyncRetryScheduler(): Promise<void> {
     try {
       const [project, cmsConfig] = await Promise.all([
         Project.findById(projectId).select('domain').lean(),
-        CmsConfig.findOne({ projectId }).lean(),
+        CmsConfig.findOne({ projectId }).select('+encryptedCredentials').lean(),
       ]);
 
       if (!project || !cmsConfig?.cmsType || !cmsConfig.encryptedCredentials) {

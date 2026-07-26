@@ -415,7 +415,11 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
   if (!project) throw new Error(`Project not found: ${projectId}`);
 
   // 2. Load GoogleToken
-  const tokenDoc = await GoogleToken.findOne({ projectId });
+  // select('+accessToken +refreshToken') required now that these are
+  // select: false at the schema level (see models/GoogleToken.ts) — this
+  // is the one legitimate internal caller that actually needs the real
+  // secret values to make GSC API calls and refresh the token.
+  const tokenDoc = await GoogleToken.findOne({ projectId }).select('+accessToken +refreshToken');
   if (!tokenDoc) {
     logger.warn('No GSC token found for project — skipping GSC monitor', { projectId });
     return; // Not an error — user may have disconnected GSC

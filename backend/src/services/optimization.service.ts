@@ -146,7 +146,7 @@ export const optimizationService = {
     // skipped outright for platforms (Framer) without a safe update path.
     let resyncSucceeded = false;
     if (cmsResyncPending) {
-      const cmsConfig = await CmsConfig.findOne({ projectId }).lean();
+      const cmsConfig = await CmsConfig.findOne({ projectId }).select('+encryptedCredentials').lean();
       if (cmsConfig?.cmsType && cmsConfig.encryptedCredentials) {
         const resyncResult = await updateBlogOnCms(String(blog._id), projectId, project.domain, {
           cmsType:              cmsConfig.cmsType,

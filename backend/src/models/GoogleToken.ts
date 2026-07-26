@@ -36,8 +36,8 @@ const GoogleTokenSchema = new Schema<IGoogleToken>(
       required: true,
       unique: true, // One token set per project
     },
-    accessToken: { type: String, required: true },
-    refreshToken: { type: String, required: true },
+    accessToken: { type: String, required: true, select: false },
+    refreshToken: { type: String, required: true, select: false },
     expiryDate: { type: Date, required: true },
   },
   { timestamps: true }

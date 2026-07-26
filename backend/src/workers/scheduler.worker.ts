@@ -34,6 +34,7 @@ import { QUEUE_NAMES }              from '@/constants/seo-pipeline.constants';
 import {
   runGeoAnalyticsScheduler,
   runGscMonitorScheduler,
+  runCmsResyncRetryScheduler,
 } from './jobs/global-scheduler.job';
 import { reconcileCmsPublishSchedules } from '@/lib/cms-publish-scheduler';
 import { runWeeklyGenerationTrigger }   from '@/lib/keyword-generation-scheduler';
@@ -77,10 +78,23 @@ async function registerSchedulers(): Promise<void> {
     },
   );
 
+  // CMS resync retry — every 4 hours, retries failed CMS re-syncs from
+  // blog-optimization.job.ts / optimization.service.ts (see
+  // lib/blog-cms-publisher.ts's updateBlogOnCms())
+  await schedulerQueue.add(
+    'cms-resync-retry-scheduler',
+    {},
+    {
+      jobId:  'cms-resync-retry-scheduler',
+      repeat: { pattern: '0 */4 * * *' },
+    },
+  );
+
   logger.info('Global schedulers registered', {
     schedulers: [
-      'geo-analytics-scheduler → Mon 10:00 UTC',
-      'gsc-monitor-scheduler  → Mon 11:00 UTC',
+      'geo-analytics-scheduler     → Mon 10:00 UTC',
+      'gsc-monitor-scheduler       → Mon 11:00 UTC',
+      'cms-resync-retry-scheduler  → every 4 hours',
       '(CMS publish is per-project now — see reconcileCmsPublishSchedules)',
     ],
   });
@@ -98,6 +112,9 @@ function createSchedulerWorker(): Worker {
           break;
         case 'gsc-monitor-scheduler':
           await runGscMonitorScheduler();
+          break;
+        case 'cms-resync-retry-scheduler':
+          await runCmsResyncRetryScheduler();
           break;
         default:
           logger.warn('Unknown scheduler job name', { jobName: job.name });

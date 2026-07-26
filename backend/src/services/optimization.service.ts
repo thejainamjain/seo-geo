@@ -22,8 +22,10 @@
  */
 
 import { Blog, BlogOptimization, Project, OrganizationMember } from '../models';
+import { CmsConfig } from '../models/CmsConfig';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { logger } from '../open-tele';
+import { updateBlogOnCms } from '../lib/blog-cms-publisher';
 
 async function assertProjectAccess(userId: string, projectId: string) {
   const project = await Project.findById(projectId);
@@ -97,7 +99,7 @@ export const optimizationService = {
   async approveOptimization(userId: string, projectId: string, optimizationId: string) {
     logger.debug('optimizationService.approveOptimization', { userId, projectId, optimizationId });
 
-    await assertProjectAccess(userId, projectId);
+    const project = await assertProjectAccess(userId, projectId);
 
     const optimization = await BlogOptimization.findOne({ _id: optimizationId, projectId });
     if (!optimization) throw new NotFoundError('BlogOptimization');
@@ -137,23 +139,51 @@ export const optimizationService = {
     blog.lastOptimizedAt = now;
     await blog.save();
 
-    optimization.status = 'applied';
-    // Same known limitation as blog-optimization.job.ts's tag auto-apply —
-    // see that file's doc comment. Recorded here too since this is a
-    // second, separate moment where the live CMS post can go out of sync
-    // with the Blog document.
-    optimization.cmsResyncPending = optimization.cmsResyncPending || cmsResyncPending;
-    await optimization.save();
-
+    // Actually push the approved rewrite to the live CMS post, instead of
+    // only flagging that a resync is needed. See
+    // lib/blog-cms-publisher.ts's updateBlogOnCms() for why this is a
+    // separate function from the regular publish path, and why it's
+    // skipped outright for platforms (Framer) without a safe update path.
+    let resyncSucceeded = false;
     if (cmsResyncPending) {
-      logger.warn(
-        'Blog content optimization approved and saved to DB but NOT pushed to live CMS — update-existing-post not yet supported for any CMS publisher',
-        { projectId, blogId: String(blog._id), cmsReference: blog.cmsReference },
-      );
+      const cmsConfig = await CmsConfig.findOne({ projectId }).lean();
+      if (cmsConfig?.cmsType && cmsConfig.encryptedCredentials) {
+        const resyncResult = await updateBlogOnCms(String(blog._id), projectId, project.domain, {
+          cmsType:              cmsConfig.cmsType,
+          encryptedCredentials: cmsConfig.encryptedCredentials,
+          blogPostPath:         cmsConfig.blogPostPath,
+          autoPublish:          cmsConfig.autoPublish,
+          allowedPublishDays:   cmsConfig.allowedPublishDays,
+          publishHourUtc:       cmsConfig.publishHourUtc,
+        });
+        resyncSucceeded = resyncResult.success;
+
+        if (resyncSucceeded) {
+          logger.info('Blog content optimization pushed to live CMS', {
+            projectId, blogId: String(blog._id), cmsReference: blog.cmsReference,
+          });
+        } else {
+          logger.warn('Blog content optimization approved but CMS re-sync did not succeed', {
+            projectId, blogId: String(blog._id), cmsReference: blog.cmsReference,
+            reason: resyncResult.skippedReason ?? resyncResult.error,
+          });
+        }
+      } else {
+        logger.warn('Blog content optimization approved but CMS re-sync skipped — no CMS config found', {
+          projectId, blogId: String(blog._id),
+        });
+      }
     }
 
+    optimization.status = 'applied';
+    // Reflects whether a resync is STILL needed — false if it wasn't
+    // needed, or if it was needed and just succeeded above.
+    optimization.cmsResyncPending = (optimization.cmsResyncPending || cmsResyncPending) && !resyncSucceeded;
+    await optimization.save();
+
     logger.info('Blog optimization approved and applied', {
-      projectId, optimizationId, blogId: String(blog._id), cmsResyncPending,
+      projectId, optimizationId, blogId: String(blog._id),
+      cmsResyncPending: optimization.cmsResyncPending,
     });
 
     return optimization;

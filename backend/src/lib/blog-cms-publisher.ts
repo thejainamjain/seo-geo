@@ -154,3 +154,107 @@ export async function publishBlogToCms(opts: PublishBlogToCmsOptions): Promise<P
 
   return { success: true, publishedUrl: result.publishedUrl, cmsReference: result.cmsReference };
 }
+
+export interface UpdateBlogOnCmsResult {
+  success:        boolean;
+  skippedReason?: string; // set when re-sync wasn't even attempted (see below)
+  publishedUrl?:  string;
+  error?:         string;
+}
+
+/**
+ * Platforms with a confirmed safe update-by-slug path (see
+ * docs/11-cms-integrations-audit.md) — everything except Framer, whose
+ * webhook has no dedup at all, so calling it again for the same blog would
+ * create a genuine duplicate live item rather than updating one. Custom
+ * API is attempted rather than skipped — its schema isn't ours to
+ * guarantee, but the outbound payload already includes a stable `blogId`
+ * a well-built receiving endpoint can use to dedupe/update on its own
+ * side (see lib/cms/custom-api.ts) — attempting it is no worse than a
+ * normal publish call, unlike Framer where it's actively harmful.
+ */
+const CMS_TYPES_WITHOUT_SAFE_UPDATE = new Set(['framer']);
+
+/**
+ * Pushes a blog's CURRENT content to the CMS for a blog that's ALREADY
+ * published (has a `cmsReference`) and whose content has legitimately
+ * changed since — e.g. an auto-applied tag optimization
+ * (workers/jobs/blog-optimization.job.ts) or an approved content rewrite
+ * (services/optimization.service.ts). Both call this to actually clear
+ * the `cmsResyncPending` flag they set, instead of only logging that a
+ * resync is needed.
+ *
+ * DELIBERATELY A SEPARATE FUNCTION FROM publishBlogToCms(), not a
+ * `forceUpdate` flag on it: publishBlogToCms()'s guard exists specifically
+ * to stop re-publishing UNCHANGED content on a retry (see that function's
+ * doc comment). This function exists for the opposite situation — content
+ * HAS changed and a push is exactly what's wanted. Keeping them separate
+ * keeps each function's contract unambiguous at the call site rather than
+ * relying on every caller remembering to pass the right flag.
+ */
+export async function updateBlogOnCms(
+  blogId:    string,
+  projectId: string,
+  domain:    string,
+  cmsConfig: CmsConfigForPublish,
+): Promise<UpdateBlogOnCmsResult> {
+  const context = `blog-cms-updater:${projectId}:${blogId}`;
+
+  if (cmsConfig.cmsType && CMS_TYPES_WITHOUT_SAFE_UPDATE.has(cmsConfig.cmsType)) {
+    logger.warn('CMS re-sync skipped — no safe update path for this platform yet', {
+      context, cmsType: cmsConfig.cmsType,
+    });
+    return {
+      success:       false,
+      skippedReason: `No safe update-by-slug path for '${cmsConfig.cmsType}' yet — see docs/11-cms-integrations-audit.md`,
+    };
+  }
+
+  const blog = await Blog.findById(blogId);
+  if (!blog) {
+    return { success: false, error: 'Blog not found' };
+  }
+
+  if (!blog.cmsReference) {
+    // Not actually published yet — nothing to re-sync. The caller should
+    // be using publishBlogToCms() for a first-time publish instead.
+    return { success: false, error: 'Blog has no cmsReference — nothing to update, use publishBlogToCms() instead' };
+  }
+
+  const payload: BlogPublishPayload = {
+    blogId,
+    title:        blog.title,
+    slug:         blog.slug,
+    description:  blog.description ?? '',
+    content:      blog.content     ?? '',
+    heroImageUrl: blog.heroImageUrl ?? undefined,
+    seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
+    blogPostPath: cmsConfig.blogPostPath,
+    domain,
+  };
+
+  const result = await cmsPushBlog(cmsConfig, payload, projectId);
+
+  if (!result.success) {
+    logger.warn('CMS re-sync failed', { context, cmsType: cmsConfig.cmsType, error: result.error });
+    return { success: false, error: result.error ?? 'CMS update returned success:false' };
+  }
+
+  // Slug is unchanged by a resync, so cmsReference/publishedUrl should
+  // already match what's stored — but persist whatever the platform
+  // actually returned in case it legitimately differs (e.g. a platform
+  // reassigns an internal ID on update).
+  await Blog.findByIdAndUpdate(blogId, {
+    $set: {
+      cmsReference:      result.cmsReference ?? blog.cmsReference,
+      publishedUrl:      result.publishedUrl ?? blog.publishedUrl,
+      publishedContent:  blog.content ?? '',
+    },
+  });
+
+  logger.info('CMS re-sync completed', {
+    context, cmsType: cmsConfig.cmsType, publishedUrl: result.publishedUrl ?? blog.publishedUrl,
+  });
+
+  return { success: true, publishedUrl: result.publishedUrl ?? blog.publishedUrl ?? undefined };
+}

@@ -120,37 +120,40 @@ returning real results.
 
 ## Known follow-ups (flagged, not built — out of scope for this pass)
 
-1. **CMS re-sync gap — narrower than originally scoped, correcting here.**
-   Both `blog-optimization.job.ts` (tag auto-apply) and
-   `optimization.service.ts` (content approval) update the `Blog` document
-   but do **not** push the change to an already-published CMS post yet —
-   `cmsResyncPending` is set and logged, but nothing currently reads it to
-   act.
+1. ✅ **RESOLVED — CMS re-sync gap.** Both `blog-optimization.job.ts` (tag
+   auto-apply) and `optimization.service.ts` (content approval) now
+   actually push the change to the live CMS post, via a new
+   `updateBlogOnCms()` in `lib/blog-cms-publisher.ts` — deliberately a
+   separate function from `publishBlogToCms()`, not a flag on it, since
+   that function's "skip if already published" guard exists specifically
+   to prevent re-publishing *unchanged* content on a retry, and this is
+   the opposite case (content has legitimately changed, a push is exactly
+   what's wanted). Works for WordPress, Webflow, Wix, Shopify,
+   GoHighLevel, and Sanity (all have real update-by-slug support — see
+   `docs/11-cms-integrations-audit.md`). Deliberately skipped for Framer —
+   its webhook has no dedup at all, so pushing again would create a
+   genuine duplicate live item, which is worse than leaving
+   `cmsResyncPending` set.
    
-   This doc originally said "7 of 8 CMS publishers can't update an
-   existing post yet" — that was accurate when written, but a parallel
-   idempotency fix (see `docs/11-cms-integrations-audit.md`) has since
-   added real update-by-slug support to WordPress, Webflow, Wix, Shopify,
-   and GoHighLevel, and Sanity already had it via `createOrReplace`. That's
-   **6 of 8 platforms that can now genuinely update an existing post** —
-   only Framer (blocked on the separate RankAI-domain issue) and Custom
-   API (receiving endpoint's schema isn't ours to control) still can't.
-   
-   So actually wiring `cmsResyncPending` to trigger a re-publish is more
-   tractable than it looked when this was first scoped — but it's not
-   just a mechanical fix. `lib/blog-cms-publisher.ts`'s `publishBlogToCms()`
-   currently treats "this blog already has a `cmsReference`" as "skip,
-   don't call the CMS again" — that's the right behavior for avoiding a
-   duplicate post on a BullMQ retry, but it's the wrong behavior here,
-   where the content has legitimately changed and an update SHOULD go out.
-   Needs a deliberate decision (e.g. a separate `updateBlogOnCms()` path,
-   or a `forceUpdate` flag on the existing function) rather than just
-   flipping the guard, since those two cases need to stay distinguishable.
-   Left as a follow-up rather than assumed — flagging for a decision, not
-   deciding it here.
+   **Failed resyncs now retry automatically too**: a new global
+   scheduler, `cms-resync-retry-scheduler` in
+   `workers/jobs/global-scheduler.job.ts`, runs every 4 hours and sweeps
+   any `BlogOptimization` still flagged `cmsResyncPending: true` (network
+   blip, platform temporarily down, etc.), capped at 50 per run so a
+   backlog can't turn one run into a marathon. Registered the same way
+   the other two global schedulers already are (`scheduler.worker.ts`) —
+   no new queue or worker needed, since the expected retry volume is
+   small and each retry is one lightweight CMS API call. Framer records
+   will keep landing back in this queue every run since there's no
+   platform fix that would ever let them succeed — a known, accepted
+   consequence of the platform-level gap, not a bug in the sweep itself;
+   if a project on Framer accumulates a permanently-pending record, its
+   `skippedReason` stays visible in the logs each run rather than
+   disappearing.
 2. **Approve/reject access is unrestricted** (any project member). Flagged
    during design as a candidate to restrict to `owner`/`admin` — two-line
    change in `optimization.service.ts`'s `assertProjectAccess()` — once
    there's real need for tighter review gatekeeping.
 3. **DOCX upload support** — deferred per your call earlier in this build.
    `lib/file-extractor.ts` only handles pdf/txt/md/csv/json.
+   

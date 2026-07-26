@@ -31,16 +31,17 @@
  *   Rationale: a bad title is cheap to notice and cheap to revert; a wrong
  *   fact or broken claim baked into full body content is not.
  *
- * KNOWN LIMITATION — CMS re-sync not wired: if this blog is already
- * published (blog.cmsReference set), the updated title/description/schema
- * are saved to the Blog document but NOT pushed to the live CMS post. Doing
- * that safely requires per-platform "update existing post" support, which
- * doesn't exist yet for 7 of 8 CMS publishers (see
- * docs/11-cms-integrations-audit.md, 🟠 cross-cutting bucket — calling the
- * existing publishBlog() here would CREATE A DUPLICATE live post instead of
- * updating the existing one, which is worse than doing nothing). Flagged
- * clearly on the BlogOptimization record (cmsResyncPending) rather than
- * silently either duplicating content live or silently doing nothing.
+ * CMS RE-SYNC: if this blog is already published (blog.cmsReference set),
+ * the updated title/description/schema are saved to the Blog document AND
+ * pushed to the live CMS post via lib/blog-cms-publisher.ts's
+ * updateBlogOnCms() — safe for WordPress, Webflow, Wix, Shopify,
+ * GoHighLevel, and Sanity, which all have real update-by-slug support (see
+ * docs/11-cms-integrations-audit.md). Skipped outright for Framer, whose
+ * webhook has no dedup at all — pushing again would create a genuine
+ * duplicate live item, not update the existing one. If the resync attempt
+ * fails for any reason (network error, platform down, or the platform is
+ * Framer), `cmsResyncPending` stays true on the BlogOptimization record so
+ * it's visible rather than silently lost.
  *
  * ERROR HANDLING:
  *   - Blog not found → throw (BullMQ retries — likely a real problem, not a race)
@@ -63,10 +64,12 @@ import { logger }               from '@/open-tele';
 import { Project }              from '@/models/Project';
 import { BusinessContext }      from '@/models/BusinessContext';
 import { Blog }                 from '@/models/Blog';
+import { CmsConfig }            from '@/models/CmsConfig';
 import { BlogLearning, BlogOptimization } from '@/models';
 import { findRelevantLearnings, findRelevantKnowledge, formatChunksForPrompt } from '@/lib/vector-search';
 import { rewriteBlogPost }      from '@/lib/llm';
 import { formatBusinessContext } from '@/lib/business-context-formatter';
+import { updateBlogOnCms }      from '@/lib/blog-cms-publisher';
 
 export interface BlogOptimizationJobData {
   projectId: string;
@@ -182,12 +185,43 @@ export async function runBlogOptimizationJob(
   blog.lastOptimizedAt = now;
   await blog.save();
 
+  // Actually push the tag change to the live CMS post, instead of only
+  // flagging that a resync is needed. See lib/blog-cms-publisher.ts's
+  // updateBlogOnCms() for why this is a separate function from the
+  // regular publish path, and why it's skipped outright for platforms
+  // (Framer) that don't have a safe update path yet.
+  let resyncSucceeded = false;
   if (cmsResyncPending) {
-    logger.warn(
-      'Blog tag optimization applied to DB but NOT pushed to live CMS — update-existing-post not yet supported for any CMS publisher',
-      { projectId, blogId, cmsReference: blog.cmsReference },
-    );
+    const cmsConfig = await CmsConfig.findOne({ projectId }).lean();
+    if (cmsConfig?.cmsType && cmsConfig.encryptedCredentials) {
+      const resyncResult = await updateBlogOnCms(blogId, projectId, project.domain, {
+        cmsType:              cmsConfig.cmsType,
+        encryptedCredentials: cmsConfig.encryptedCredentials,
+        blogPostPath:         cmsConfig.blogPostPath,
+        autoPublish:          cmsConfig.autoPublish,
+        allowedPublishDays:   cmsConfig.allowedPublishDays,
+        publishHourUtc:       cmsConfig.publishHourUtc,
+      });
+      resyncSucceeded = resyncResult.success;
+
+      if (resyncSucceeded) {
+        logger.info('Blog tag optimization pushed to live CMS', { projectId, blogId, cmsReference: blog.cmsReference });
+      } else {
+        logger.warn('Blog tag optimization applied to DB but CMS re-sync did not succeed', {
+          projectId, blogId, cmsReference: blog.cmsReference,
+          reason: resyncResult.skippedReason ?? resyncResult.error,
+        });
+      }
+    } else {
+      logger.warn('Blog tag optimization applied to DB but CMS re-sync skipped — no CMS config found', {
+        projectId, blogId,
+      });
+    }
   }
+  // cmsResyncPending on the record reflects whether a resync is STILL
+  // needed — false if it wasn't needed in the first place, or if it was
+  // needed and just succeeded above. True if it's still outstanding.
+  const cmsResyncStillPending = cmsResyncPending && !resyncSucceeded;
 
   // ── 5. Record the optimization (audit trail + content review queue) ─────
 
@@ -210,7 +244,7 @@ export async function runBlogOptimizationJob(
       baselineCtr,
       appliedAt:             now,
     },
-    cmsResyncPending,
+    cmsResyncPending: cmsResyncStillPending,
     status: 'pending_review',
   });
 
@@ -219,6 +253,6 @@ export async function runBlogOptimizationJob(
     optimizationId:   String(optimization._id),
     contentStatus:    'pending_review',
     tagsAutoApplied:  true,
-    cmsResyncPending,
+    cmsResyncPending: cmsResyncStillPending,
   });
 }

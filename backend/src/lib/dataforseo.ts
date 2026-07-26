@@ -219,6 +219,23 @@ async function fetchDataForSeo(
  * @param limit       - Max keywords to return per domain
  */
 
+// ── Location code mapping ──────────────────────────────────────────────────
+
+/**
+ * DataForSEO location codes — most common ones.
+ * Full list: https://docs.dataforseo.com/v3/appendix/google/locations/
+ * Shared by every function below that needs country targeting.
+ */
+function countryCodeToLocationCode(countryCode: string): number {
+  return countryCode === 'in' ? 2356    // India
+    : countryCode === 'gb'                  ? 2826    // United Kingdom
+    : countryCode === 'au'                  ? 2036    // Australia
+    : countryCode === 'ca'                  ? 2124    // Canada
+    : countryCode === 'de'                  ? 2276    // Germany
+    : countryCode === 'sg'                  ? 2702    // Singapore
+    : 2840;                                           // United States (default)
+}
+
 export async function getRankedKeywords(
   domain:      string,
   countryCode: string,
@@ -227,15 +244,7 @@ export async function getRankedKeywords(
 ): Promise<RankedKeywordsResult> {
   const context = `ranked-keywords:${projectId}:${domain}`;
 
-  // DataForSEO location codes — most common ones
-  // Full list: https://docs.dataforseo.com/v3/appendix/google/locations/
-  const locationCode = countryCode === 'in' ? 2356    // India
-    : countryCode === 'gb'                  ? 2826    // United Kingdom
-    : countryCode === 'au'                  ? 2036    // Australia
-    : countryCode === 'ca'                  ? 2124    // Canada
-    : countryCode === 'de'                  ? 2276    // Germany
-    : countryCode === 'sg'                  ? 2702    // Singapore
-    : 2840;                                           // United States (default)
+  const locationCode = countryCodeToLocationCode(countryCode);
 
   const results = await fetchDataForSeo(
     '/v3/dataforseo_labs/google/ranked_keywords/live',
@@ -303,4 +312,86 @@ export async function getRankedKeywords(
   });
 
   return { domain, keywords };
+}
+
+export interface SearchVolumeResult {
+  keyword:      string;
+  searchVolume: number | null; // null = lookup failed/unavailable, distinct from a genuine 0
+  cpc:          number;
+  competition:  string | null; // 'LOW' | 'MEDIUM' | 'HIGH', as returned by Google Ads
+}
+
+/**
+ * Looks up real Google Ads search volume for a single, specific keyword —
+ * different from getRankedKeywords() above, which finds keywords a
+ * COMPETITOR DOMAIN ranks for. This is for verifying one exact phrase a
+ * user typed in themselves (services/keyword.service.ts's addKeyword()),
+ * where we need data on that literal keyword, not a list of suggestions.
+ *
+ * Uses DataForSEO's Keyword Data API (Search Volume endpoint), a
+ * different DataForSEO product from the Labs API used above — confirmed
+ * against DataForSEO's own docs:
+ * POST /v3/keywords_data/google_ads/search_volume/live
+ * Body: [{ location_code, keywords: string[] }]
+ *
+ * Returns `searchVolume: null` (not `0`) if the lookup itself fails or
+ * the keyword isn't found in the response — callers should NOT treat a
+ * failed lookup the same as a confirmed-zero-volume keyword. A billing
+ * issue or a transient API error shouldn't be indistinguishable from
+ * "this keyword genuinely gets zero searches."
+ */
+export async function getSearchVolume(
+  keyword:     string,
+  countryCode: string,
+  projectId:   string,
+): Promise<SearchVolumeResult> {
+  const context = `search-volume:${projectId}:${keyword}`;
+  const locationCode = countryCodeToLocationCode(countryCode);
+
+  try {
+    const results = await fetchDataForSeo(
+      '/v3/keywords_data/google_ads/search_volume/live',
+      [
+        {
+          location_code: locationCode,
+          keywords:      [keyword],
+        },
+      ],
+      context,
+    );
+
+    // Response items are flat objects per keyword (unlike ranked_keywords'
+    // nested keyword_data.keyword_info structure) — parsed defensively
+    // since the exact response shape wasn't independently verified beyond
+    // DataForSEO's own documented examples.
+    const item = results[0] as {
+      keyword?:      string;
+      search_volume?: number | null;
+      cpc?:          number | null;
+      competition?:  string | null;
+    } | undefined;
+
+    if (!item) {
+      logger.warn('Search volume lookup returned no result', { context, keyword });
+      return { keyword, searchVolume: null, cpc: 0, competition: null };
+    }
+
+    return {
+      keyword,
+      searchVolume: item.search_volume ?? null,
+      cpc:          item.cpc ?? 0,
+      competition:  item.competition ?? null,
+    };
+
+  } catch (err) {
+    // Non-fatal by design — see file header "ADDING NEW DATAFORSEO CALLS"
+    // philosophy elsewhere in this file. A failed volume lookup shouldn't
+    // block a user from adding a keyword; it should just mean "we don't
+    // have volume data for this," which the caller treats as
+    // fail-open, not fail-closed.
+    logger.warn('Search volume lookup failed — treating as unavailable', {
+      context, keyword, error: err instanceof Error ? err.message : String(err),
+    });
+    return { keyword, searchVolume: null, cpc: 0, competition: null };
+  }
 }

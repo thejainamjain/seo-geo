@@ -43,6 +43,52 @@ TLDR summary — then computes a final 1–100 SEO score.
   single-tag content this same codebase generated (not arbitrary HTML), so
   the regex risk is low — but worth knowing if `oldHtml` format ever changes.
 
+## ✅ RESOLVED — frontend was only rendering type+status, not the before/after data already being sent
+
+Prompted by a real client screenshot comparison against RankAI's own UI:
+our Technical SEO page was only showing a fix's category label ("Add
+canonical tag") and a "Pending" badge — not the actual before/after
+markup RankAI displays (`NEW: <meta ...>` / `PREVIOUS: ...`). Traced this
+all the way through before assuming it was a backend gap: **it wasn't** —
+`CodeChange.oldHtml`/`.newHtml` were already populated with real markup for
+every fix type, and `listCodeChanges()` already returned them completely
+unfiltered (no `.select()` projection stripping them). This was a pure
+frontend rendering gap.
+
+Two real backend issues did turn up while checking, though, and both are
+now fixed:
+
+1. **Empty-string placeholders instead of friendly "not found" text.**
+   `oldHtml` was a bare `''` for open_graph, canonical, and schema when
+   nothing existed before the fix (and an ugly `<meta name="description"
+   content="">` for description) — now real placeholder strings like
+   `"No canonical tag found"`, matching RankAI's own pattern, so the
+   frontend can render the field as-is with no special-case fallback logic.
+
+2. **A genuine timing/data-integrity gap**: `site-crawl.job.ts` creates
+   `CodeChange`/`FAQ`/`TLDR` stub records immediately, but the *next*
+   pipeline step (this file, `technical-audit.job.ts`) fills in the real
+   `newHtml` afterward. `listCodeChanges`/`listFAQs`/`listTLDRs` in
+   `audit.service.ts` had no check against the parent `Audit.status` at
+   all — so a frontend polling those endpoints while this step was still
+   running would get back partially-generated records (empty `newHtml`,
+   `status: 'pending'` — indistinguishable from a genuinely finished one).
+   Fixed by gating all three list endpoints on the latest **completed**
+   audit, returning `auditReady: false` + an empty array until it's safe
+   to render everything at once — see `docs/15-api-reference-for-frontend.md`
+   for the exact contract. Incidentally also fixes a second, latent issue:
+   `Audit` documents aren't capped at one per project (a project can be
+   re-crawled), and the old query had no audit-scoping at all, so results
+   from an earlier audit run could have mixed in with a newer one.
+
+**Known remaining gap, not fixed here**: `FAQ`/`TLDR` models have no
+`auditId` field (unlike `CodeChange`, which does), so their list endpoints
+can only gate on "is the latest audit done," not scope precisely to
+*that* audit's own records the way code-changes now can. Low-impact today
+since re-crawls aren't a common path, but would need a schema
+addition + migration to fully close — flagged in
+`docs/15-api-reference-for-frontend.md` for whoever picks it up.
+
 ## Verdict
 No changes needed here to reach "hardened" status beyond the general
 observations above. This is one of the stronger-engineered files in the repo.

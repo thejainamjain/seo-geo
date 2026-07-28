@@ -435,12 +435,33 @@ chunks orphaned in search results forever).
 ### `GET /audit`
 Response `200`: `{ audit }` — the latest technical SEO audit (see
 `docs/04-phase3-technical-audit-audit.md`), includes the overall score and
-summary. `null` if the crawl/audit phase hasn't run yet.
+summary. `404 NOT_FOUND` if no audit has fully completed yet (crawl and
+fix-generation both need to finish) — treat this like the `businessContext:
+null` case elsewhere: not an error state, just "still working," and show
+a loading UI rather than an error message.
 
 ### `GET /audit/code-changes?type=&status=&page=&limit=`
-Response `200`: `{ codeChanges: [...], total, page, limit }` — the actual
-per-page fixes the audit generated (meta tags, alt text, schema, etc.),
-each with a status (`pending | applied | disabled`, roughly).
+Response `200`: `{ codeChanges: [...], total, page, limit, auditReady: boolean }`.
+
+**`auditReady` is the key field to check before rendering anything here.**
+`site-crawl.job.ts` creates these records immediately, but the actual
+before/after HTML (`oldHtml`/`newHtml`) gets filled in by the *next*
+pipeline step afterward — so calling this while that's still running
+would previously return partially-generated records (empty `newHtml`,
+looking broken in the UI). Now: `auditReady: false` + an empty
+`codeChanges` array means "still generating, show a loading/working
+state"; `auditReady: true` means everything for this audit run is fully
+populated and safe to render all at once, matching how RankAI's own UI
+only ever shows fully-formed fix cards. Poll this endpoint (or `GET
+/audit` for its `404`/`200` state) until `auditReady` flips to `true`
+rather than rendering incrementally.
+
+Each `codeChange` has real `oldHtml`/`newHtml` markup — display them
+directly, matching RankAI's "NEW"/"PREVIOUS" pattern. When nothing existed
+before the fix, `oldHtml` is now a friendly placeholder string (e.g. `"No
+Open Graph tags found"`, `"No canonical tag found"`, `"No schema markup
+found"`, `"No meta description found"`) rather than an empty string — no
+frontend fallback logic needed for that case, just render `oldHtml` as-is.
 
 ### `POST /audit/code-changes/:changeId/apply`
 Response `200`: `{ codeChange }` — marks a suggested fix as applied.
@@ -449,12 +470,16 @@ Response `200`: `{ codeChange }` — marks a suggested fix as applied.
 Response `200`: `{ codeChange }` — dismiss a suggested fix without applying it.
 
 ### `GET /audit/faqs?status=&page=&limit=`
-Response `200`: `{ faqs: [...], total, page, limit }` — AI-generated FAQ
-content per page, from the same audit pass.
+Response `200`: `{ faqs: [...], total, page, limit, auditReady: boolean }` —
+same `auditReady` gating as code-changes above. **Caveat:** unlike
+code-changes, FAQs aren't scoped to one specific audit run internally (no
+`auditId` field on the model yet) — if a project is ever re-crawled, this
+could theoretically mix in FAQs from an earlier run. Known, flagged,
+not yet fixed — low-impact today since re-crawls aren't a common path.
 
 ### `GET /audit/tldrs?status=&page=&limit=`
-Response `200`: `{ tldrs: [...], total, page, limit }` — AI-generated
-TL;DR summaries per page.
+Response `200`: `{ tldrs: [...], total, page, limit, auditReady: boolean }` —
+same `auditReady` gating and same multi-audit caveat as FAQs above.
 
 ---
 

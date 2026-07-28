@@ -120,7 +120,11 @@ function detectCodeChanges(
       projectId, auditId, url: page.url,
       type:    'description',
       status:  'pending',
-      oldHtml: `<meta name="description" content="${page.description ?? ''}">`,
+      // Friendly placeholder, not a blank-content tag — matches RankAI's
+      // "No og tag found" pattern for anything the fix is replacing.
+      oldHtml: page.description
+        ? `<meta name="description" content="${page.description}">`
+        : 'No meta description found',
       newHtml: '',
     });
   }
@@ -130,7 +134,7 @@ function detectCodeChanges(
       projectId, auditId, url: page.url,
       type:    'open_graph',
       status:  'pending',
-      oldHtml: '',
+      oldHtml: 'No Open Graph tags found',
       newHtml: '',
     });
   }
@@ -140,7 +144,7 @@ function detectCodeChanges(
       projectId, auditId, url: page.url,
       type:    'canonical',
       status:  'pending',
-      oldHtml: '',
+      oldHtml: 'No canonical tag found',
       newHtml: `<link rel="canonical" href="${page.finalUrl}">`,
     });
   }
@@ -170,7 +174,7 @@ function detectCodeChanges(
       projectId, auditId, url: page.url,
       type:    'schema',
       status:  'pending',
-      oldHtml: '',
+      oldHtml: 'No schema markup found',
       newHtml: '',
     });
   }

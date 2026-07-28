@@ -16,6 +16,36 @@ async function assertProjectAccess(userId: string, projectId: string) {
   return project;
 }
 
+/**
+ * Finds the most recent COMPLETED audit for a project — the single
+ * source of truth for "is it safe to show generated fix content yet."
+ *
+ * WHY THIS EXISTS: site-crawl.job.ts creates CodeChange/FAQ/TLDR stub
+ * records immediately (with empty newHtml), and the NEXT pipeline step
+ * (technical-audit.job.ts) fills in the real LLM-generated content
+ * afterward — Audit.status only becomes 'completed' once that whole
+ * process, including score calculation, is done (see models/Audit.ts's
+ * own FLOW comment). Before this fix, listCodeChanges/listFAQs/listTLDRs
+ * queried by projectId alone, with no check against the parent Audit's
+ * status at all — so a frontend polling these endpoints while
+ * technical-audit.job.ts was still running would get back partially-
+ * generated records (empty newHtml, but status: 'pending' same as a
+ * finished one), which is exactly the "blank-looking card" bug this
+ * was built to fix.
+ *
+ * Also incidentally protects against a second, latent issue: Audit
+ * documents aren't capped at one per project ("Audits grow unboundedly —
+ * one per crawl run" per models/Audit.ts) — querying by projectId alone
+ * with no audit scoping at all would mix in results from any earlier
+ * audit run too, not just the latest one.
+ */
+async function findLatestCompletedAudit(projectId: string) {
+  return Audit.findOne({ projectId, status: 'completed' })
+    .sort({ performedAt: -1 })
+    .select('_id')
+    .lean();
+}
+
 export const auditService = {
   async getLatestAudit(userId: string, projectId: string) {
     logger.debug('auditService.getLatestAudit', { userId, projectId });
@@ -42,7 +72,20 @@ export const auditService = {
 
     await assertProjectAccess(userId, projectId);
 
-    const filter: Record<string, unknown> = { projectId };
+    const latestAudit = await findLatestCompletedAudit(projectId);
+    if (!latestAudit) {
+      // Nothing generated yet, or still mid-generation — see
+      // findLatestCompletedAudit()'s doc comment. auditReady:false lets
+      // the frontend show a "still working on this" state instead of a
+      // blank/broken-looking list.
+      logger.info('Code changes not ready — no completed audit yet', { projectId });
+      return { codeChanges: [], total: 0, page: query.page, limit: query.limit, auditReady: false };
+    }
+
+    // Scoped to the latest completed audit specifically (CodeChange has
+    // a real auditId field) — not just projectId, so results from an
+    // earlier audit run never mix in with the current one.
+    const filter: Record<string, unknown> = { projectId, auditId: latestAudit._id };
     if (query.type)   filter['type']   = query.type;
     if (query.status) filter['status'] = query.status;
 
@@ -53,7 +96,7 @@ export const auditService = {
     ]);
 
     logger.info('Code changes listed', { projectId, total });
-    return { codeChanges, total, page: query.page, limit: query.limit };
+    return { codeChanges, total, page: query.page, limit: query.limit, auditReady: true };
   },
 
   async applyCodeChange(userId: string, projectId: string, changeId: string) {
@@ -96,6 +139,19 @@ export const auditService = {
 
     await assertProjectAccess(userId, projectId);
 
+    const latestAudit = await findLatestCompletedAudit(projectId);
+    if (!latestAudit) {
+      logger.info('FAQs not ready — no completed audit yet', { projectId });
+      return { faqs: [], total: 0, page: query.page, limit: query.limit, auditReady: false };
+    }
+
+    // NOTE: unlike CodeChange, the FAQ model has no auditId field, so this
+    // can only scope by projectId, not to this specific audit run — if a
+    // project is ever re-crawled, FAQs from an earlier run could still mix
+    // in here. Flagging rather than silently fixing further: adding
+    // auditId to FAQ would need a schema change + migration, out of scope
+    // for this fix (which is about the completion-gating, not this
+    // separate multi-audit scoping gap).
     const filter: Record<string, unknown> = { projectId };
     if (query.status) filter['status'] = query.status;
 
@@ -106,7 +162,7 @@ export const auditService = {
     ]);
 
     logger.info('FAQs listed', { projectId, total });
-    return { faqs, total, page: query.page, limit: query.limit };
+    return { faqs, total, page: query.page, limit: query.limit, auditReady: true };
   },
 
   async listTLDRs(userId: string, projectId: string, query: {
@@ -118,6 +174,13 @@ export const auditService = {
 
     await assertProjectAccess(userId, projectId);
 
+    const latestAudit = await findLatestCompletedAudit(projectId);
+    if (!latestAudit) {
+      logger.info('TLDRs not ready — no completed audit yet', { projectId });
+      return { tldrs: [], total: 0, page: query.page, limit: query.limit, auditReady: false };
+    }
+
+    // Same NOTE as listFAQs above — TLDR also has no auditId field.
     const filter: Record<string, unknown> = { projectId };
     if (query.status) filter['status'] = query.status;
 
@@ -128,6 +191,6 @@ export const auditService = {
     ]);
 
     logger.info('TLDRs listed', { projectId, total });
-    return { tldrs, total, page: query.page, limit: query.limit };
+    return { tldrs, total, page: query.page, limit: query.limit, auditReady: true };
   },
 };

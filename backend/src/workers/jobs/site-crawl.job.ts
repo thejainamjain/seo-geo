@@ -432,8 +432,11 @@ async function runCheerioCrawler(
 
       // Broken link check (async, runs after extraction)
       let brokenLinks: PageData['brokenLinks'] = [];
+      let internalLinksChecked = 0;
       if (CHECK_BROKEN_LINKS) {
-        brokenLinks = await checkBrokenLinks(pageFields.links, baseUrl);
+        const result = await checkBrokenLinks(pageFields.links, baseUrl);
+        brokenLinks = result.broken;
+        internalLinksChecked = result.checkedCount;
         if (brokenLinks.length > 0) {
           logger.debug('Broken links found', { projectId, url: normUrl, count: brokenLinks.length });
         }
@@ -479,6 +482,7 @@ async function runCheerioCrawler(
         inlinkCount:     0,
         fromSitemap,
         brokenLinks,
+        internalLinksChecked,
       });
 
       logger.debug('Page crawled via Cheerio', { projectId, url: normUrl, responseTimeMs });
@@ -611,8 +615,11 @@ async function runPlaywrightCrawler(
         // JS-rendered pages got a free pass on broken-link detection
         // regardless of how many actually existed.
         let brokenLinks: PageData['brokenLinks'] = [];
+        let internalLinksChecked = 0;
         if (CHECK_BROKEN_LINKS) {
-          brokenLinks = await checkBrokenLinks(extracted.links, baseUrl);
+          const result = await checkBrokenLinks(extracted.links, baseUrl);
+          brokenLinks = result.broken;
+          internalLinksChecked = result.checkedCount;
           if (brokenLinks.length > 0) {
             logger.debug('Broken links found (Playwright)', { projectId, url: normUrl, count: brokenLinks.length });
           }
@@ -636,6 +643,7 @@ async function runPlaywrightCrawler(
           inlinkCount:     inlinkCounts.get(normUrl) ?? 0,
           fromSitemap,
           brokenLinks,
+          internalLinksChecked,
         });
 
         logger.debug('Page crawled via Playwright', { projectId, url: normUrl, responseTimeMs });
@@ -855,12 +863,61 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     const brokenLinkCount = allPages.reduce((sum, p) => sum + p.brokenLinks.length, 0);
     const slowPageCount   = allPages.filter(p => p.responseTimeMs > SLOW_PAGE_MS).length;
     const thinPageCount   = allPages.filter(p => p.wordCount < THIN_CONTENT_WORDS && p.wordCount > 0).length;
-    // Was hardcoded to 0 despite page.links[].isExternal already telling us
-    // which links are internal — the data was there, just never summed.
     const totalInternalLinks = allPages.reduce(
       (sum, p) => sum + p.links.filter(l => !l.isExternal).length,
       0,
     );
+
+    // Real per-factor-type totals — the actual number of "checks" that
+    // exist for each CodeChange type across this audit, derived from the
+    // crawled page data itself rather than an even split of totalChecks.
+    // Consumed by technical-audit.job.ts's calculateWeightedScore() as the
+    // exact denominator per factor (see docs/04-phase3-technical-audit-audit.md
+    // for the approximation this replaces).
+    //
+    // Two kinds of factor:
+    //   - Page-level (checked once per every crawled page): title,
+    //     description, open_graph, canonical, schema, missing_h1, page_speed,
+    //     page_size, redirect_chain.
+    //   - Per-element (checked once per qualifying element found across all
+    //     pages): alt_text (per image), link_title (per external link),
+    //     schema_invalid (per structured-data block), broken_link (per
+    //     unique internal link actually HEAD-checked).
+    //   - Conditional page-level (only checked on pages where the
+    //     precondition holds): thin_content (pages with wordCount > 0 —
+    //     matches the same guard detectCodeChanges uses), non_self_canonical
+    //     (pages that have a canonical tag at all).
+    //
+    // 'internal_link' is intentionally omitted: no check in
+    // detectCodeChanges ever produces that CodeChange type, so there's
+    // nothing to count — it will correctly contribute 0 to the score.
+    const totalImages           = allPages.reduce((sum, p) => sum + p.images.length, 0);
+    const totalExternalLinks    = allPages.reduce(
+      (sum, p) => sum + p.links.filter(l => l.isExternal).length,
+      0,
+    );
+    const totalLinksChecked     = allPages.reduce((sum, p) => sum + p.internalLinksChecked, 0);
+    const totalStructuredBlocks = allPages.reduce((sum, p) => sum + p.structuredData.length, 0);
+    const pagesWithWordCount    = allPages.filter(p => p.wordCount > 0).length;
+    const pagesWithCanonical    = allPages.filter(p => !!p.canonical).length;
+
+    const checkTotals: Record<string, number> = {
+      title:              allPages.length,
+      description:        allPages.length,
+      open_graph:         allPages.length,
+      canonical:          allPages.length,
+      alt_text:           totalImages,
+      link_title:         totalExternalLinks,
+      schema:             allPages.length,
+      broken_link:        totalLinksChecked,
+      thin_content:       pagesWithWordCount,
+      redirect_chain:     allPages.length,
+      missing_h1:         allPages.length,
+      schema_invalid:     totalStructuredBlocks,
+      page_speed:         allPages.length,
+      non_self_canonical: pagesWithCanonical,
+      page_size:          allPages.length,
+    };
 
     await Audit.findByIdAndUpdate(auditId, {
       status:      'completed',
@@ -872,6 +929,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
         totalSchemas:       allPages.filter(p => p.hasSchema).length,
         totalInternalLinks,
         totalFaqs:          faqDocs.length,
+        checkTotals,
       },
     });
 

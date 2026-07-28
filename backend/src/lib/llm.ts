@@ -548,7 +548,6 @@ function safeExtractDomain(url: string | undefined): string | undefined {
 }
 
 export interface SeoScoreLlmResponse {
-  score:     number;
   reasoning: string;
 }
 
@@ -716,7 +715,9 @@ export async function auditPage(
   return extractJson<PageAuditLlmResponse>(raw, context);
 }
 /**
- * Calculates an SEO score for the project based on audit results.
+ * Generates a one-sentence explanation of the mechanically-computed SEO
+ * score for the project. The LLM does NOT invent its own score — it only
+ * explains the deterministic weighted-pass-rate calculation it's given.
  * Used by: technical-audit.job.ts (once per audit run, not per page)
  */
 export async function generateSeoScore(
@@ -734,12 +735,7 @@ export async function generateSeoScore(
     context,
   );
 
-  const result = extractJson<SeoScoreLlmResponse>(raw, context);
-
-  // Guard — clamp score to valid range in case LLM hallucinates
-  result.score = Math.min(100, Math.max(1, Math.round(result.score)));
-
-  return result;
+  return extractJson<SeoScoreLlmResponse>(raw, context);
 }
 
 export interface KnowledgeClassificationLlmResponse {

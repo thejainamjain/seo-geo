@@ -15,7 +15,9 @@
  *       score calculated → status: "completed"
  *
  * SCORE: Stored in summary.score (1–100). Calculated once per audit run.
- *        LLM calibrates based on weighted pass rate + site reputation.
+ *        Deterministic — computed mechanically from real per-factor check
+ *        totals (weighted pass rate). LLM only supplies a one-sentence
+ *        explanation (summary.scoreReasoning), it does not set the number.
  *        No separate field needed — summary is the right semantic home.
  */
 
@@ -31,8 +33,12 @@ export interface IAudit extends Document {
 
   /**
    * Summary counts — computed after audit completes, shown on dashboard.
-   * score: LLM-calibrated SEO score 1–100 (set by technical-audit.job.ts)
-   * scoreReasoning: one-sentence LLM explanation of the score
+   * score: deterministic weighted-pass-rate score 1–100, computed
+   *        mechanically from real per-factor check totals (see
+   *        checkTotals below) by technical-audit.job.ts. Reproducible —
+   *        the same technical state always produces the same score.
+   * scoreReasoning: one-sentence LLM explanation of the score (LLM only
+   *        explains it, does not set the number).
    */
   summary?: {
     totalPages:         number;
@@ -40,6 +46,15 @@ export interface IAudit extends Document {
     totalSchemas:       number;
     totalInternalLinks: number;
     totalFaqs:          number;
+    /**
+     * Real per-CodeChange-type check totals computed at crawl time from
+     * actual page content (e.g. alt_text → total images found, link_title →
+     * total external links found), keyed by CodeChange.type. Set by
+     * site-crawl.job.ts; read by technical-audit.job.ts's
+     * calculateWeightedScore() as the exact denominator per factor, instead
+     * of approximating with an even split across factor types.
+     */
+    checkTotals?:       Record<string, number>;
     score?:             number;  // 1–100, set after technical audit completes
     scoreReasoning?:    string;  // one sentence from LLM
   };
@@ -64,6 +79,7 @@ const AuditSchema = new Schema<IAudit>(
       totalSchemas:       { type: Number, default: 0 },
       totalInternalLinks: { type: Number, default: 0 },
       totalFaqs:          { type: Number, default: 0 },
+      checkTotals:        { type: Schema.Types.Mixed, default: {} },
       score:              { type: Number, min: 1, max: 100 },
       scoreReasoning:     { type: String },
     },

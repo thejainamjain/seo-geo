@@ -117,6 +117,10 @@ export interface PageData {
   // Links
   links:       Array<{ href: string; text: string; isExternal: boolean; title: string }>;
   brokenLinks: Array<{ href: string; statusCode: number }>;  // checked HEAD requests
+  // Unique internal links actually HEAD-checked for this page (0 if the
+  // broken-link check was skipped/disabled). Used as the exact denominator
+  // for the "broken_link" score factor — see checkBrokenLinks' checkedCount.
+  internalLinksChecked: number;
 
   // Images
   images: Array<{ src: string; alt: string }>;
@@ -433,7 +437,11 @@ export function scoreCrawlPriority(
 
 /**
  * Checks a list of links with HEAD requests.
- * Returns only broken ones (4xx/5xx).
+ * Returns the broken ones (4xx/5xx) plus checkedCount — the number of
+ * unique internal links actually checked. checkedCount is the exact
+ * denominator for the "broken_link" score factor (see technical-audit.job.ts
+ * / Audit.summary.checkTotals) — it's the same de-duplicated population
+ * `broken` was filtered from, just not discarded this time.
  *
  * Runs in parallel batches of 5 to stay polite.
  * Skips external links — we don't want to hammer third-party servers.
@@ -442,7 +450,7 @@ export function scoreCrawlPriority(
 export async function checkBrokenLinks(
   links:   Array<{ href: string; isExternal: boolean }>,
   baseUrl: string,
-): Promise<Array<{ href: string; statusCode: number }>> {
+): Promise<{ broken: Array<{ href: string; statusCode: number }>; checkedCount: number }> {
   const broken: Array<{ href: string; statusCode: number }> = [];
 
   const internalLinks = links
@@ -494,7 +502,7 @@ export async function checkBrokenLinks(
     }
   }
 
-  return broken;
+  return { broken, checkedCount: unique.length };
 }
 
 // ── Structured data extraction ─────────────────────────────────────────────
@@ -604,7 +612,7 @@ export function extractFromCheerio(
 ): Omit<PageData,
   | 'statusCode' | 'renderedBy' | 'finalUrl' | 'redirectChain'
   | 'hasRedirectChain' | 'responseTimeMs' | 'pageSizeBytes'
-  | 'depth' | 'inlinkCount' | 'fromSitemap' | 'brokenLinks'
+  | 'depth' | 'inlinkCount' | 'fromSitemap' | 'brokenLinks' | 'internalLinksChecked'
 > & { rawBodyText: string } {
   const title         = $('title').first().text().trim();
   const description   = $('meta[name="description"]').attr('content')?.trim() ?? '';
@@ -725,7 +733,7 @@ export async function extractFromPlaywright(
 ): Promise<Omit<PageData,
   | 'statusCode' | 'renderedBy' | 'finalUrl' | 'redirectChain'
   | 'hasRedirectChain' | 'responseTimeMs'
-  | 'depth' | 'inlinkCount' | 'fromSitemap' | 'brokenLinks'
+  | 'depth' | 'inlinkCount' | 'fromSitemap' | 'brokenLinks' | 'internalLinksChecked'
 > & { rawBodyText: string }> {
   // Wait for JS to finish rendering
   await page.waitForLoadState('networkidle', { timeout: 60_000 });
@@ -815,8 +823,9 @@ export async function crawlSinglePage(
     responseTimeMs,
     pageSizeBytes,
     depth,
-    inlinkCount:     0,
-    fromSitemap:     false,
-    brokenLinks:     [],
+    inlinkCount:          0,
+    fromSitemap:          false,
+    brokenLinks:          [],
+    internalLinksChecked: 0,
   };
 }

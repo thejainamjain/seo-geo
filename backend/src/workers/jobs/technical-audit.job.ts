@@ -40,8 +40,10 @@
  *   Audit is re-fetched on retry — no stale state.
  *
  * SEO SCORE CALCULATION:
- *   Mechanical weighted score computed from CodeChange pass/fail counts.
- *   Then one LLM call calibrates against site reputation → final score 1-100.
+ *   Deterministic weighted score computed from real per-factor check
+ *   totals (Audit.summary.checkTotals, set by site-crawl.job.ts) — final
+ *   score 1-100 is the rounded weighted pass rate. One LLM call adds a
+ *   one-sentence explanation but does not change the number.
  *   Stored in Audit.summary.score and Audit.summary.scoreReasoning.
  *
  * ERROR HANDLING:
@@ -54,6 +56,7 @@
  */
 
 import type { Job } from 'bullmq';
+import { load as loadHtml } from 'cheerio';
 import { logger }          from '@/open-tele';
 import { Audit }           from '@/models/Audit';
 import { CodeChange }      from '@/models/CodeChange';
@@ -106,7 +109,7 @@ const FACTOR_WEIGHTS: Record<string, number> = {
   link_title:         3,
   schema:             9,
   broken_link:        8,
-  internal_link:      4,
+  internal_link:      4,   // Reserved — site-crawl.job.ts never emits this CodeChange type yet, so this currently contributes 0 to the score either way
   thin_content:       7,   // Thin pages hurt rankings significantly
   redirect_chain:     6,   // Multi-hop redirects waste crawl budget
   missing_h1:         8,   // H1 is a primary on-page ranking signal
@@ -130,8 +133,10 @@ interface PageCodeChanges {
 }
 
 interface AuditScoreInput {
-  totalChecks:    number;
-  passedChecks:   number;
+  // type → real total number of checks of that type across the audit
+  // (from Audit.summary.checkTotals, computed by site-crawl.job.ts from
+  // actual page content — not an even split).
+  totalByType:    Record<string, number>;
   failedByType:   Record<string, number>; // type → count of failures
 }
 
@@ -141,21 +146,30 @@ interface AuditScoreInput {
  * Extracts the current title and description from a CodeChange's oldHtml.
  * Falls back to empty string if not parseable.
  *
+ * Uses cheerio rather than regex against oldHtml. oldHtml is always
+ * simple, single-tag content this same codebase generated in
+ * detectCodeChanges (site-crawl.job.ts) — never arbitrary third-party
+ * HTML — so this is a robustness upgrade for edge cases (attributes in a
+ * different order, HTML-entity-encoded content, nested quotes) rather than
+ * a fix for an active bug. If detectCodeChanges' oldHtml format ever
+ * changes to something more complex, this parses it properly instead of
+ * relying on tag order/shape assumptions.
+ *
  * Examples:
  *   oldHtml: '<title>My Page</title>'         → 'My Page'
  *   oldHtml: '<meta name="description" ...>'  → content attribute value
+ *   oldHtml: 'No meta description found'      → '' (not a tag, no match)
  */
 function extractCurrentValueFromOldHtml(type: string, oldHtml: string): string {
   if (!oldHtml) return '';
 
   try {
+    const $ = loadHtml(oldHtml, null, false); // fragment parse, no implicit html/head/body wrapper
     if (type === 'title') {
-      const match = oldHtml.match(/<title[^>]*>(.*?)<\/title>/i);
-      return match?.[1]?.trim() ?? '';
+      return $('title').first().text().trim();
     }
     if (type === 'description') {
-      const match = oldHtml.match(/content="([^"]*)"/i);
-      return match?.[1]?.trim() ?? '';
+      return ($('meta[name="description"]').first().attr('content') ?? '').trim();
     }
   } catch {
     // Non-critical — fall back to empty
@@ -168,25 +182,51 @@ function extractCurrentValueFromOldHtml(type: string, oldHtml: string): string {
  * Example: '<img src="/hero.jpg">' → '/hero.jpg'
  */
 function extractImgSrc(oldHtml: string): string {
-  const match = oldHtml.match(/src="([^"]*)"/i);
-  return match?.[1]?.trim() ?? '';
+  if (!oldHtml) return '';
+  try {
+    const $ = loadHtml(oldHtml, null, false);
+    return ($('img').first().attr('src') ?? '').trim();
+  } catch {
+    return '';
+  }
 }
 
+/**
+ * Extracts href + link text from a link_title CodeChange's oldHtml.
+ * Example: '<a href="https://x.com">Click here</a>' → { href, text }
+ */
 function extractLinkRef(oldHtml: string): { href: string; text: string } | null {
-  const hrefMatch = oldHtml.match(/href="([^"]*)"/i);
-  const textMatch = oldHtml.match(/>([^<]*)<\/a>/i);
-  if (!hrefMatch?.[1]) return null;
-  return { href: hrefMatch[1].trim(), text: textMatch?.[1]?.trim() ?? '' };
+  if (!oldHtml) return null;
+  try {
+    const $ = loadHtml(oldHtml, null, false);
+    const a = $('a').first();
+    const href = a.attr('href');
+    if (!href) return null;
+    return { href: href.trim(), text: a.text().trim() };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Calculates weighted SEO score from audit results.
- * Returns actualScore, totalPossible, weightedPassRate for LLM calibration.
+ * Returns actualScore, totalPossible, and weightedPassRate — the latter is
+ * rounded and clamped to become the final 1-100 score directly (see
+ * runTechnicalAuditJob). All three are also passed to the LLM, which uses
+ * them only to write a one-sentence explanation, not to change the score.
  *
  * Logic:
- *   Each factor has a weight. If it passes on all pages → full weight × pageCount.
- *   If it fails on N pages → those N pages lose the full weight.
+ *   Each factor has a weight and a real total check count for this audit
+ *   (input.totalByType[type], computed by site-crawl.job.ts from actual
+ *   page content — e.g. alt_text's total is the real number of images
+ *   found, not an estimate). If it passes on all of them → full weight ×
+ *   typeTotal. If it fails on N of them → those N lose the full weight.
  *   Score = (sum of passed weights) / (sum of all possible weights) × 100
+ *
+ * Note: 'internal_link' is in FACTOR_WEIGHTS but no check in
+ * detectCodeChanges (site-crawl.job.ts) ever produces that CodeChange
+ * type, so totalByType['internal_link'] is always 0/undefined and it
+ * correctly contributes nothing to either side of the ratio.
  */
 function calculateWeightedScore(input: AuditScoreInput): {
   actualScore:      number;
@@ -197,10 +237,8 @@ function calculateWeightedScore(input: AuditScoreInput): {
   let totalPossible = 0;
 
   for (const [type, weight] of Object.entries(FACTOR_WEIGHTS)) {
-    const failures = input.failedByType[type] ?? 0;
-    // We don't know exact page count per type — use totalChecks as proxy
-    // Each type checked once per page that has that element
-    const typeTotal = weight * (input.totalChecks / Object.keys(FACTOR_WEIGHTS).length);
+    const failures  = input.failedByType[type] ?? 0;
+    const typeTotal = weight * (input.totalByType[type] ?? 0);
     const typePassed = typeTotal - (weight * failures);
     actualScore   += Math.max(0, typePassed);
     totalPossible += typeTotal;
@@ -639,22 +677,26 @@ async function computeAuditScoreInput(
     totalFailed += row.count;
   }
 
-  // totalChecks = pages × factors (approx) — used for weighted calc
-  const totalPages  = await CodeChange.distinct('url', { projectId, auditId }).then(u => u.length);
-  const totalChecks = totalPages * Object.keys(FACTOR_WEIGHTS).length;
+  // Real per-type totals, computed by site-crawl.job.ts from actual page
+  // content and stored on the Audit record. NOT derived from
+  // CodeChange.distinct('url', ...) — that would only count URLs that have
+  // at least one failing check, silently excluding every page with zero
+  // issues and undercounting the true page total.
+  const audit = await Audit.findById(auditId).select('summary.checkTotals').lean();
+  const totalByType = audit?.summary?.checkTotals ?? {};
+  const totalOfAllTypes = Object.values(totalByType).reduce((sum, n) => sum + n, 0);
 
   logger.debug('Audit score input computed', {
     projectId,
     auditId,
-    totalPages,
-    totalChecks,
+    totalOfAllTypes,
     totalFailed,
     failedByType,
+    totalByType,
   });
 
   return {
-    totalChecks,
-    passedChecks: Math.max(0, totalChecks - totalFailed),
+    totalByType,
     failedByType,
   };
 }
@@ -838,43 +880,60 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
   });
 
   // 7. Calculate SEO score
-  //    Step 1: mechanical weighted score from CodeChange counts
-  //    Step 2: one LLM call to calibrate against site reputation
-  let score         = 50; // safe default if LLM call fails
-  let scoreReasoning = 'Score estimated — LLM calibration unavailable';
+  //    Step 1: mechanical weighted score from real per-factor check totals
+  //            (site-crawl.job.ts's checkTotals) — deterministic and
+  //            reproducible: the same technical state always produces the
+  //            same number, and each point change is attributable to an
+  //            actual check passing/failing.
+  //    Step 2: one LLM call for a one-sentence explanation of that score.
+  //            The LLM does NOT set the score — a technical audit score
+  //            shouldn't fluctuate based on an LLM's guess at "site fame"
+  //            (that's how industry SEO audit tools work: Ahrefs Site
+  //            Audit, SEMrush Site Health, Screaming Frog, and Lighthouse
+  //            all compute their health/SEO scores mechanically from
+  //            actual checks, not brand reputation).
+  let score          = 1; // safe default if the mechanical calc itself fails
+  let scoreReasoning = 'Score unavailable — audit calculation failed';
 
   try {
     const scoreInput = await computeAuditScoreInput(projectId, auditId);
 
     const { actualScore, totalPossible, weightedPassRate } = calculateWeightedScore(scoreInput);
 
+    score = Math.min(100, Math.max(1, Math.round(weightedPassRate)));
+
     logger.info('Weighted score calculated', {
       projectId,
       actualScore,
       totalPossible,
       weightedPassRate,
-    });
-
-    const scoreLlm = await generateSeoScore(
-      siteUrl,
-      actualScore,
-      totalPossible,
-      weightedPassRate,
-      projectId,
-    );
-
-    score          = scoreLlm.score;
-    scoreReasoning = scoreLlm.reasoning;
-
-    logger.info('SEO score generated', {
-      projectId,
       score,
-      scoreReasoning,
-      mechanicalPassRate: weightedPassRate,
     });
+
+    // Reasoning is best-effort — if the LLM call fails we keep the real
+    // mechanical score above instead of discarding it.
+    try {
+      const scoreLlm = await generateSeoScore(
+        siteUrl,
+        actualScore,
+        totalPossible,
+        weightedPassRate,
+        projectId,
+      );
+      scoreReasoning = scoreLlm.reasoning;
+    } catch (err) {
+      scoreReasoning = `Weighted pass rate: ${weightedPassRate.toFixed(1)}% (${actualScore}/${totalPossible} weighted checks passed)`;
+      logger.error(
+        err instanceof Error ? err : new Error(String(err)),
+        { projectId, context: 'technical-audit.score-reasoning' },
+      );
+    }
+
+    logger.info('SEO score finalized', { projectId, score, scoreReasoning });
 
   } catch (err) {
-    // Score failure is non-fatal — audit still completes
+    // Mechanical score failure is non-fatal — audit still completes with
+    // the safe default above.
     logger.error(
       err instanceof Error ? err : new Error(String(err)),
       { projectId, context: 'technical-audit.score-calculation' },

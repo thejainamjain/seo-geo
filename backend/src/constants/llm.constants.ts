@@ -1,21 +1,4 @@
 export const PROMPTS = {
-  BUSINESS_DESCRIPTION_SYSTEM: `You are a business analyst. Analyze this website and return a JSON object describing the business. Return ONLY valid JSON, no markdown, no explanation.
-
-Schema:
-{
-  "Name": "company name",
-  "Website": "url",
-  "Country": "country name",
-  "Language": "language",
-  "Description": "3-4 sentence description",
-  "ProductTiers": "1-3 sentence product tiers",
-  "Audiences": ["up to 10 target customer categories"],
-  "Competitors": ["up to 10 competitor URLs"]
-}`,
-
-  BUSINESS_DESCRIPTION_USER: (url: string, crawledContent: string) =>
-  `Website URL: ${url}\nCrawled content:\n${crawledContent.slice(0, 12000)}`,
-
   BLOG_GENERATION_SYSTEM: (customerProfile: string, keyword: string, sourceAnalysis: string, knowledgeChunks: string, contactUrl: string) =>
     `You are an expert content writer producing SEO-optimized blog posts. Write in HTML.
 
@@ -154,15 +137,11 @@ Schema:
   CUSTOMER_PROFILE_USER: (url: string, crawledContent: string) =>
   `Website URL: ${url}\nCrawled content:\n${crawledContent.slice(0, 12000)}`,
 
-  SEO_SCORE_SYSTEM: `You are an SEO scoring expert. Your job is to provide an SEO score (1 to 100) based on the website's reputation, inferred traffic, and SEO performance.
-  - For globally famous websites (e.g., Google, Facebook, Semrush): 90-100
-  - For well-known but not globally famous websites: 80-90
-  - For newer or niche websites, rely on the total possible SEO score and weighted pass rate. Higher total possible = higher final score. Higher weighted pass rate = higher final score.
-  - Most niche or newer websites: 60-80
-  Return ONLY a JSON object: { "score": <number 1-100>, "reasoning": "<one sentence>" }`,
+  SEO_SCORE_SYSTEM: `You are a technical SEO analyst. You will be given a website's mechanically-computed SEO score, derived from real technical checks (title tags, meta descriptions, alt text, broken links, schema markup, page speed, etc.) run against every crawled page. The score itself is already final — your only job is to explain it in one sentence, grounded in the numbers you're given (e.g. what the weighted pass rate implies, roughly how many checks passed vs failed). Do not propose a different score. Do not factor in brand reputation, fame, or inferred traffic — this is a technical audit, not a brand-authority rating.
+  Return ONLY a JSON object: { "reasoning": "<one sentence>" }`,
 
   SEO_SCORE_USER: (url: string, actualScore: number, totalPossible: number, weightedPassRate: number) =>
-    `Please evaluate the SEO performance of the following website:\nURL: ${url}\nSEO score: ${actualScore} out of ${totalPossible}\n(Weighted pass rate: ${weightedPassRate.toFixed(1)}%)`,
+    `Website: ${url}\nMechanical SEO score: ${actualScore} out of ${totalPossible}\nWeighted pass rate: ${weightedPassRate.toFixed(1)}%\n\nExplain this score in one sentence.`,
 
   MARKET_SIZING_SYSTEM: `You are an SEO market sizing expert. Analyze this business and generate 20 initial target keywords with estimated traffic data. Return ONLY valid JSON, no markdown, no explanation.
 

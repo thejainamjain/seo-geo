@@ -155,8 +155,18 @@ function extractCoreKeyword(
     return fromDescription;
   }
 
-  // Priority 5: domain name — last resort
-  const fromDomain = domain.replace(/\.(com|in|net|org|co\.in|io)$/, '').replace(/-/g, ' ');
+  // Priority 5: domain name — last resort. project.domain is already a
+  // bare hostname (protocol/www stripped at creation time in
+  // project.service.ts), so the first dot-separated label is the brand
+  // name regardless of TLD — more robust than a hardcoded TLD suffix list,
+  // which missed increasingly-common TLDs like .ai/.co/.dev/.app and left
+  // a literal dot in the "keyword" for any of them (e.g. "mybrand.ai" as
+  // a search query). Still a genuinely weak SEO signal if actually
+  // reached (mashed-together domains like "quantumleap.com" can't be
+  // split into real words without real NLP segmentation, which isn't
+  // worth adding for a rarely-hit last-resort branch) — flagging that
+  // limitation stays valid, this only fixes the TLD-handling part of it.
+  const fromDomain = domain.split('.')[0].replace(/-/g, ' ');
   logger.warn('Core keyword falling back to domain name', { projectId, keyword: fromDomain });
   return fromDomain;
 }

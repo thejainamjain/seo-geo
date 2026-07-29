@@ -3,7 +3,8 @@
 **Files:** `workers/jobs/content-generation.job.ts` (on-demand SERP+blog+publish
 per keyword), `workers/jobs/cms-publish.job.ts` (cron-based bulk publish),
 `workers/jobs/global-scheduler.job.ts` (cron fan-out), `workers/content-generation.worker.ts`
-**Status: ✅ Very solid engineering overall. 🔴 One real scheduling bug found.**
+**Status: ✅ Very solid engineering overall. Scheduling bug resolved —
+`publishHourUtc` API-exposure remains open as a separate product decision.**
 
 ## What it does (confirmed architecture, not the stale README diagram)
 These three README "phases" aren't separate pipeline steps — they're one
@@ -34,45 +35,51 @@ picture — this doc covers what happens inside these two paths specifically.
   only ever touch `status: 'ready'` blogs, so there's no double-publish risk
   between the two paths — confirmed by reading both.
 
-## 🔴 Real bug: `publishHourUtc` > 17 is silently unreachable
+## ✅ RESOLVED — `publishHourUtc` > 17 used to be silently unreachable
 
 Traced this across `scheduler.worker.ts`, `global-scheduler.job.ts`, and
 `cms-publish.job.ts`:
 
-1. The **only** cron trigger for CMS publishing fires once a day, at a
-   **fixed** `'0 17 * * 1-6'` pattern (17:00 UTC, Mon–Sat) — registered as a
-   singleton in `scheduler.worker.ts`. There is no second, later cron.
-2. `global-scheduler.job.ts`'s `runCmsPublishScheduler()` then checks, per
-   project, `hourUtc < publishHourUtc → skip`. This correctly supports a
-   project wanting to publish **earlier** in the day (e.g.
-   `publishHourUtc: 9` — the 17:00 UTC trigger still fires after 9, so
-   `hourUtc(17) >= publishHourUtc(9)` passes).
-3. But if a project sets `publishHourUtc` to anything **after 17:00 UTC**
-   (e.g. `20`), the single daily trigger at 17:00 UTC will always evaluate
-   `hourUtc(17) < publishHourUtc(20)` → skip — every single day, forever.
-   There's no later trigger to ever catch it. Blogs for that project would
-   sit in `ready` status indefinitely unless the user publishes manually or
-   happens to click "Generate" on a keyword at exactly the right moment
-   (the on-demand `handlePublish` path checks real current time, so it
-   *can* publish outside the cron window — but only at the instant of
-   generation, not on an ongoing schedule).
+1. The **only** cron trigger for CMS publishing used to fire once a day, at
+   a **fixed** `'0 17 * * 1-6'` pattern (17:00 UTC, Mon–Sat) — registered as
+   a singleton in `scheduler.worker.ts`. No second, later cron existed.
+2. `global-scheduler.job.ts`'s `runCmsPublishScheduler()` checked, per
+   project, `hourUtc < publishHourUtc → skip` — correct for a project
+   publishing **earlier** than 17:00 UTC, but any project with
+   `publishHourUtc` set **after** 17 (e.g. `20`) would always evaluate
+   `hourUtc(17) < publishHourUtc(20)` → skip, every day, forever. No later
+   trigger would ever catch it.
 
-**This is a real, user-reachable bug if `publishHourUtc` is exposed as a
-freely-editable setting in the CMS connect/settings UI** (the backend
-README documents `PATCH /cms` accepting `allowedPublishDays` and implies
-`publishHourUtc` is configurable via `CmsConfig`, though the exact PATCH
-body fields should be double-checked against `cms.handler.ts` directly).
+**Fix (verified in current code, `lib/cms-publish-scheduler.ts`):** matches
+the third option from the original list below — the cron schedule is now
+derived per-project instead of being one shared fixed trigger.
+`buildCronPattern(publishHourUtc, allowedPublishDays)` builds
+`` `0 ${publishHourUtc} * * ${days}` `` and `cms.service.ts` registers each
+project's own BullMQ Job Scheduler at its own hour via
+`upsertCmsPublishSchedule`, reconciled idempotently on every worker boot
+(`reconcileCmsPublishSchedules()`). A project publishing at `20:00 UTC` now
+gets its own trigger at that hour — no dependency on the old 17:00 trigger
+at all.
 
-**Fix options** (flagging for a decision):
+**Still genuinely open, separate from the bug above**: `publishHourUtc`
+itself still isn't exposed via the API (confirmed via repo-wide grep —
+it's never written anywhere in the backend, only read, always falling back
+to the model default of `17`). Whether/how to expose it remains a
+deliberate, separate product decision, not a code fix.
+
+<details>
+<summary>Original fix options considered (for reference)</summary>
+
 - Validate `publishHourUtc` server-side to reject/clamp values > 17 (or
   whatever the actual cron hour is), with a clear error message.
 - Or run the cron trigger hourly instead of once daily, and let the
-  per-project hour check do the real filtering (matches the comment's own
-  "controlled, rate-limited, observable" fan-out philosophy, just at finer
-  granularity).
-- Or make the cron schedule itself derived from the set of distinct
+  per-project hour check do the real filtering.
+- **Or make the cron schedule itself derived from the set of distinct
   `publishHourUtc` values in use, registering one repeatable job per
-  distinct hour.
+  distinct hour** — this is the one that was implemented, per-project
+  rather than per-distinct-hour, which is an even finer-grained version of
+  the same idea.
+</details>
 
 ## Other observations (minor)
 - ✅ **RESOLVED** — `isNowAllowedPublishTime` was duplicated verbatim across
@@ -147,11 +154,13 @@ was deliberately held back — worth a direct question rather than assuming
 either way. If/when it is exposed, the fix above becomes necessary before
 launch, not optional.
 
-## Open question for the team
+## Open question for the team — still genuinely open
 - Was `publishHourUtc` meant to be user-editable (the code strongly
-  suggests yes) and just not wired into the API yet, or is a fixed 17:00
-  UTC publish time intentional for now? If the former, the cron-frequency
-  fix should happen in the same change that exposes the field.
+  suggests yes) and just not wired into the API yet, or is a fixed
+  default of 17:00 UTC intentional for now? (The scheduling mechanism
+  itself no longer constrains this either way — see RESOLVED section
+  above — so this is purely an API/product-surface decision now, not
+  something that needs to land alongside another fix.)
 - Confirmed via repo-wide grep: `publishHourUtc` is never **written**
   anywhere in the backend — only read (always falling back to the model
   default of `17`). So it's fully dormant today, not partially exposed

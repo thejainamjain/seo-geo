@@ -1,10 +1,11 @@
 # Orchestration Layer — Backend Audit
 
 **Files:** `workers/seo-pipeline.worker.ts`, `workers/scheduler.worker.ts`,
-`workers/content-generation.worker.ts`, `constants/seo-pipeline.constants.ts`,
-plus three **dead files**: `workers/cms-publish.worker.ts`,
-`workers/geo-analytics.worker.ts`, `workers/gsc-monitor.worker.ts`
-**Status: ✅ Core design is sound and deliberate. 🟡 One real cleanup item found.**
+`workers/content-generation.worker.ts`, `constants/seo-pipeline.constants.ts`
+(the three files once flagged as dead — `workers/cms-publish.worker.ts`,
+`workers/geo-analytics.worker.ts`, `workers/gsc-monitor.worker.ts` — no
+longer exist in the repo; see resolved note below)
+**Status: ✅ Core design is sound and deliberate. No open items.**
 
 ## Actual architecture (confirmed by tracing imports, not just filenames)
 
@@ -78,9 +79,11 @@ in `scheduler.worker.ts`).
   publish, 2 for GEO/GSC which are LLM-heavy) — deliberate resource
   budgeting, not arbitrary.
 
-## Open question for the team
-- Should the three dead worker files be deleted, or is there a reason
-  they're being kept (e.g. mid-refactor, or reserved for a future
-  standalone-deploy scenario where scheduler and per-queue workers run in
-  separate processes)?
-  
+## Open question for the team — resolved, no longer applicable
+The three files this question referred to (`workers/cms-publish.worker.ts`,
+`workers/geo-analytics.worker.ts`, `workers/gsc-monitor.worker.ts`) no
+longer exist in the repo — confirmed via `ls workers/*.worker.ts`, which
+now lists only 5 files, and a repo-wide grep for each filename turns up
+nothing but unrelated log-context string labels in `scheduler.worker.ts`.
+Their logic is already fully consolidated there, matching this doc's own
+"Actual architecture" section above. Nothing to delete, nothing open.

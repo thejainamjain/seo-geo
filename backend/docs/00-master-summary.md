@@ -197,6 +197,49 @@ automatically retries any that failed the first time.
     migration for pre-existing FAQ/TLDR rows — not needed for this
     project's data.
 
+## ✅ Resolved — sixth pass: remaining low-priority items + doc-sync cleanup
+
+20. **`freeTrialAvailable` false-positive** (`docs/02-...`) — the
+    `.includes('yes')` check misclassified answers like "No free trial,
+    but yes a demo is available" as `true`. Fixed by constraining the LLM
+    prompt to require an exact Yes/No prefix and switching to
+    `.startsWith('yes')`.
+21. **`extractCoreKeyword`'s domain-fallback TLD handling** (`docs/05-...`)
+    — hardcoded TLD suffix list missed `.ai`/`.co`/`.dev`/`.app`, leaving a
+    literal dot in the fallback keyword. Fixed by taking the first
+    dot-separated label instead (works for any TLD). The deeper limitation
+    — mashed-together domains without dashes can't be split into real
+    words without real NLP — is a documented, accepted tradeoff, not
+    fixed (not worth it for a rarely-hit last-resort branch).
+22. **Three "dead worker files"** (`docs/03-...`) — turned out to not
+    exist in the repo at all anymore; the open question about deleting
+    them is moot. No code change, doc corrected.
+23. **Doc-sync cleanup**: `docs/05-...`, `docs/06-...`, `docs/07-...` all
+    had stale "🔴 still open" / unanswered-question sections left in place
+    from earlier audit passes, even though the underlying code was already
+    fixed in a later pass (confirmed by reading current source, not just
+    trusting the doc text) — competitor-discovery's merge-not-overwrite
+    fix, keyword-status `$setOnInsert` fix, and the per-project
+    `publishHourUtc` BullMQ scheduler were all already live in code. Synced
+    all three docs to match reality. (Checked `docs/08-...` too — it
+    already had the correct resolved-summary-plus-preserved-history
+    structure, nothing to fix there.)
+
+**Explicitly not touched, flagged instead of guessed at:**
+- **Framer/RankAI domain** (#14) — out of scope per your direction this
+  round.
+- **Approve/reject access restriction** (`docs/13-...`) — the existing code
+  comment explicitly argues against building this in isolation ("no
+  broader reviewer-role concept in the product yet... would be scope
+  creep") and every other project-scoped service in the codebase uses the
+  same any-org-member access model. Implementing it here alone would
+  reverse a documented deliberate decision and make this one endpoint
+  inconsistent with the rest of the app — needs your call, not a
+  unilateral change.
+- **`GROQ_MODEL` choice**, **`MAX_CRAWL_PAGES`/billing tie-in**, and
+  **Wix/GoHighLevel live API verification** — all explicitly product
+  decisions or require live credentials I don't have from here.
+
 ## What's genuinely solid, no action needed
 - Site crawl (3-pass sitemap-first strategy, documented real bug fixes)
 - Technical audit LLM pipeline (per-page batching; deterministic score that

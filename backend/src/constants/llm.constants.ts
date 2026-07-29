@@ -111,7 +111,7 @@ Schema:
       "WhatTheBusinessSells": "one sentence string",
       "KeyFeaturesAndBenefits": "newline-separated string e.g. Feature 1: benefit\\nFeature 2: benefit",
       "ProductTiersAndInclusions": "plain text string e.g. Free: basic access. Pro: $29/mo full access.",
-      "FreeTrialOrDemoAvailability": "string e.g. Yes, 14-day free trial",
+      "FreeTrialOrDemoAvailability": "string that MUST start with exactly 'Yes' or 'No', followed by details, e.g. 'Yes, 14-day free trial' or 'No free trial, but a demo is available on request'",
       "TotalLifetimeValuePerClient": "string"
     },
     "TargetCustomers": {

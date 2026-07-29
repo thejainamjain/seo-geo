@@ -3,7 +3,7 @@
 **Files:** `workers/jobs/keyword-research.job.ts`, `models/Keyword.ts`,
 `lib/pipeline-resume.ts` (for the retry-safety question below)
 **Pipeline position:** Step 5 of the 5-step auto-chain (last automatic step)
-**Status: ✅ Strong implementation. One edge-case retry risk worth a decision.**
+**Status: ✅ Strong implementation. No open items.**
 
 ## What it does
 Combines two keyword sources — LLM "market sizing" (20 fast seed keywords,
@@ -79,7 +79,9 @@ correctly stay excluded from being re-scheduled too.
 - Week scheduling (`assignWeekNumbers`) is a clean, deterministic
   calculation — no gaps there.
 
-## Open question for the team
+## Open question for the team — resolved
 - Should keyword status be protected from being reset by a forced
-  `KEYWORD_RESEARCH` resume, or is this an accepted risk given it's an
-  admin-only action?
+  `KEYWORD_RESEARCH` resume? Answered above in the RESOLVED section: yes,
+  fixed via `$setOnInsert` — a forced resume no longer touches any
+  keyword that's already progressed past `upcoming`.
+  

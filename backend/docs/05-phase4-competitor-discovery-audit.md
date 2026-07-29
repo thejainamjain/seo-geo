@@ -85,10 +85,10 @@ appears to work: asking an LLM to *name* competitors risks hallucinated
 companies that don't actually rank for anything. Using real-time SERP
 results as ground truth avoids that. Good design choice, not a gap.
 
-## 🔴 Real conflict: overwrites the user's manual "Competition" onboarding step
+## ✅ RESOLVED — overwrote the user's manual "Competition" onboarding step
 
-Traced the actual execution order across three files to confirm this isn't
-a false alarm:
+Traced the actual execution order across three files to confirm this
+wasn't a false alarm:
 
 1. Onboarding **Step 4 — "Competition"** (per `backend/README.md` API
    reference) lets the user manually enter their own known competitors, and
@@ -100,38 +100,48 @@ a false alarm:
    kicks off `TECHNICAL_AUDIT`, which auto-chains into `COMPETITOR_DISCOVERY`
    right after — **after** the user has already submitted their manual
    competitor list.
-3. `competitor-discovery.job.ts` then does
+3. `competitor-discovery.job.ts` used to do
    `$set: { 'competition.mainCompetitors': competitorDomains }`
-   unconditionally — the code comment even says this is intentional
-   ("Always overwrites mainCompetitors — safe on retry... fresh SERP data on
-   retry is correct behaviour"). That reasoning is correct for *retries* of
-   this same job, but doesn't account for the fact that the field was
-   already populated by a **human**, not just a previous run of this job.
+   unconditionally, replacing the user's manual input with no merge, no
+   flag, and no way for the user to know their input didn't stick.
 
-**Net effect:** if a user manually types in "our real competitors are X, Y,
-Z" during onboarding, that list is silently replaced by whatever SerpAPI
-returns for the auto-extracted core keyword — with no merge, no flag, and no
-way for the user to know their input didn't stick. If the auto-extracted
-core keyword is a weak signal (e.g. it fell back to `whatItSells` or even
-the domain name, per the extraction priority chain), the replacement data
-could be lower quality than what the user actually knows about their own
-market.
+**Fix (verified in current code, `competitor-discovery.job.ts`):**
+`mainCompetitors` is now `CompetitorEntry[]` with source tracking, and the
+job merges SERP-discovered domains into the existing list (deduped by
+domain) instead of overwriting it — `existingEntries` from
+`BusinessContext.competition.mainCompetitors` are read first and merged
+with the new SERP results, matching the "merge, don't overwrite" option
+from the original options list below. Frontend read-side
+(`business/page.tsx`, `onboarding/page.tsx`) needs updating to the new
+`CompetitorEntry[]` object shape — tracked separately, not a backend gap.
 
-## Options to fix (flagging for a decision, not picking one)
-- **Merge, don't overwrite**: append SERP-discovered domains to the user's
-  list (dedup), rather than replacing it.
+<details>
+<summary>Original options considered (for reference)</summary>
+
+- **Merge, don't overwrite** (chosen): append SERP-discovered domains to
+  the user's list (dedup), rather than replacing it.
 - **Don't overwrite if user-provided**: track provenance (e.g. a
   `mainCompetitorsSource: 'user' | 'serp'` field) and only auto-overwrite if
   the current value came from SERP, never if a human entered it.
 - **Show both, let user choose**: store SERP results in a separate field
   (e.g. `suggestedCompetitors`) and leave `mainCompetitors` as the
   user-editable source of truth.
+</details>
 
 ## Other observations (minor, not blockers)
-- `extractCoreKeyword`'s fallback chain is reasonable, but the last resort
-  (turning the domain name into a keyword, e.g. `mydomain.com` →
-  `mydomain`) is a genuinely weak SEO signal if it's ever reached — worth
-  confirming how often it actually falls this far in practice.
+- ✅ **PARTIALLY RESOLVED** — `extractCoreKeyword`'s last-resort domain-name
+  fallback used a hardcoded TLD suffix list (`.com`/`.in`/`.net`/`.org`/
+  `.co.in`/`.io` only) that missed increasingly-common TLDs like `.ai`/`.co`/
+  `.dev`/`.app`, leaving a literal dot in the fallback "keyword" for any of
+  them (e.g. `"mybrand.ai"` used verbatim as a search query). Fixed by
+  taking the first dot-separated label instead (`project.domain` is already
+  a bare hostname, protocol/www stripped at creation time), which handles
+  any TLD without needing a maintained list. **Not fully solved, by
+  design**: mashed-together domains without dashes (e.g. `quantumleap.com`
+  → `quantumleap`) still can't be split into real words without actual NLP
+  word-segmentation, which isn't worth adding for a rarely-hit last-resort
+  branch — that part of the original observation stands as a known,
+  accepted limitation.
 - ✅ **RESOLVED** — `REGION_TO_COUNTRY` (the shared map in `lib/serp.ts`,
   `deriveCountryCodeFromRegions`) covered only 9 countries; any other region
   silently defaulted to `'us'`. Expanded to ~40 countries covering the
@@ -148,8 +158,8 @@ market.
 - Zero-competitors-found case is handled gracefully (warns, doesn't block
   pipeline) — good defensive behavior, not a gap.
 
-## Open question for the team
+## Open question for the team — resolved
 - Which of the three fix options above matches the intended product
-  behavior — should the user's manual competitor input always win, always
-  lose to fresh SERP data, or should both be shown separately?
+  behavior? Answered: "merge, don't overwrite" — see the RESOLVED section
+  above.
   

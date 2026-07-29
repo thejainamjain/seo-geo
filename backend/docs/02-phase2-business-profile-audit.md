@@ -67,7 +67,11 @@ wizard.
 - Idempotent via `upsert: true` — safe on BullMQ retry, correctly noted that
   a retried LLM call isn't literally idempotent but produces an equivalent
   result, which is an acceptable tradeoff for this use case.
-- `freeTrialAvailable` inference is a crude `.includes('yes')` string check
-  on the LLM's free-text answer — will misclassify anything not literally
-  containing "yes" (e.g. "Yes, 14 days" works, "Free tier available" would
-  not). Minor accuracy gap, not a bug. **Still open.**
+- ✅ **RESOLVED** — `freeTrialAvailable` inference used to be a crude
+  `.includes('yes')` substring check on the LLM's free-text answer, with a
+  real false-positive: an answer like "No free trial, but yes a demo is
+  available" contains "yes" and was misclassified as `true`. Fixed by
+  constraining the prompt to require the answer start with exactly "Yes"
+  or "No" (`CUSTOMER_PROFILE_SYSTEM`), and switching the check to a
+  precise `.startsWith('yes')` prefix match instead of a substring search.
+  

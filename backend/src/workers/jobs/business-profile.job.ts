@@ -155,8 +155,14 @@ function mapLlmResponseToBusinessContext(
       whatItSells:            normalizeToString(llm.ProductOrService?.WhatTheBusinessSells),
       keyFeatures:            normalizeToString(llm.ProductOrService?.KeyFeaturesAndBenefits),
       pricingTiers:           normalizeToString(llm.ProductOrService?.ProductTiersAndInclusions),
+      // Prompt requires the LLM to start this string with exactly "Yes" or
+      // "No" (see CUSTOMER_PROFILE_SYSTEM) specifically so this can be a
+      // precise prefix check instead of a loose substring match. The old
+      // `.includes('yes')` had a real false-positive: an answer like "No
+      // free trial, but yes a demo is available" contains "yes" and would
+      // have been misclassified as freeTrialAvailable: true.
       freeTrialAvailable:     typeof llm.ProductOrService?.FreeTrialOrDemoAvailability === 'string'
-                                ? llm.ProductOrService.FreeTrialOrDemoAvailability.toLowerCase().includes('yes')
+                                ? llm.ProductOrService.FreeTrialOrDemoAvailability.trim().toLowerCase().startsWith('yes')
                                 : false,
       lifetimeValuePerClient: normalizeToString(llm.ProductOrService?.TotalLifetimeValuePerClient),
     },

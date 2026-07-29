@@ -842,6 +842,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     // FAQ stubs
     const faqDocs = allPages.map(page => ({
       projectId,
+      auditId,
       sourceUrl: page.url,
       status:    'pending',
     }));
@@ -852,6 +853,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     // TLDR stubs
     const tldrDocs = allPages.map(page => ({
       projectId,
+      auditId,
       sourceUrl: page.url,
       status:    'pending',
     }));

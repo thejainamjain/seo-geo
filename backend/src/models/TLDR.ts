@@ -15,6 +15,7 @@ import mongoose, { Document, Schema, Types } from "mongoose";
 
 export interface ITLDR extends Document {
   projectId: Types.ObjectId;
+  auditId:   Types.ObjectId;
   sourceUrl: string;
   status: "pending" | "applied" | "disabled" | "failed";
   oldHtml?: string;
@@ -30,6 +31,7 @@ export interface ITLDR extends Document {
 const TLDRSchema = new Schema<ITLDR>(
   {
     projectId: { type: Schema.Types.ObjectId, ref: "Project", required: true },
+    auditId:   { type: Schema.Types.ObjectId, ref: "Audit", required: true },
     sourceUrl: { type: String, required: true },
     status: {
       type: String,
@@ -46,5 +48,6 @@ const TLDRSchema = new Schema<ITLDR>(
 
 TLDRSchema.index({ projectId: 1, status: 1 });
 TLDRSchema.index({ projectId: 1, sourceUrl: 1 });
+TLDRSchema.index({ auditId: 1 });
 
 export const TLDR = mongoose.model<ITLDR>("TLDR", TLDRSchema);

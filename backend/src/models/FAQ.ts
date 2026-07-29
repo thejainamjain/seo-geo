@@ -22,6 +22,7 @@ import mongoose, { Document, Schema, Types } from "mongoose";
 
 export interface IFAQ extends Document {
   projectId: Types.ObjectId;
+  auditId:   Types.ObjectId;
 
   /** The page URL where this FAQ block should be injected */
   sourceUrl: string;
@@ -50,6 +51,7 @@ export interface IFAQ extends Document {
 const FAQSchema = new Schema<IFAQ>(
   {
     projectId: { type: Schema.Types.ObjectId, ref: "Project", required: true },
+    auditId:   { type: Schema.Types.ObjectId, ref: "Audit", required: true },
     sourceUrl: { type: String, required: true },
     status: {
       type: String,
@@ -72,5 +74,6 @@ const FAQSchema = new Schema<IFAQ>(
 
 FAQSchema.index({ projectId: 1, status: 1 });
 FAQSchema.index({ projectId: 1, sourceUrl: 1 });
+FAQSchema.index({ auditId: 1 });
 
 export const FAQ = mongoose.model<IFAQ>("FAQ", FAQSchema);

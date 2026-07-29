@@ -471,15 +471,14 @@ Response `200`: `{ codeChange }` — dismiss a suggested fix without applying it
 
 ### `GET /audit/faqs?status=&page=&limit=`
 Response `200`: `{ faqs: [...], total, page, limit, auditReady: boolean }` —
-same `auditReady` gating as code-changes above. **Caveat:** unlike
-code-changes, FAQs aren't scoped to one specific audit run internally (no
-`auditId` field on the model yet) — if a project is ever re-crawled, this
-could theoretically mix in FAQs from an earlier run. Known, flagged,
-not yet fixed — low-impact today since re-crawls aren't a common path.
+same `auditReady` gating as code-changes above. Scoped to the latest
+completed audit run specifically (`FAQ` now has a real `auditId` field,
+same as `CodeChange`) — results from an earlier audit run never mix in
+with the current one, even across re-crawls.
 
 ### `GET /audit/tldrs?status=&page=&limit=`
 Response `200`: `{ tldrs: [...], total, page, limit, auditReady: boolean }` —
-same `auditReady` gating and same multi-audit caveat as FAQs above.
+same `auditReady` gating and audit-scoping as FAQs above.
 
 ---
 

@@ -483,6 +483,7 @@ async function applyCodeChanges(
  */
 async function applyFaqUpdate(
   projectId:    string,
+  auditId:      string,
   url:          string,
   llmResult:    PageAuditLlmResponse,
 ): Promise<void> {
@@ -510,7 +511,7 @@ async function applyFaqUpdate(
   ].join('\n');
 
   await FAQ.findOneAndUpdate(
-    { projectId, sourceUrl: url, status: 'pending' },
+    { projectId, auditId, sourceUrl: url, status: 'pending' },
     {
       $set: {
         questions: llmResult.faqQuestions,
@@ -525,6 +526,7 @@ async function applyFaqUpdate(
  */
 async function applyTldrUpdate(
   projectId: string,
+  auditId:   string,
   url:       string,
   llmResult: PageAuditLlmResponse,
 ): Promise<void> {
@@ -538,7 +540,7 @@ async function applyTldrUpdate(
   ].join('\n');
 
   await TLDR.findOneAndUpdate(
-    { projectId, sourceUrl: url, status: 'pending' },
+    { projectId, auditId, sourceUrl: url, status: 'pending' },
     {
       $set: {
         tldrText: llmResult.tldrText,
@@ -836,13 +838,13 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
 
       // Apply FAQ update
       if (llmResult.faqQuestions && llmResult.faqQuestions.length > 0) {
-        await applyFaqUpdate(projectId, url, llmResult);
+        await applyFaqUpdate(projectId, auditId, url, llmResult);
         totalFaqsUpdated++;
       }
 
       // Apply TLDR update
       if (llmResult.tldrText) {
-        await applyTldrUpdate(projectId, url, llmResult);
+        await applyTldrUpdate(projectId, auditId, url, llmResult);
         totalTldrsUpdated++;
       }
 

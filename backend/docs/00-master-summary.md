@@ -152,9 +152,58 @@ automatically retries any that failed the first time.
     pass after both crawl passes complete so every page's inlink count
     reflects links found by either pass.
 
+## ✅ Resolved — technical audit scoring accuracy + determinism, fifth pass
+
+18. **Technical audit score was an even-split approximation, and could be
+    overridden by an LLM's brand-reputation guess** (`docs/04-phase3-technical-audit-audit.md`).
+    Two things fixed together since they compound:
+    - `calculateWeightedScore` divided `totalChecks` evenly across all 16
+      factor types instead of using real per-factor totals. Fixed properly:
+      `site-crawl.job.ts` now computes real totals from actual page data
+      (images found, external links found, structured-data blocks found,
+      internal links actually checked, and the right page-count per
+      conditional factor) into a new `Audit.summary.checkTotals` field, and
+      scoring reads from that. Surfaced two follow-on bugs while tracing
+      this through: `totalPages` was silently undercounted (derived from
+      `CodeChange.distinct('url', ...)`, which only sees pages with at
+      least one failure), and `FACTOR_WEIGHTS`'s `internal_link` entry was
+      dead weight — no check ever produces that CodeChange type.
+    - The LLM calibration step's prompt scored famous sites 90–100 and
+      niche sites 60–80 by inferred brand reputation, only loosely using
+      the real pass rate for "newer" sites — meaning the score could shift
+      with no underlying technical change, and wasn't reproducible. Changed
+      to match how real SEO audit tools work (Ahrefs, SEMrush, Screaming
+      Frog, Lighthouse all score mechanically): the final score is now
+      `Math.round(weightedPassRate)` directly, and the LLM only writes a
+      one-sentence explanation of it, with its own prompt now explicit
+      about not proposing a different number or factoring in reputation.
+    - Also replaced the three `oldHtml` regex-extraction helpers in the
+      same file with `cheerio` parsing — low risk as written (`oldHtml` is
+      simple, single-tag content this codebase generates itself), but more
+      robust against future format changes and fixes a minor pre-existing
+      gap (regex never decoded HTML entities; cheerio does).
+
+19. **`FAQ`/`TLDR` had no `auditId` field**, unlike `CodeChange`
+    (`docs/04-phase3-technical-audit-audit.md`, `docs/15-...`) — a known,
+    previously-flagged gap, now closed. Added the field to both models
+    (required, matching `CodeChange`'s pattern), populated at stub-creation
+    time in `site-crawl.job.ts`, and threaded through
+    `applyFaqUpdate`/`applyTldrUpdate`'s update filters and
+    `listFAQs`/`listTLDRs`'s query filters. Turned up a real correctness
+    bug the missing field caused, beyond just list-scoping: without
+    `auditId`, a re-crawl's `technical-audit.job.ts` run could match and
+    overwrite a stale `pending` stub left over from an earlier, incomplete
+    audit run at the same URL instead of its own current stub. No
+    migration for pre-existing FAQ/TLDR rows — not needed for this
+    project's data.
+
 ## What's genuinely solid, no action needed
 - Site crawl (3-pass sitemap-first strategy, documented real bug fixes)
-- Technical audit LLM pipeline (per-page batching, graceful score fallback)
+- Technical audit LLM pipeline (per-page batching; deterministic score that
+  only falls back to a safe default if the mechanical calculation itself
+  fails, and to a plain-text pass-rate summary if only the LLM explanation
+  call fails — a valid score is never discarded just because the
+  explanation call did)
 - Content generation idempotency (status guards, blog-exists guards, clean
   rollback on failure)
 - GSC monitor (real OAuth refresh, real API integration, no shortcuts)

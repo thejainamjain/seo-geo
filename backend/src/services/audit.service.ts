@@ -145,14 +145,10 @@ export const auditService = {
       return { faqs: [], total: 0, page: query.page, limit: query.limit, auditReady: false };
     }
 
-    // NOTE: unlike CodeChange, the FAQ model has no auditId field, so this
-    // can only scope by projectId, not to this specific audit run — if a
-    // project is ever re-crawled, FAQs from an earlier run could still mix
-    // in here. Flagging rather than silently fixing further: adding
-    // auditId to FAQ would need a schema change + migration, out of scope
-    // for this fix (which is about the completion-gating, not this
-    // separate multi-audit scoping gap).
-    const filter: Record<string, unknown> = { projectId };
+    // Scoped to the latest completed audit specifically (FAQ now has a
+    // real auditId field, same as CodeChange) — not just projectId, so
+    // results from an earlier audit run never mix in with the current one.
+    const filter: Record<string, unknown> = { projectId, auditId: latestAudit._id };
     if (query.status) filter['status'] = query.status;
 
     const skip = (query.page - 1) * query.limit;
@@ -180,8 +176,9 @@ export const auditService = {
       return { tldrs: [], total: 0, page: query.page, limit: query.limit, auditReady: false };
     }
 
-    // Same NOTE as listFAQs above — TLDR also has no auditId field.
-    const filter: Record<string, unknown> = { projectId };
+    // Scoped to the latest completed audit specifically (TLDR now has a
+    // real auditId field, same as CodeChange/FAQ).
+    const filter: Record<string, unknown> = { projectId, auditId: latestAudit._id };
     if (query.status) filter['status'] = query.status;
 
     const skip = (query.page - 1) * query.limit;

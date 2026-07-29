@@ -64,5 +64,16 @@ redirect chains, thin content, slow pages, missing metadata, invalid schema).
 4. **No stated limit/backoff behavior if the target site itself rate-limits or blocks the crawler mid-run** beyond generic `failedRequestHandler` logging into `skippedUrls`. Worth a manual test against a real site with aggressive bot protection (e.g. Cloudflare) — the file header actually already admits this ("WHAT WE STILL CANNOT HANDLE: Cloudflare Enterprise bot protection"), so it's a known, documented limitation rather than a silent gap.
 5. **`MAX_CRAWL_PAGES` default of 50** (from `.env`) — fine for MVP/demo, but worth deciding explicitly what the production limit should be and how it interacts with billing/plan tiers, since this isn't currently tied to any subscription/plan concept in the models reviewed so far (to be confirmed once we look at `Project`/`Organization` models).
 
+6. ✅ **RESOLVED** — `Audit.summary` now also stores `checkTotals`: real
+   per-CodeChange-type totals computed from the actual crawled page data
+   (total images, total external links, total structured-data blocks, total
+   unique internal links HEAD-checked, and page counts for the page-level
+   and conditional factors). This replaced an even-split approximation that
+   `technical-audit.job.ts`'s scoring step used to rely on — full write-up
+   (including the `checkBrokenLinks()` return-shape change and the
+   `PageData.internalLinksChecked` field this needed) is in
+   `docs/04-phase3-technical-audit-audit.md`, since the scoring logic itself
+   lives there.
+
 ## Open questions for the team
 - What should `MAX_CRAWL_PAGES` be tied to — a flat config value, or plan-based limits?

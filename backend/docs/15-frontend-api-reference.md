@@ -393,16 +393,52 @@ Response `200`: `{ run }` — most recent run only, `null` if none yet.
 ## Google Search Console (`/projects/:projectId/gsc`)
 
 ### `GET /gsc`
-Response `200`: `{ gsc: status }` — connection status object.
+Response `200`: `{ gsc: { connected: boolean; expiryDate: string | null } }`.
 
 ### `POST /gsc/connect`
-Request: `{ accessToken: string; refreshToken: string; expiryDate: Date }`
-— these come from the frontend's own Google OAuth flow (not implemented
-in this backend — the backend just stores and later refreshes the
-resulting tokens). Response `200`: `{ message: 'GSC connected' }`.
+Request: `{ accessToken: string; refreshToken: string; expiryDate: Date }`.
+Low-level "store tokens you already have" endpoint — in practice, nothing
+should call this directly anymore now that the real OAuth flow below
+exists; it's what the OAuth callback calls internally. Response `200`:
+`{ message: 'GSC connected' }`.
 
 ### `DELETE /gsc/disconnect`
 Response `200`: `{ message: 'GSC disconnected' }`.
+
+---
+
+## Google Search Console OAuth (`/gsc`) — top-level, NOT project-nested, public
+
+**Why not JSON:** both routes are full browser redirects, not something a
+frontend calls via axios/fetch. Point the browser at `GET /gsc/connect`
+(e.g. `window.location.href = ...`); everything after that is between the
+browser, this backend, and Google.
+
+### `GET /gsc/connect?projectId=&token=`
+Starts the flow. `token` is the normal login JWT, passed as a query param
+instead of an `Authorization` header because a full-page navigation can't
+carry custom headers. Verifies the token and project access, then `302`s
+to Google's consent screen (`access_type=offline&prompt=consent`, so a
+refresh token is issued every time, even on a reconnect).
+Errors surface as a normal `401`/`403`/`404` JSON error if the token or
+project access check fails (this part isn't a redirect yet).
+
+### `GET /gsc/callback?code=&state=`
+Google redirects here after consent. Exchanges `code` for tokens, verifies
+the signed `state` param (10-minute expiry, carries which user/project
+started the flow), stores the tokens via the same path as `POST
+/gsc/connect` above, then redirects the browser to
+`{FRONTEND_URL}/projects/:projectId/settings?gsc=connected`. Any failure
+in this step (consent denied, expired state, Google's token exchange
+failing, no `refresh_token` returned) redirects to `...?gsc=error` (or
+`/projects?gsc=error` if the state itself couldn't be parsed) instead of
+returning a raw JSON error — there's no API client here to show it to,
+just a browser tab. **Frontend should read the `gsc` query param on the
+settings page and show a toast/banner accordingly.**
+
+Requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+(must exactly match what's registered in the Google Cloud Console OAuth
+client), and `FRONTEND_URL` to be set.
 
 ---
 

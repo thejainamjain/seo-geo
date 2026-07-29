@@ -29,3 +29,23 @@ export function verifyToken(token: string): JwtPayload {
     throw new UnauthorizedError('Invalid or expired token');
   }
 }
+
+/**
+ * Short-lived signed state for redirect-based OAuth flows (GSC connect).
+ * Not a login token — carries whatever context the callback needs to
+ * identify who/what the flow was started for, since the callback request
+ * comes straight from the OAuth provider with no Authorization header.
+ */
+export function signOAuthState<T extends object>(payload: T, expiresIn: string): string {
+  if (!SECRET) throw new Error('JWT_SECRET is not defined');
+  return jwt.sign(payload, SECRET, { expiresIn } as jwt.SignOptions);
+}
+
+export function verifyOAuthState<T>(token: string): T {
+  if (!SECRET) throw new Error('JWT_SECRET is not defined');
+  try {
+    return jwt.verify(token, SECRET) as T;
+  } catch {
+    throw new UnauthorizedError('Invalid or expired OAuth state');
+  }
+}

@@ -18,6 +18,12 @@ import type {
   CmsConfig, 
   CmsConnectPayload, 
   CmsUpdatePayload, TLDR, FAQ,
+  KnowledgeFile,
+  Optimization,
+  OptimizationStatus,
+  GscStatus,
+  FreeAuditPayload,
+  FreeAuditResult,
  } from '@/types/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -183,4 +189,105 @@ export const cmsApi = {
     apiClient
       .delete<{ message: string }>(`/projects/${projectId}/cms/disconnect`)
       .then(r => r.data),
+};
+
+// ── Knowledge files ─────────────────────────────────────────────────────────
+
+export const knowledgeApi = {
+  list: (projectId: string) =>
+    apiClient
+      .get<{ files: KnowledgeFile[] }>(`/projects/${projectId}/knowledge`)
+      .then(r => r.data.files),
+
+  // multipart/form-data — field name must be exactly 'file' (multer config
+  // on the backend). Don't set a Content-Type header here: axios detects
+  // the FormData body and lets the browser set 'multipart/form-data' with
+  // the correct boundary itself; setting it manually breaks the upload.
+  upload: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return apiClient
+      .post<{ file: KnowledgeFile }>(`/projects/${projectId}/knowledge`, formData)
+      .then(r => r.data.file);
+  },
+
+  remove: (projectId: string, fileId: string) =>
+    apiClient
+      .delete<{ file: KnowledgeFile }>(`/projects/${projectId}/knowledge/${fileId}`)
+      .then(r => r.data.file),
+};
+
+// ── Content optimization review queue ────────────────────────────────────────
+
+export const optimizationsApi = {
+  // status defaults to 'pending_review' server-side if omitted — i.e. the
+  // actual review queue, not full history.
+  list: (
+    projectId: string,
+    params?: { status?: OptimizationStatus; blogId?: string; page?: number; limit?: number },
+  ) =>
+    apiClient
+      .get<{ optimizations: Optimization[]; total: number; page: number; limit: number }>(
+        `/projects/${projectId}/optimizations`,
+        { params },
+      )
+      .then(r => r.data),
+
+  get: (projectId: string, optimizationId: string) =>
+    apiClient
+      .get<{ optimization: Optimization }>(`/projects/${projectId}/optimizations/${optimizationId}`)
+      .then(r => r.data.optimization),
+
+  approve: (projectId: string, optimizationId: string) =>
+    apiClient
+      .patch<{ optimization: Optimization; message: string }>(
+        `/projects/${projectId}/optimizations/${optimizationId}/approve`,
+      )
+      .then(r => r.data),
+
+  reject: (projectId: string, optimizationId: string) =>
+    apiClient
+      .patch<{ optimization: Optimization; message: string }>(
+        `/projects/${projectId}/optimizations/${optimizationId}/reject`,
+      )
+      .then(r => r.data),
+};
+
+// ── Google Search Console ────────────────────────────────────────────────────
+
+export const gscApi = {
+  getStatus: (projectId: string) =>
+    apiClient.get<{ gsc: GscStatus }>(`/projects/${projectId}/gsc`).then(r => r.data.gsc),
+
+  /**
+   * NOT an axios call — this builds the URL for a real browser navigation
+   * (`window.location.href = gscApi.getConnectUrl(projectId)` or an
+   * `<a href>`), which is why the JWT has to be appended as a query param
+   * instead of the usual Authorization header: a full-page redirect can't
+   * carry a custom header. The backend route (`GET /gsc/connect`) verifies
+   * it there, then 302s to Google's consent screen, then (`GET
+   * /gsc/callback`) back to this project's settings page once tokens are
+   * stored.
+   */
+  getConnectUrl: (projectId: string): string => {
+    const baseURL = apiClient.defaults.baseURL ?? '';
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+
+    const url = new URL(`${baseURL}/gsc/connect`);
+    url.searchParams.set('projectId', projectId);
+    if (token) url.searchParams.set('token', token);
+    return url.toString();
+  },
+
+  disconnect: (projectId: string) =>
+    apiClient
+      .delete<{ message: string }>(`/projects/${projectId}/gsc/disconnect`)
+      .then(r => r.data),
+};
+
+// ── Free audit tool (public marketing lead-gen tool, no auth) ───────────────
+
+export const toolsApi = {
+  runFreeAudit: (payload: FreeAuditPayload) =>
+    apiClient.post<FreeAuditResult>('/tools/audit', payload).then(r => r.data),
 };

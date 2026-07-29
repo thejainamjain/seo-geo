@@ -2,8 +2,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/stores/auth.store';
 import { useRouter } from 'next/navigation';
-import type { BlogStatus, PipelineStep, CmsConnectPayload, CmsUpdatePayload } from '@/types/api';
-import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, cmsApi } from '@/lib/api';
+import type { BlogStatus, PipelineStep, CmsConnectPayload, CmsUpdatePayload, OptimizationStatus, FreeAuditPayload } from '@/types/api';
+import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, cmsApi, knowledgeApi, optimizationsApi, gscApi, toolsApi } from '@/lib/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -302,5 +302,116 @@ export function useDisconnectCms(projectId: string) {
       void queryClient.invalidateQueries({ queryKey: ['cms', projectId] });
       void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
     },
+  });
+}
+
+// ── Knowledge files ─────────────────────────────────────────────────────────
+
+export function useKnowledgeFiles(projectId: string) {
+  return useQuery({
+    queryKey: ['knowledge', projectId],
+    queryFn:  () => knowledgeApi.list(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+export function useUploadKnowledgeFile(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (file: File) => knowledgeApi.upload(projectId, file),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['knowledge', projectId] });
+    },
+  });
+}
+
+export function useDeleteKnowledgeFile(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (fileId: string) => knowledgeApi.remove(projectId, fileId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['knowledge', projectId] });
+    },
+  });
+}
+
+// ── Content optimization review queue ────────────────────────────────────────
+
+export function useOptimizations(
+  projectId: string,
+  params?: { status?: OptimizationStatus; blogId?: string; page?: number; limit?: number },
+) {
+  return useQuery({
+    queryKey: ['optimizations', projectId, params],
+    queryFn:  () => optimizationsApi.list(projectId, params),
+    enabled:  !!projectId,
+  });
+}
+
+export function useOptimization(projectId: string, optimizationId: string) {
+  return useQuery({
+    queryKey: ['optimizations', projectId, optimizationId],
+    queryFn:  () => optimizationsApi.get(projectId, optimizationId),
+    enabled:  !!projectId && !!optimizationId,
+  });
+}
+
+export function useApproveOptimization(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (optimizationId: string) => optimizationsApi.approve(projectId, optimizationId),
+    onSuccess: (_, optimizationId) => {
+      void queryClient.invalidateQueries({ queryKey: ['optimizations', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['optimizations', projectId, optimizationId] });
+    },
+  });
+}
+
+export function useRejectOptimization(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (optimizationId: string) => optimizationsApi.reject(projectId, optimizationId),
+    onSuccess: (_, optimizationId) => {
+      void queryClient.invalidateQueries({ queryKey: ['optimizations', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['optimizations', projectId, optimizationId] });
+    },
+  });
+}
+
+// ── Google Search Console ────────────────────────────────────────────────────
+
+export function useGscStatus(projectId: string) {
+  return useQuery({
+    queryKey: ['gsc', projectId],
+    queryFn:  () => gscApi.getStatus(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+// No useConnectGsc mutation — connecting is a full-page redirect
+// (window.location.href = gscApi.getConnectUrl(projectId)), not something
+// React Query manages. See gscApi.getConnectUrl's doc comment.
+
+export function useDisconnectGsc(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => gscApi.disconnect(projectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['gsc', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
+  });
+}
+
+// ── Free audit tool (public marketing lead-gen tool) ─────────────────────────
+
+export function useRunFreeAudit() {
+  return useMutation({
+    mutationFn: (payload: FreeAuditPayload) => toolsApi.runFreeAudit(payload),
   });
 }

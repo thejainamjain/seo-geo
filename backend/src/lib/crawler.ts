@@ -18,14 +18,18 @@
  *      CodeChange type 'page_speed'. Technical audit uses this for scoring.
  *
  *   3. REDIRECT CHAIN DETECTION
- *      Follows 301/302/307/308 manually and records the full chain.
- *      A 3-hop redirect is a real SEO problem — flagged as CodeChange type
- *      'redirect_chain'. Industry standard: flag anything >1 hop.
- *
+ *      Records the full hop-by-hop chain (URL + real status code per hop),
+ *      not just "was there a redirect". A 3-hop redirect is a real SEO
+ *      problem — flagged as CodeChange type 'redirect_chain'. Industry
+ *      standard: flag anything >1 hop.
+ * 
  *   4. BROKEN LINK DETECTION
  *      For every <a href> found on a page, makes a HEAD request to check
- *      status. 404/410/5xx → CodeChange type 'broken_link'. Cheerio pass
- *      only — Playwright is too slow for bulk link checking.
+ *      status. 404/410/5xx → CodeChange type 'broken_link'. Runs for BOTH
+ *      the Cheerio and Playwright passes (see extractFromPlaywright /
+ *      Playwright pass notes below), and shares one cache Map across the
+ *      entire crawl run so shared nav/footer links (present on every page)
+ *      are HEAD-checked once instead of once per page.
  *
  *   5. STRUCTURED DATA EXTRACTION
  *      Extracts and parses JSON-LD from <script type="application/ld+json">.
@@ -64,7 +68,7 @@
 import robotsParser from 'robots-parser';
 import { CheerioCrawler, PlaywrightCrawler, RequestQueue } from 'crawlee';
 import type { CheerioAPI } from 'cheerio';
-import type { Page } from 'playwright';
+import type { Page, Request as PWRequest, Response as PWResponse } from 'playwright';
 import { logger } from '@/open-tele';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -436,12 +440,36 @@ export function scoreCrawlPriority(
 // ── Broken link checker ────────────────────────────────────────────────────
 
 /**
+ * Shared cache type for checkBrokenLinks(): href → last-checked statusCode.
+ * Pass ONE instance of this, created once per crawl run, into every
+ * checkBrokenLinks() call across all pages (both Cheerio and Playwright
+ * passes) so links shared across pages (nav, footer, sidebar — which
+ * realistically appear on every page of a site) are HEAD-checked exactly
+ * once per crawl instead of once per page.
+ */
+export type BrokenLinkCache = Map<string, number>;
+
+/**
  * Checks a list of links with HEAD requests.
  * Returns the broken ones (4xx/5xx) plus checkedCount — the number of
- * unique internal links actually checked. checkedCount is the exact
+ * unique internal links referenced on THIS page. checkedCount is the exact
  * denominator for the "broken_link" score factor (see technical-audit.job.ts
  * / Audit.summary.checkTotals) — it's the same de-duplicated population
  * `broken` was filtered from, just not discarded this time.
+ *
+ * CRAWL-WIDE CACHE: if `cache` is provided (and shared across every page's
+ * call within the same crawl run — see site-crawl.job.ts), a link already
+ * checked on an earlier page reuses that result instead of being
+ * HEAD-requested again. Nav/footer links repeat on every page of a typical
+ * site, so without this a 50-page crawl with a 20-link nav could issue up
+ * to 1000 HEAD requests for what are really only ~20 unique URLs — slower,
+ * and impolite to the target server. `checkedCount` still reflects every
+ * unique internal link on THIS page (whether freshly checked or served
+ * from cache), since that's the correct denominator for this page's score.
+ * If `cache` is omitted, a call-local Map is used (equivalent to the old
+ * always-fresh behavior) — this is what crawlSinglePage() relies on, since
+ * competitor/SERP single-page checks have no multi-page crawl to share a
+ * cache across.
  *
  * Runs in parallel batches of 5 to stay polite.
  * Skips external links — we don't want to hammer third-party servers.
@@ -450,6 +478,7 @@ export function scoreCrawlPriority(
 export async function checkBrokenLinks(
   links:   Array<{ href: string; isExternal: boolean }>,
   baseUrl: string,
+  cache:   BrokenLinkCache = new Map(),
 ): Promise<{ broken: Array<{ href: string; statusCode: number }>; checkedCount: number }> {
   const broken: Array<{ href: string; statusCode: number }> = [];
 
@@ -469,9 +498,21 @@ export async function checkBrokenLinks(
 
   const unique = [...new Set(internalLinks)];
 
+  // Split into links already resolved earlier in this crawl (served from
+  // cache, no request) vs links seen for the first time (need a real check).
+  const toCheck: string[] = [];
+  for (const href of unique) {
+    const cached = cache.get(href);
+    if (cached !== undefined) {
+      if (cached === 0 || cached >= 400) broken.push({ href, statusCode: cached });
+    } else {
+      toCheck.push(href);
+    }
+  }
+
   const BATCH_SIZE = 5;
-  for (let i = 0; i < unique.length; i += BATCH_SIZE) {
-    const batch = unique.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < toCheck.length; i += BATCH_SIZE) {
+    const batch = toCheck.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(async (href) => {
         try {
@@ -491,13 +532,14 @@ export async function checkBrokenLinks(
     for (const result of results) {
       if (result.status === 'fulfilled') {
         const { href, statusCode } = result.value;
+        cache.set(href, statusCode);
         if (statusCode === 0 || statusCode >= 400) {
           broken.push({ href, statusCode });
         }
       }
     }
 
-    if (i + BATCH_SIZE < unique.length) {
+    if (i + BATCH_SIZE < toCheck.length) {
       await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
@@ -564,7 +606,10 @@ export function isAuthGated(url: string, textContent: string): boolean {
 }
 
 export function isBotBlocked(statusCode: number): boolean {
-  return statusCode === 403 || statusCode === 429;
+  // 503 added: Cloudflare and similar bot-challenge/interstitial pages
+  // commonly respond with 503 Service Unavailable (e.g. "Checking your
+  // browser..." pages), not just 403/429.
+  return statusCode === 403 || statusCode === 429 || statusCode === 503;
 }
 
 /**
@@ -751,6 +796,45 @@ export async function extractFromPlaywright(
     ...extracted,
     pageSizeBytes: Buffer.byteLength(html, 'utf-8'),
   };
+}
+
+/**
+ * Builds the real, hop-by-hop redirect chain for a Playwright navigation.
+ *
+ * WHY THIS EXISTS / WHY IT'S ACCURATE:
+ *   Playwright's browser engine (via CDP) already follows HTTP redirects
+ *   itself during `page.goto()` and retains the full chain internally.
+ *   `response.request()` gives the Request for the FINAL response;
+ *   `Request.redirectedFrom()` walks backwards through every intermediate
+ *   hop; each intermediate hop's own `.response()` gives its REAL status
+ *   code (301/302/307/308 — whatever it actually was, never assumed).
+ */
+export async function buildRedirectChainFromPlaywrightResponse(
+  response: PWResponse | null,
+): Promise<{ chain: RedirectHop[]; finalUrl: string }> {
+  if (!response) return { chain: [], finalUrl: '' };
+
+  // Walk backwards from the final request to the original one.
+  const hopsNewestFirst: PWRequest[] = [];
+  let current: PWRequest | null = response.request().redirectedFrom();
+  while (current) {
+    hopsNewestFirst.push(current);
+    current = current.redirectedFrom();
+  }
+  const hopsChronological = hopsNewestFirst.reverse();
+
+  const chain: RedirectHop[] = [];
+  for (const hop of hopsChronological) {
+    let hopResponse: PWResponse | null = null;
+    try {
+      hopResponse = await hop.response();
+    } catch {
+      // Hop response no longer retrievable — skip rather than guess a code.
+    }
+    chain.push({ url: hop.url(), statusCode: hopResponse?.status() ?? 0 });
+  }
+
+  return { chain, finalUrl: response.url() };
 }
 
 // ── Single page crawl (for competitor / SERP jobs) ────────────────────────

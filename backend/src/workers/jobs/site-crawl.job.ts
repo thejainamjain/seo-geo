@@ -60,13 +60,14 @@ import {
   isBotBlocked,
   isJsRendered,
   getUrlDepth,
-  CRAWLER_UA,
+  followRedirectChain,
+  buildRedirectChainFromPlaywrightResponse,
   REQUEST_DELAY_MS,
   SLOW_PAGE_MS,
   THIN_CONTENT_WORDS,
   MAX_PAGE_SIZE_BYTES,
 } from '../../lib/crawler';
-import type { PageData, RobotsChecker } from '../../lib/crawler';
+import type { PageData, RobotsChecker, BrokenLinkCache } from '../../lib/crawler';
 import type { PipelineJobData } from '../seo-pipeline.worker';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -312,12 +313,13 @@ function detectCodeChanges(
 // ── Pass 1: CheerioCrawler ─────────────────────────────────────────────────
 
 async function runCheerioCrawler(
-  baseUrl:     string,
-  domain:      string,
-  robots:      RobotsChecker,
-  sitemapUrls: Set<string>,
-  projectId:   string,
-  auditId:     string,
+  baseUrl:         string,
+  domain:          string,
+  robots:          RobotsChecker,
+  sitemapUrls:     Set<string>,
+  projectId:       string,
+  auditId:         string,
+  brokenLinkCache: BrokenLinkCache,
 ): Promise<{
   crawledPages:   PageData[];
   jsRenderedUrls: string[];
@@ -337,10 +339,18 @@ async function runCheerioCrawler(
   // Seed with sitemap URLs (already normalised in discoverSitemapUrls)
   const sitemapArr = [...sitemapUrls];
   if (sitemapArr.length > 0) {
-    // Sort by depth (shallower = higher priority)
+    // Sort using the same crawl-budget scorer used later to gate
+    // link-discovered URLs (scoreCrawlPriority — depth + sitemap + inlink
+    // bonuses, asset/query-string penalties), rather than a separate
+    // depth-only sort. inlinkCounts is empty at this point (crawl hasn't
+    // started), so its contribution is 0 for every URL here — that's
+    // expected, since inlinks can only be known once pages are crawled.
     const sorted = sitemapArr
       .filter(u => !isAssetUrl(u) && robots.isAllowed(u))
-      .sort((a, b) => getUrlDepth(a) - getUrlDepth(b))
+      .sort((a, b) =>
+        scoreCrawlPriority(b, baseUrl, sitemapUrls, inlinkCounts) -
+        scoreCrawlPriority(a, baseUrl, sitemapUrls, inlinkCounts),
+      )
       .slice(0, MAX_CRAWL_PAGES);
 
     for (const url of sorted) {
@@ -362,7 +372,7 @@ async function runCheerioCrawler(
     minConcurrency: 1,
     maxConcurrency: 3,
 
-    requestHandler: async ({ $, request, enqueueLinks, response }) => {
+    requestHandler: async ({ $, request, enqueueLinks, response, body }) => {
       const url         = request.url;
       const normUrl     = normalizeUrl(url, domain);
       const statusCode  = response?.statusCode ?? 0;
@@ -430,11 +440,14 @@ async function runCheerioCrawler(
         }
       }
 
-      // Broken link check (async, runs after extraction)
+      // Broken link check (async, runs after extraction). Shares
+      // brokenLinkCache across the whole crawl run — see checkBrokenLinks'
+      // JSDoc for why (repeat nav/footer links get checked once, not once
+      // per page).
       let brokenLinks: PageData['brokenLinks'] = [];
       let internalLinksChecked = 0;
       if (CHECK_BROKEN_LINKS) {
-        const result = await checkBrokenLinks(pageFields.links, baseUrl);
+        const result = await checkBrokenLinks(pageFields.links, baseUrl, brokenLinkCache);
         brokenLinks = result.broken;
         internalLinksChecked = result.checkedCount;
         if (brokenLinks.length > 0) {
@@ -442,30 +455,53 @@ async function runCheerioCrawler(
         }
       }
 
-      let responseTimeMs = 0;
-      let pageSizeBytes  = 0;
+      // Response timing, page size, and redirect detection — all derived
+      // from the request Crawlee ALREADY made for this page, not a second
+      // fetch. CheerioCrawler is backed by `got-scraping`; Crawlee's
+      // HttpClient abstraction re-exposes the real `got` response object
+      // (via `Object.assign(result, response)` in
+      // @crawlee/core/http_clients/got-scraping-http-client.js), so
+      // `response.timings.phases.total` and `response.redirectUrls` are
+      // genuinely present at runtime even though they aren't part of
+      // Crawlee's public TS types — verified against the installed
+      // `got`/`crawlee` source, not assumed.
+      const gotResponse = response as unknown as {
+        url?: string;
+        timings?: { phases?: { total?: number } };
+        redirectUrls?: URL[];
+      };
+      const responseTimeMs = gotResponse.timings?.phases?.total ?? 0;
+      // Real transferred size for the ACTUAL response — not a
+      // `Content-Length` header, which can be absent (chunked transfer) or
+      // reflect the pre-decompression size on gzip/br responses.
+      const pageSizeBytes = Buffer.byteLength(body ?? '');
+
+      // `response.url` is `got`'s own record of the final URL after
+      // following redirects for THIS request — already known, no extra
+      // request needed, and used as the fallback below even if the
+      // per-hop walk fails.
+      let finalUrl = gotResponse.url ? normalizeUrl(gotResponse.url, domain) : normUrl;
       let redirectChain: PageData['redirectChain'] = [];
-      let hasRedirectChain = false;
-      let finalUrl = normUrl;
+      let hasRedirectChain = (gotResponse.redirectUrls?.length ?? 0) > 0;
 
-      try {
-        const start = Date.now();
-        const headRes = await fetch(url, {
-          method:   'HEAD',
-          redirect: 'follow',
-          headers:  { 'User-Agent': CRAWLER_UA },
-          signal:   AbortSignal.timeout(10_000),
-        });
-        responseTimeMs = Date.now() - start;
-        finalUrl       = normalizeUrl(headRes.url, domain);
-        pageSizeBytes  = parseInt(headRes.headers.get('content-length') ?? '0', 10);
-
-        if (finalUrl !== normUrl) {
-          hasRedirectChain = true;
-          redirectChain    = [{ url: normUrl, statusCode: 301 }];
+      if (hasRedirectChain) {
+        // A redirect genuinely happened on THIS request — Crawlee doesn't
+        // expose got's per-hop status codes (only the final one + the list
+        // of hop URLs), so getting the real 301/302/307/308 for each hop
+        // requires one authoritative extra walk. This only runs for pages
+        // that actually redirected, not for every page. If it fails for any
+        // reason, we still keep `hasRedirectChain = true` and the already-known
+        // `finalUrl` from `response.url` above — only the per-hop detail is
+        // lost, never the fact that a redirect happened at all.
+        try {
+          const redirect = await followRedirectChain(url);
+          finalUrl      = normalizeUrl(redirect.finalUrl, domain);
+          redirectChain = redirect.chain;
+        } catch (err) {
+          logger.warn('Redirect chain walk failed — keeping hop-count-only redirect flag', {
+            projectId, url, error: err instanceof Error ? err.message : String(err),
+          });
         }
-      } catch {
-        // HEAD failed — non-critical
       }
 
       crawledPages.push({
@@ -511,14 +547,15 @@ async function runCheerioCrawler(
 // ── Pass 2: PlaywrightCrawler ──────────────────────────────────────────────
 
 async function runPlaywrightCrawler(
-  jsRenderedUrls: string[],
-  domain:         string,
-  baseUrl:        string,
-  robots:         RobotsChecker,
-  sitemapUrls:    Set<string>,
-  inlinkCounts:   Map<string, number>,
-  projectId:      string,
-  auditId:        string,
+  jsRenderedUrls:  string[],
+  domain:          string,
+  baseUrl:         string,
+  robots:          RobotsChecker,
+  sitemapUrls:     Set<string>,
+  inlinkCounts:    Map<string, number>,
+  projectId:       string,
+  auditId:         string,
+  brokenLinkCache: BrokenLinkCache,
 ): Promise<{
   crawledPages: PageData[];
   skippedUrls:  Array<{ url: string; reason: string }>;
@@ -571,12 +608,19 @@ async function runPlaywrightCrawler(
       }
 
       try {
-        const startTime = Date.now();
-
-        // FIX: extractFromPlaywright now uses page.content() + Cheerio internally.
-        // No more page.evaluate() — no more __name ReferenceError.
         const { rawBodyText, ...extracted } = await extractFromPlaywright(page, normUrl, domain);
-        const responseTimeMs = Date.now() - startTime;
+
+        // Real network response time, from Playwright's own Resource Timing
+        // API data (Request.timing()) — NOT the time to run extraction /
+        // wait for networkidle, which is what this used to measure (a
+        // startTime taken AFTER navigation had already completed, then
+        // diffed against the time extraction finished). `timing().responseEnd`
+        // is the elapsed ms from request start to the full response being
+        // received — the same "how slow did the server respond" signal the
+        // Cheerio pass measures, just from Playwright's native API instead
+        // of a synthetic request. No page.evaluate() involved.
+        const timing = response ? response.request().timing() : null;
+        const responseTimeMs = timing && timing.responseEnd >= 0 ? Math.round(timing.responseEnd) : 0;
 
         // FIX: Enqueue internal links found on JS-rendered pages so we discover
         // pages that are only reachable via JS-rendered pages.
@@ -617,7 +661,7 @@ async function runPlaywrightCrawler(
         let brokenLinks: PageData['brokenLinks'] = [];
         let internalLinksChecked = 0;
         if (CHECK_BROKEN_LINKS) {
-          const result = await checkBrokenLinks(extracted.links, baseUrl);
+          const result = await checkBrokenLinks(extracted.links, baseUrl, brokenLinkCache);
           brokenLinks = result.broken;
           internalLinksChecked = result.checkedCount;
           if (brokenLinks.length > 0) {
@@ -625,8 +669,15 @@ async function runPlaywrightCrawler(
           }
         }
 
-        const finalUrl = normalizeUrl(page.url(), domain);
-        const hasRedirectChain = finalUrl !== normUrl;
+        // Real, hop-by-hop redirect chain — Playwright's browser engine
+        // already followed every hop during navigation and retains it;
+        // buildRedirectChainFromPlaywrightResponse() reads the REAL status
+        // code of each hop via Request.redirectedFrom()/Response.status(),
+        // not a synthetic single "301" guess. Zero extra requests.
+        const { chain: redirectChain, finalUrl: rawFinalUrl } =
+          await buildRedirectChainFromPlaywrightResponse(response ?? null);
+        const finalUrl = normalizeUrl(rawFinalUrl || page.url(), domain);
+        const hasRedirectChain = redirectChain.length > 0;
 
         crawledPages.push({
           ...extracted,
@@ -634,7 +685,7 @@ async function runPlaywrightCrawler(
           finalUrl,
           statusCode,
           renderedBy:      'playwright',
-          redirectChain:   hasRedirectChain ? [{ url: normUrl, statusCode: 301 }] : [],
+          redirectChain,
           hasRedirectChain,
           responseTimeMs,
           // pageSizeBytes now comes from extracted (computed from the
@@ -705,9 +756,15 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
 
     logger.info('Sitemap discovery complete', { projectId, sitemapUrlCount: sitemapUrls.size });
 
+    // Shared across BOTH passes for the lifetime of this crawl run, so a
+    // link appearing in the nav/footer of every page (Cheerio- or
+    // Playwright-rendered) is HEAD-checked once total, not once per page.
+    // See checkBrokenLinks()'s JSDoc in lib/crawler.ts for the reasoning.
+    const brokenLinkCache: BrokenLinkCache = new Map();
+
     // Pass 1 — Cheerio
     const cheerioResult = await runCheerioCrawler(
-      baseUrl, domain, robots, sitemapUrls, projectId, auditId,
+      baseUrl, domain, robots, sitemapUrls, projectId, auditId, brokenLinkCache,
     );
 
     logger.info('Cheerio pass complete', {
@@ -727,6 +784,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       cheerioResult.inlinkCounts,
       projectId,
       auditId,
+      brokenLinkCache,
     );
 
     logger.info('Playwright pass complete', {

@@ -293,3 +293,97 @@ export interface TLDR {
   createdAt: string;
   appliedAt?: string;
 }
+
+// ── Knowledge files ───────────────────────────────────────────────────────
+
+export type KnowledgeFileStatus = 'pending' | 'processing' | 'ready' | 'error';
+
+export interface KnowledgeFile {
+  _id:          string;
+  projectId:    string;
+  originalName: string;
+  mimeType:     string;
+  sizeBytes:    number;
+  storageUrl:   string;
+  status:       KnowledgeFileStatus;
+  errorMessage?: string;
+  // AI classification results — set once status reaches 'ready'
+  classifiedDocumentKind?:  string;
+  classifiedUsageTags?:     string[];
+  classifiedAudience?:      string;
+  classifiedTrustLevel?:    string;
+  classificationReasoning?: string;
+  classifiedAt?:            string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Content optimization review queue ───────────────────────────────────
+
+export type OptimizationStatus = 'pending_review' | 'applied' | 'rejected';
+
+// The populated blogId — only title/slug/status on the list endpoint;
+// content/description are also populated on the single-optimization getOne.
+export interface OptimizationBlogRef {
+  _id:         string;
+  title:       string;
+  slug:        string;
+  status:      BlogStatus;
+  content?:    string;
+  description?: string;
+}
+
+export interface ContentOptimizationProposal {
+  originalContent:  string;
+  optimizedContent: string;
+  changesSummary:   string;   // plain-language summary of what changed and why
+  learningIds:      string[];
+}
+
+export interface SeoTagOptimizationProposal {
+  originalTitle?:        string;
+  optimizedTitle?:       string;
+  originalDescription?:  string;
+  optimizedDescription?: string;
+  originalSchema?:       Record<string, unknown>;
+  optimizedSchema?:      Record<string, unknown>;
+  baselineCtr?:          number;
+  appliedAt?:            string;   // set once this tier auto-applied
+  rolledBackAt?:         string;   // set if GSC performance got worse after
+}
+
+export interface Optimization {
+  _id:        string;
+  blogId:     OptimizationBlogRef;
+  projectId:  string;
+  // Present only if this run proposed a content rewrite (needs review).
+  contentOptimization?: ContentOptimizationProposal;
+  // Present only if this run proposed a tag/meta change (auto-applied already).
+  seoTagOptimization?:  SeoTagOptimizationProposal;
+  // True if a content approval hasn't been pushed to the live CMS post yet.
+  cmsResyncPending?: boolean;
+  status:     OptimizationStatus;
+  createdAt:  string;
+}
+
+// ── Google Search Console ─────────────────────────────────────────────────
+
+export interface GscStatus {
+  connected:  boolean;
+  expiryDate: string | null;
+}
+
+// ── Free audit tool (public, no auth) ─────────────────────────────────────
+
+export type AuditLeadBusinessType = 'over_150k' | 'under_150k' | 'agency';
+
+export interface FreeAuditPayload {
+  domain:       string;
+  email:        string;
+  firstName:    string;
+  businessType: AuditLeadBusinessType;
+}
+
+export interface FreeAuditResult {
+  message: string;
+}

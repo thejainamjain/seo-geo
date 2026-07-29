@@ -73,6 +73,16 @@ const config = {
   google: {
     clientId:     () => require_env('GOOGLE_CLIENT_ID'),
     clientSecret: () => require_env('GOOGLE_CLIENT_SECRET'),
+    redirectUri:  () => require_env('GOOGLE_REDIRECT_URI'),
+  },
+
+  frontend: {
+    // Where the GSC OAuth callback redirects the browser back to once
+    // tokens are stored. Not required for the rest of the app (CORS origins
+    // in app.ts are separate/hardcoded), so it's not a require_env — a
+    // missing OAuth callback redirect should degrade gracefully to
+    // localhost in dev rather than crash the whole server on boot.
+    url: process.env.FRONTEND_URL ?? 'http://localhost:3001',
   },
 
   unsplash: {

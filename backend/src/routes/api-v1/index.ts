@@ -7,6 +7,7 @@ import keywordRoutes   from './keyword.route';
 import cmsRoutes       from './cms.route';
 import geoRoutes       from './geo.route';
 import gscRoutes       from './gsc.route';
+import gscOAuthRoutes  from './gsc-oauth.route';
 import knowledgeRoutes from './knowledge.route';
 import optimizationRoutes from './optimization.route';
 import toolsRoutes     from './tools.route';
@@ -24,5 +25,9 @@ router.use('/projects/:projectId/gsc',       gscRoutes);
 router.use('/projects/:projectId/knowledge', knowledgeRoutes);
 router.use('/projects/:projectId/optimizations', optimizationRoutes);
 router.use('/tools',                         toolsRoutes);
+// Top-level, NOT project-nested — the OAuth callback URL is fixed and
+// pre-registered with Google, so it can't carry a :projectId segment.
+// See routes/api-v1/gsc-oauth.route.ts.
+router.use('/gsc',                           gscOAuthRoutes);
 
 export default router;

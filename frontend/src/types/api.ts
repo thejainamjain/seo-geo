@@ -400,3 +400,59 @@ export interface FreeAuditPayload {
 export interface FreeAuditResult {
   message: string;
 }
+
+// ── Home dashboard ───────────────────────────────────────────────────────
+// Mirrors backend/src/services/dashboard.service.ts's getHome() response.
+// See that file for what's real vs. deliberately omitted (no fabricated
+// "visitors" or "AI mention %" projections — no backend source exists).
+
+export interface DashboardGrowthPoint {
+  week:                    number;
+  cumulativeSearchVolume:  number;
+  cumulativeKeywordCount:  number;
+}
+
+export type ActivityType =
+  | 'SITE_CRAWL'
+  | 'BUSINESS_PROFILE'
+  | 'TECHNICAL_AUDIT'
+  | 'COMPETITOR_DISCOVERY'
+  | 'KEYWORD_RESEARCH'
+  | 'GEO_ANALYTICS'
+  | 'CONTENT_GENERATED';
+
+export interface CompletedActivityItem {
+  type:        ActivityType;
+  title:       string;
+  lastUpdated: string;
+}
+
+export interface QueuedActivityItem {
+  title: string;
+  dueAt: string | null;
+  /** Server-owned explanation for why dueAt is null (e.g. "Awaiting your
+   *  review" vs "Not yet scheduled") — don't infer meaning from null on
+   *  the frontend, the two cases mean different things. */
+  note: string | null;
+}
+
+export interface GeoVisibilityPoint {
+  periodIndex:         number;
+  objectivePercentage: number;
+  runAt:               string;
+}
+
+export interface DashboardHome {
+  searchOpportunity: {
+    monthlySearchVolume:  number;
+    trackedKeywordCount:  number;
+  };
+  growthTimeline:       DashboardGrowthPoint[];
+  /** Real measured history, not a projection — see
+   *  backend/src/services/dashboard.service.ts. */
+  geoVisibilityHistory: GeoVisibilityPoint[];
+  activity: {
+    queued:    QueuedActivityItem[];
+    completed: CompletedActivityItem[];
+  };
+}

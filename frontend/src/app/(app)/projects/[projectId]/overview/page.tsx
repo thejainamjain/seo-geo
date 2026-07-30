@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CheckCircle2, Circle, Loader2, XCircle, RefreshCw } from 'lucide-react';
 import type { PipelineStepStatus } from '@/types/api';
+import { HomeDashboard } from '@/components/dashboard/home-dashboard';
 
 function StepIcon({ status }: { status: PipelineStepStatus }) {
   switch (status) {
@@ -42,6 +43,21 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
   const completedCount = pipeline?.steps.filter(s => s.status === 'COMPLETED').length ?? 0;
   const totalCount     = pipeline?.steps.length ?? PIPELINE_SEQUENCE.length;
 
+  // Once the onboarding pipeline is fully done, "Home" becomes the real
+  // dashboard (search opportunity, content-calendar growth, activity feed)
+  // instead of the step-by-step progress view — that view stays useful
+  // only while there's still pipeline progress to show.
+  if (pipeline?.status === 'COMPLETED') {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold">{project?.domain}</h1>
+        </div>
+        <HomeDashboard projectId={projectId} />
+      </div>
+    );
+  }
+
   // Summary numbers — only show if data exists
   const summaryItems = [
     audit?.summary?.totalPages   ? { label: 'Pages crawled',      value: audit.summary.totalPages }   : null,
@@ -59,7 +75,6 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
           <h1 className="text-2xl font-semibold">Pipeline</h1>
           {pipeline && (
             <Badge variant={
-              pipeline.status === 'COMPLETED' ? 'default' :
               pipeline.status === 'RUNNING'   ? 'secondary' :
               pipeline.status === 'ERRORED'   ? 'destructive' : 'outline'
             }>
@@ -186,17 +201,6 @@ export default function OverviewPage({ params }: { params: Promise<{ projectId: 
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Completion message */}
-      {pipeline?.status === 'COMPLETED' && (
-        <div className="mt-4 p-4 border border-green-500/20 bg-green-500/5 rounded-lg">
-          <p className="text-sm font-medium text-green-500">Pipeline complete</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Your site has been crawled, audited, and keywords have been researched.
-            Head to Keywords to start generating content.
-          </p>
         </div>
       )}
     </div>

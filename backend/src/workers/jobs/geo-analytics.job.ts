@@ -38,6 +38,7 @@ import { Project }         from '@/models/Project';
 import { Keyword }         from '@/models/Keyword';
 import { GeoAnalyticsRun } from '@/models/Analytics';
 import { geoCitationCheck, GeoCitationLlmResponse } from '@/lib/llm';
+import { activityLogService } from '@/services/activityLog.service';
 
 const GEO_KEYWORD_LIMIT  = 20;   // Cap at 20 to stay within free Gemini tier
 const DOMAIN_CHECK_CHARS = 4000; // Check first 4000 chars of Gemini response
@@ -134,6 +135,12 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
       objectivePercentage: 0,
       completedAt:         new Date(),
     });
+
+    await activityLogService.logActivity(
+      projectId,
+      'GEO_ANALYTICS',
+      'Checked AI search visibility — no published content to evaluate yet',
+    );
     return;
   }
 
@@ -228,6 +235,13 @@ export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promi
     objectivePercentage,
     completedAt:         new Date(),
   });
+
+  await activityLogService.logActivity(
+    projectId,
+    'GEO_ANALYTICS',
+    `Researched prompts related to your business across AI search`,
+    { keywordsEvaluated: keywords.length, objectivePercentage },
+  );
 
   logger.info('GEO analytics job completed', {
     projectId,

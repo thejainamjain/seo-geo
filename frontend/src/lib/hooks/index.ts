@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/stores/auth.store';
 import { useRouter } from 'next/navigation';
 import type { BlogStatus, PipelineStep, CmsConnectPayload, CmsUpdatePayload, OptimizationStatus, FreeAuditPayload } from '@/types/api';
-import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, cmsApi, knowledgeApi, optimizationsApi, gscApi, toolsApi } from '@/lib/api';
+import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, cmsApi, knowledgeApi, optimizationsApi, gscApi, toolsApi, dashboardApi } from '@/lib/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -182,6 +182,16 @@ export function useUpdateBlogContent(projectId: string) {
       void queryClient.invalidateQueries({ queryKey: ['blogs', projectId, blogId] });
       void queryClient.invalidateQueries({ queryKey: ['blogs', projectId] });
     },
+  });
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
+
+export function useDashboardHome(projectId: string) {
+  return useQuery({
+    queryKey: ['dashboard', projectId],
+    queryFn:  () => dashboardApi.getHome(projectId),
+    enabled:  !!projectId,
   });
 }
 

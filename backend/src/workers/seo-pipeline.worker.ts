@@ -32,6 +32,9 @@ import { Worker, Queue, type Job } from 'bullmq';
 import { logger } from '../open-tele';
 import { getConnectionOptions } from '../loaders/redis';
 import { Project } from '../models/Project';
+import { Keyword } from '../models/Keyword';
+import { CodeChange } from '../models/CodeChange';
+import { activityLogService } from '../services/activityLog.service';
 import {
   QUEUE_NAMES,
   PIPELINE_STEP,
@@ -93,6 +96,68 @@ async function markStepRunning(projectId: string, step: PipelineStep): Promise<v
   logger.info('Pipeline step started', { projectId, step });
 }
 
+/**
+ * Writes one ActivityLog entry per completed pipeline step, for the Home
+ * dashboard's "Completed" feed — see models/ActivityLog.ts. Counts are
+ * queried fresh from the DB rather than threaded back through each job's
+ * return value (those are all `Promise<void>` today, and changing five
+ * job function signatures just to pass a count through wasn't worth it
+ * for a one-line dashboard string). SITE_CRAWL and COMPETITOR_DISCOVERY
+ * don't have a single obvious count to headline, so they get a plain
+ * title instead of inventing one.
+ */
+async function recordStepActivity(projectId: string, step: PipelineStep): Promise<void> {
+  switch (step) {
+    case PIPELINE_STEP.SITE_CRAWL:
+      await activityLogService.logActivity(projectId, 'SITE_CRAWL', 'Crawled your site');
+      break;
+
+    case PIPELINE_STEP.BUSINESS_PROFILE:
+      await activityLogService.logActivity(
+        projectId,
+        'BUSINESS_PROFILE',
+        'Researched deeply into your site to understand ICP, competitors, business details, etc.',
+      );
+      break;
+
+    case PIPELINE_STEP.TECHNICAL_AUDIT: {
+      const fixCount = await CodeChange.countDocuments({ projectId });
+      await activityLogService.logActivity(
+        projectId,
+        'TECHNICAL_AUDIT',
+        `Identified ${fixCount} technical issues + created fixes`,
+        { fixCount },
+      );
+      break;
+    }
+
+    case PIPELINE_STEP.COMPETITOR_DISCOVERY:
+      await activityLogService.logActivity(
+        projectId,
+        'COMPETITOR_DISCOVERY',
+        'Identified your top competitors',
+      );
+      break;
+
+    case PIPELINE_STEP.KEYWORD_RESEARCH: {
+      const keywordCount = await Keyword.countDocuments({ projectId });
+      await activityLogService.logActivity(
+        projectId,
+        'KEYWORD_RESEARCH',
+        `Identified ${keywordCount} keywords`,
+        { keywordCount },
+      );
+      break;
+    }
+
+    default:
+      // SERP_RESEARCH / BLOG_GENERATION / CMS_PUBLISH / GEO_ANALYTICS /
+      // GSC_MONITOR don't go through this linear-pipeline path — see
+      // PIPELINE_SEQUENCE's own comment in seo-pipeline.constants.ts.
+      break;
+  }
+}
+
 async function markStepCompleted(projectId: string, step: PipelineStep): Promise<void> {
   const now = new Date();
 
@@ -104,6 +169,8 @@ async function markStepCompleted(projectId: string, step: PipelineStep): Promise
   });
 
   logger.info('Pipeline step completed', { projectId, step });
+
+  await recordStepActivity(projectId, step);
 
   const currentIndex = PIPELINE_SEQUENCE.indexOf(step);
   const nextStep     = PIPELINE_SEQUENCE[currentIndex + 1] as PipelineStep | undefined;

@@ -49,6 +49,7 @@
  * ROUND 7 — Operational
  *   EmailLog               every transactional email sent
  *   AppError               background job failure log
+ *   ActivityLog            human-readable milestone feed for the Home dashboard
  */
 
 // ── Round 1 ────────────────────────────────────────────────────────────────
@@ -128,3 +129,6 @@ export type {
 // ── Round 7 ────────────────────────────────────────────────────────────────
 export { EmailLog, AppError } from "./Analytics";
 export type { IEmailLog, IAppError } from "./Analytics";
+
+export { ActivityLog, ACTIVITY_TYPE } from "./ActivityLog";
+export type { IActivityLog, ActivityType } from "./ActivityLog";

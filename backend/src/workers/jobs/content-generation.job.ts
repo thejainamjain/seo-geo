@@ -38,6 +38,7 @@
 import { logger }            from '@/open-tele';
 import { Project }           from '@/models/Project';
 import { BusinessContext }   from '@/models/BusinessContext';
+import { activityLogService } from '@/services/activityLog.service';
 import { Keyword }           from '@/models/Keyword';
 import { Blog }              from '@/models/Blog';
 import { CmsConfig }         from '@/models/CmsConfig';
@@ -346,6 +347,16 @@ export async function runContentGenerationJob(
       keyword:       keyword.keyword,
       contentLength: llmResult.content.length,
     });
+
+    // One entry per blog — dashboardService groups same-day entries into
+    // a single "Created N content pages" row for the Home feed, so this
+    // doesn't need to batch itself. See models/ActivityLog.ts.
+    await activityLogService.logActivity(
+      projectId,
+      'CONTENT_GENERATED',
+      `Created content page: ${llmResult.title}`,
+      { blogId: String(blog._id), keywordId, keyword: keyword.keyword },
+    );
 
     // Update keyword → ready
     await Keyword.findByIdAndUpdate(keywordId, { $set: { status: 'ready' } });

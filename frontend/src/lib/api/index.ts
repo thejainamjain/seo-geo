@@ -24,6 +24,7 @@ import type {
   GscStatus,
   FreeAuditPayload,
   FreeAuditResult,
+  DashboardHome,
  } from '@/types/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -103,6 +104,13 @@ export const blogsApi = {
 };
 
 // ── Audit ─────────────────────────────────────────────────────────────────
+// ── Dashboard ─────────────────────────────────────────────────────────────
+
+export const dashboardApi = {
+  getHome: (projectId: string) =>
+    apiClient.get<DashboardHome>(`/projects/${projectId}/dashboard`).then(r => r.data),
+};
+
 export const auditApi = {
   latest: (projectId: string) =>
     apiClient.get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`).then(r => r.data.audit),

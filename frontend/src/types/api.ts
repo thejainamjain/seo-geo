@@ -60,6 +60,8 @@ export interface Project {
   isGscConnected:      boolean;
   isCmsConnected:      boolean;
   isOnboardingComplete: boolean;
+  blogWriterInstruction?: string;
+  heroImageMode?: 'ai_generated' | 'stock_photos' | 'custom_upload';
   createdAt:           string;
   updatedAt:           string;
 }
@@ -187,6 +189,13 @@ export interface PaginatedResponse<T> {
 // ── BusinessContext ───────────────────────────────────────────────────────
 // Add this to src/types/api.ts
 
+export interface CompetitorEntry {
+  domain:   string;
+  source:   'user' | 'ai' | 'serp';
+  verified: boolean;
+  addedAt:  string;
+}
+
 export interface BusinessContext {
   _id:        string;
   projectId:  string;
@@ -218,7 +227,11 @@ export interface BusinessContext {
     topUseCases?:    string;
   };
   competition?: {
-    mainCompetitors?: string[];
+    // Backend wraps plain domain strings submitted by the wizard into
+    // this structured shape (see project.service.ts's saveOnboardingStep)
+    // so manually-entered competitors carry provenance and can merge with
+    // later SERP-discovered ones instead of being overwritten.
+    mainCompetitors?: CompetitorEntry[];
     differentiation?: string;
     uniqueStrengths?: string;
     tradeOffs?:       string;

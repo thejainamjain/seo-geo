@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { use, useState } from 'react';
 import { useKeywords, useGenerateContent } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
@@ -147,10 +148,21 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
   return (
     <div className="p-8">
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold">Keywords</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Keywords researched and scored for your business
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Keywords</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Keywords researched and scored for your business
+          </p>
+        </div>
+        {/* Blogs list dropped from the top-level nav (folded into "Keywords
+            & Content" to match the target IA) — link kept here so the full
+            post list stays reachable, not just individual posts linked
+            from keyword rows. */}
+        <Button variant="outline" size="sm" asChild>
+          <Link href={`/projects/${projectId}/blogs`}>View all posts</Link>
+        </Button>
+      </div>
       </div>
 
       {/* Summary cards */}

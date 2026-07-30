@@ -10,14 +10,29 @@ const seoPipelineQueue = new Queue(QUEUE_NAMES.SEO_PIPELINE, {
 });
 
 // ── Step data shapes ───────────────────────────────────────────────────────
-
-const STEP_FIELD_MAP: Record<number, string> = {
-  1: 'company',
-  2: 'product',
-  3: 'customers',
-  4: 'competition',
-  5: 'socialProof',
-};
+//
+// The onboarding wizard has 6 UI steps (matching the product's real flow),
+// but BusinessContext still stores data by MEANING (company/product/
+// customers/competition/socialProof), not by step number — that's also
+// what workers/jobs/business-profile.job.ts's AI pre-fill writes into
+// directly, independently of this wizard, using its own hardcoded
+// `aiDraftedSteps: [1,2,3,4,5]` referring to those same 5 fields. To avoid
+// touching that job, this file keeps the old field-based numbering
+// internally (1=company, 2=product, 3=customers, 4=competition,
+// 5=socialProof) and maps the wizard's 6 UI steps onto it:
+//   UI step 1 "Business"              → company + product together
+//   UI step 2 "Audience & Competitors" → customers + competition together
+//   UI step 3 "Setup Analytics"        → no BusinessContext field (GSC OAuth
+//                                         flow handles itself — see gscApi)
+//   UI step 4 "Site Integration"       → no BusinessContext field (CMS setup
+//                                         handled by cmsApi)
+//   UI step 5 "Blog Post Settings"     → Project.blogWriterInstruction +
+//                                         Project.heroImageMode (knowledge
+//                                         files are their own collection,
+//                                         handled by knowledgeApi)
+//   UI step 6 "Auto Publish"           → marks isOnboardingComplete
+// socialProof isn't part of the wizard at all anymore (not in the current
+// product flow) — the AI still drafts it, it's just not reviewed here.
 
 export const projectService = {
   async createProject(userId: string, input: {
@@ -110,66 +125,123 @@ export const projectService = {
   },
 
   /**
-   * Save a single onboarding wizard step.
-   * Step 1 → company, Step 2 → product, etc.
-   * On step 5: sets project.isOnboardingComplete = true.
+   * Save a single onboarding wizard step. See the module-level comment
+   * above for how the 6 UI steps map onto BusinessContext/Project fields.
+   * On step 6: sets project.isOnboardingComplete = true.
    */
   async saveOnboardingStep(
     userId:    string,
     projectId: string,
-    step:      1 | 2 | 3 | 4 | 5,
+    step:      1 | 2 | 3 | 4 | 5 | 6,
     data:      Record<string, unknown>,
   ) {
     logger.debug('projectService.saveOnboardingStep', { userId, projectId, step });
 
     const project = await projectService.getProject(userId, projectId);
 
-    const field = STEP_FIELD_MAP[step];
-    if (!field) throw new ValidationError(`Invalid step: ${step}`);
+    switch (step) {
+      case 1: {
+        // "Business" — company + product together
+        const company = (data.company as Record<string, unknown>) ?? {};
+        const product = (data.product as Record<string, unknown>) ?? {};
+        await BusinessContext.findOneAndUpdate(
+          { projectId: project._id },
+          { company, product, $addToSet: { completedSteps: step } },
+          { upsert: true, new: true },
+        );
+        break;
+      }
 
-    // Step 4 (Competition): the wizard submits mainCompetitors as plain
-    // domain strings. Wrap each as a structured CompetitorEntry so it
-    // carries provenance (source: 'user') and starts unverified — the
-    // same shape business-profile.job.ts's AI draft and
-    // competitor-discovery.job.ts's SERP results use. This lets a human's
-    // manually-entered list MERGE with later SERP findings instead of
-    // being silently replaced — see docs/05-phase4-competitor-discovery-audit.md.
-    let stepData = data;
-    if (step === 4 && Array.isArray(data.mainCompetitors)) {
-      const now = new Date();
-      stepData = {
-        ...data,
-        mainCompetitors: (data.mainCompetitors as unknown[])
-          .filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
-          .map(raw => ({
-            domain:   raw.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim().toLowerCase(),
-            source:   'user' as const,
-            verified: false,
-            addedAt:  now,
-          })),
-      };
-    }
+      case 2: {
+        // "Audience & Competitors" — customers + competition together.
+        // mainCompetitors arrives as plain domain strings from the wizard;
+        // wrap each as a structured CompetitorEntry so it carries
+        // provenance (source: 'user') and starts unverified — the same
+        // shape business-profile.job.ts's AI draft and
+        // competitor-discovery.job.ts's SERP results use, so a human's
+        // manually-entered list MERGES with later SERP findings instead of
+        // being silently replaced. See docs/05-phase4-competitor-discovery-audit.md.
+        const customers = (data.customers as Record<string, unknown>) ?? {};
+        let competition = (data.competition as Record<string, unknown>) ?? {};
+        if (Array.isArray(competition.mainCompetitors)) {
+          const now = new Date();
+          competition = {
+            ...competition,
+            mainCompetitors: (competition.mainCompetitors as unknown[])
+              .filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
+              .map(raw => ({
+                domain:   raw.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim().toLowerCase(),
+                source:   'user' as const,
+                verified: false,
+                addedAt:  now,
+              })),
+          };
+        }
+        await BusinessContext.findOneAndUpdate(
+          { projectId: project._id },
+          { customers, competition, $addToSet: { completedSteps: step } },
+          { upsert: true, new: true },
+        );
+        break;
+      }
 
-    await BusinessContext.findOneAndUpdate(
-      { projectId: project._id },
-      {
-        [field]:   stepData,
-        $addToSet: { completedSteps: step },
-      },
-      { upsert: true, new: true },
-    );
+      case 3:
+      case 4: {
+        // "Setup Analytics" (GSC connect) / "Site Integration" (CMS) —
+        // both are handled by their own dedicated endpoints (gscApi's
+        // OAuth flow, cmsApi's connect). This call only records wizard
+        // progress so the step shows as complete on reload.
+        await BusinessContext.findOneAndUpdate(
+          { projectId: project._id },
+          { $addToSet: { completedSteps: step } },
+          { upsert: true, new: true },
+        );
+        break;
+      }
 
-    // On step 5 completion, mark onboarding done on the project
-    if (step === 5) {
-      await Project.findByIdAndUpdate(project._id, {
-        isOnboardingComplete: true,
-      });
+      case 5: {
+        // "Blog Post Settings" — writer notes + hero image mode live on
+        // Project (not BusinessContext); knowledge files are their own
+        // collection, already handled by knowledgeApi.
+        const projectUpdate: Record<string, unknown> = {};
+        if (typeof data.blogWriterInstruction === 'string') {
+          projectUpdate.blogWriterInstruction = data.blogWriterInstruction;
+        }
+        if (typeof data.heroImageMode === 'string') {
+          projectUpdate.heroImageMode = data.heroImageMode;
+        }
+        if (Object.keys(projectUpdate).length > 0) {
+          await Project.findByIdAndUpdate(project._id, projectUpdate);
+        }
+        await BusinessContext.findOneAndUpdate(
+          { projectId: project._id },
+          { $addToSet: { completedSteps: step } },
+          { upsert: true, new: true },
+        );
+        break;
+      }
+
+      case 6: {
+        // "Auto Publish" — last step. autoPublish itself is saved via
+        // cmsApi.update (PATCH /cms) right before this call; this just
+        // records progress and completes onboarding.
+        await BusinessContext.findOneAndUpdate(
+          { projectId: project._id },
+          { $addToSet: { completedSteps: step } },
+          { upsert: true, new: true },
+        );
+        await Project.findByIdAndUpdate(project._id, { isOnboardingComplete: true });
+        break;
+      }
+
+      default:
+        throw new ValidationError(`Invalid step: ${step as number}`);
     }
 
     logger.info('Onboarding step saved', { projectId, step });
 
-    const updatedProject     = await Project.findById(project._id).lean();
-    const businessContext    = await BusinessContext.findOne({ projectId: project._id }).lean();
+    const updatedProject  = await Project.findById(project._id).lean();
+    const businessContext = await BusinessContext.findOne({ projectId: project._id }).lean();
 
     return { project: updatedProject, businessContext };
   },

@@ -76,7 +76,7 @@ export function useSaveOnboardingStep(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ step, data }: { step: 1|2|3|4|5; data: Record<string, unknown> }) =>
+    mutationFn: ({ step, data }: { step: 1|2|3|4|5|6; data: Record<string, unknown> }) =>
       projectsApi.saveOnboardingStep(projectId, step, data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['businessContext', projectId] });

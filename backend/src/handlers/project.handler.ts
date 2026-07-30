@@ -63,13 +63,13 @@ export const projectHandler = {
 
   /**
    * POST /api/v1/projects/:projectId/onboarding/step
-   * Body: { step: 1|2|3|4|5, data: { ...fields } }
+   * Body: { step: 1|2|3|4|5|6, data: { ...fields } }
    * Saves one step of the onboarding wizard.
    */
   async saveOnboardingStep(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { step, data } = req.body as {
-        step: 1 | 2 | 3 | 4 | 5;
+        step: 1 | 2 | 3 | 4 | 5 | 6;
         data: Record<string, unknown>;
       };
 

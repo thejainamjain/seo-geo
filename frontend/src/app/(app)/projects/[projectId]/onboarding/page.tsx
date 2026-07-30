@@ -3,28 +3,47 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { useBusinessContext, useSaveOnboardingStep, useStartPipeline } from '@/lib/hooks';
-import { pipelineApi } from '@/lib/api';
+import Link from 'next/link';
+import {
+  useBusinessContext, useSaveOnboardingStep, useStartPipeline, useProject,
+  useGscStatus, useUpdateCms,
+  useKnowledgeFiles, useUploadKnowledgeFile, useDeleteKnowledgeFile,
+} from '@/lib/hooks';
+import { pipelineApi, gscApi } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, X, Plus } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Loader2, X, Plus, BarChart2, Wrench, Headphones, Sparkles, Zap,
+  Settings2, CheckCircle2, Trash2, FileStack, Upload,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { KnowledgeFile } from '@/types/api';
 
 // ── Step config ────────────────────────────────────────────────────────────
+// 6 steps matching the target product's real onboarding flow. Steps 1–2
+// still write to BusinessContext (see project.service.ts's saveOnboardingStep
+// for exactly how the new step numbers map onto its company/product/
+// customers/competition fields); steps 3–6 are new and mostly delegate to
+// their own APIs (gscApi, cmsApi, knowledgeApi) rather than this wizard's
+// own save endpoint.
 
 const STEPS = [
-  { number: 1, label: 'Company' },
-  { number: 2, label: 'Product' },
-  { number: 3, label: 'Customers' },
-  { number: 4, label: 'Competition' },
-  { number: 5, label: 'Social Proof' },
+  { number: 1, label: 'Business' },
+  { number: 2, label: 'Audience & Competitors' },
+  { number: 3, label: 'Setup Analytics' },
+  { number: 4, label: 'Site Integration' },
+  { number: 5, label: 'Blog Post Settings' },
+  { number: 6, label: 'Auto Publish' },
 ] as const;
 
-// ── Tag input component ────────────────────────────────────────────────────
+type StepNumber = 1 | 2 | 3 | 4 | 5 | 6;
+
+// ── Tag input component (unchanged) ─────────────────────────────────────────
 
 function TagInput({
   value,
@@ -77,43 +96,399 @@ function TagInput({
   );
 }
 
-// ── Step components ────────────────────────────────────────────────────────
+// ── Wizard-wide data shape ───────────────────────────────────────────────────
+// Flattened by CONCERN rather than by step number, since new steps 3/4/6
+// don't own any BusinessContext field the old per-step-number shape assumed.
 
-function Step1({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
-  const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
+interface WizardData {
+  company: Record<string, unknown>;
+  product: Record<string, unknown>;
+  segments: string[];
+  competitors: string[];
+  writerNotes: string;
+  heroImageMode: '' | 'ai_generated' | 'stock_photos' | 'custom_upload';
+  autoPublishMode: 'auto' | 'manual';
+}
+
+const EMPTY_WIZARD_DATA: WizardData = {
+  company: {}, product: {}, segments: [], competitors: [],
+  writerNotes: '', heroImageMode: '', autoPublishMode: 'auto',
+};
+
+// ── Step 1: Business (merges old "Company" + "Product & pricing" steps) ─────
+
+function Step1Business({ data, onChange }: { data: WizardData; onChange: (d: WizardData) => void }) {
+  const setCompany = (key: string, val: unknown) => onChange({ ...data, company: { ...data.company, [key]: val } });
+  const setProduct = (key: string, val: unknown) => onChange({ ...data, product: { ...data.product, [key]: val } });
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
+      <div className="space-y-5">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Company</h3>
+        <div className="space-y-1.5">
+          <Label>Company name</Label>
+          <Input
+            placeholder="Acme Inc."
+            value={(data.company.name as string) ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCompany('name', e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Website</Label>
+          <Input
+            placeholder="https://acme.com"
+            value={(data.company.website as string) ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCompany('website', e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Target regions or languages</Label>
+          <Input
+            placeholder="e.g. United States, English"
+            value={(data.company.targetRegions as string) ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCompany('targetRegions', e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Business description</Label>
+          <Textarea
+            placeholder="What does your company do in 2–3 sentences?"
+            value={(data.company.description as string) ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCompany('description', e.target.value)}
+            rows={3}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Product &amp; pricing</h3>
+        <div className="space-y-1.5">
+          <Label>What the business sells</Label>
+          <Textarea
+            placeholder="Describe your main product or service offering"
+            value={(data.product.whatItSells as string) ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setProduct('whatItSells', e.target.value)}
+            rows={3}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Key features and benefits</Label>
+          <Textarea
+            placeholder="List the main features and what they mean for customers"
+            value={(data.product.keyFeatures as string) ?? ''}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setProduct('keyFeatures', e.target.value)}
+            rows={3}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label>Free trial or demo?</Label>
+            <Input
+              placeholder="e.g. 14-day free trial"
+              value={(data.product.freeTrialAvailable as string) ?? ''}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProduct('freeTrialAvailable', e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Avg. lifetime value per client</Label>
+            <Input
+              placeholder="e.g. $2,400/year"
+              value={(data.product.lifetimeValuePerClient as string) ?? ''}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProduct('lifetimeValuePerClient', e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 2: Audience & Competitors ───────────────────────────────────────────
+// Matches the target screenshot exactly: just two tag inputs. The old flow
+// also asked for painPoints/differentiation/tradeOffs/proof etc. — those
+// BusinessContext fields still exist and the AI still drafts them, they're
+// just not asked for in this wizard anymore since the real product doesn't
+// show them here. (Worth a "Business" settings page later if you want them
+// editable somewhere.)
+
+function Step2Audience({ data, onChange }: { data: WizardData; onChange: (d: WizardData) => void }) {
+  return (
+    <div className="space-y-6">
       <div className="space-y-1.5">
-        <Label>Company name</Label>
-        <Input
-          placeholder="Acme Inc."
-          value={(data.name as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('name', e.target.value)}
+        <Label className="text-base">Target Audiences</Label>
+        <p className="text-xs text-muted-foreground">
+          Enter your target audience groups to create relevant content. Better audience understanding improves results.
+        </p>
+        <TagInput
+          value={data.segments}
+          onChange={v => onChange({ ...data, segments: v })}
+          placeholder="Enter your target audience groups (e.g., Developers, Project Managers)."
         />
       </div>
       <div className="space-y-1.5">
-        <Label>Website</Label>
-        <Input
-          placeholder="https://acme.com"
-          value={(data.website as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('website', e.target.value)}
+        <Label className="text-base">Competitors</Label>
+        <p className="text-xs text-muted-foreground">
+          Enter competitors to discover the SEO keywords they rank for. Bigger competitors provide more valuable insights.
+        </p>
+        <TagInput
+          value={data.competitors}
+          onChange={v => onChange({ ...data, competitors: v })}
+          placeholder="Enter competitor URLs or company names (e.g. https://revid.ai or revid.ai)."
         />
       </div>
-      <div className="space-y-1.5">
-        <Label>Target regions or languages</Label>
-        <Input
-          placeholder="e.g. United States, English"
-          value={(data.targetRegions as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('targetRegions', e.target.value)}
-        />
-        <p className="text-xs text-muted-foreground">Primary markets your business targets</p>
+    </div>
+  );
+}
+
+// ── Step 3: Setup Analytics (Connect Google Search Console) ─────────────────
+
+function Step3Analytics({ projectId }: { projectId: string }) {
+  const { data: gsc, isLoading } = useGscStatus(projectId);
+
+  if (isLoading) return <Skeleton className="h-48 w-full" />;
+
+  if (gsc?.connected) {
+    return (
+      <div className="text-center space-y-3 py-6">
+        <CheckCircle2 className="mx-auto h-10 w-10 text-green-600" />
+        <div>
+          <p className="font-medium">Google Search Console connected</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            We&apos;ll use this to prioritize keywords and track results automatically.
+          </p>
+        </div>
       </div>
-      <div className="space-y-1.5">
-        <Label>Business description</Label>
+    );
+  }
+
+  return (
+    <div className="text-center space-y-4 py-2">
+      <div className="mx-auto w-16 h-16 rounded-full bg-accent flex items-center justify-center">
+        <BarChart2 className="h-7 w-7 text-muted-foreground" />
+      </div>
+      <div className="max-w-sm mx-auto">
+        <h3 className="text-lg font-semibold">Connect Google Search Console</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Connect your GSC to unlock a strategy based on your current performance. We&apos;ll prioritize keywords, track results, and improve strategy automatically.
+        </p>
+      </div>
+      <Button
+        type="button"
+        onClick={() => { window.location.href = gscApi.getConnectUrl(projectId); }}
+      >
+        Connect Google Search Console
+      </Button>
+      <p className="text-xs text-muted-foreground">
+        This helps us understand your current rankings and optimize accordingly
+      </p>
+    </div>
+  );
+}
+
+// ── Step 4: Site Integration (CMS) ───────────────────────────────────────────
+// The full multi-platform CMS connect form (platform picker + per-platform
+// credential fields) already exists in the Settings page — duplicating
+// ~450 lines of that here risked the two drifting apart, so "Integrate
+// yourself" links out to it instead of re-implementing it inline.
+// "Have our team integrate for you" has nowhere to persist that preference
+// — there's no lead/request field or table for it on the backend. Flagging
+// that rather than silently no-op'ing it: right now it just advances the
+// wizard, the same as Skip would.
+
+function Step4Integration({ projectId, choice, onChoice }: {
+  projectId: string;
+  choice: 'self' | 'team' | null;
+  onChoice: (c: 'self' | 'team') => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-center text-muted-foreground max-w-md mx-auto">
+        Connect your CMS so we can publish articles. Choose how you&apos;d like to set it up.
+      </p>
+      <div className="grid grid-cols-2 gap-4">
+        <button
+          type="button"
+          onClick={() => onChoice('self')}
+          className={cn(
+            'border rounded-lg p-6 text-center space-y-2 transition-colors',
+            choice === 'self' ? 'border-foreground bg-accent/50' : 'border-border hover:bg-accent/30',
+          )}
+        >
+          <Wrench className="mx-auto h-6 w-6 text-muted-foreground" />
+          <p className="font-semibold text-sm">Integrate yourself</p>
+          <p className="text-xs text-muted-foreground">Select your CMS and follow the configuration steps.</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChoice('team')}
+          className={cn(
+            'border rounded-lg p-6 text-center space-y-2 transition-colors',
+            choice === 'team' ? 'border-foreground bg-accent/50' : 'border-border hover:bg-accent/30',
+          )}
+        >
+          <Headphones className="mx-auto h-6 w-6 text-muted-foreground" />
+          <p className="font-semibold text-sm">Have our team integrate for you</p>
+          <p className="text-xs text-muted-foreground">We&apos;ll help you connect it later.</p>
+        </button>
+      </div>
+
+      {choice === 'self' && (
+        <Alert>
+          <AlertDescription>
+            Head to{' '}
+            <Link href={`/projects/${projectId}/settings`} className="underline font-medium">
+              Settings → CMS
+            </Link>{' '}
+            to pick your platform and connect credentials — that flow already exists there. Come back and hit Continue when you&apos;re done, or just Continue now and do it later.
+          </AlertDescription>
+        </Alert>
+      )}
+      {choice === 'team' && (
+        <Alert>
+          <AlertDescription>
+            Noted — heads up though: there&apos;s no backend field yet to actually record this request anywhere. This just advances the wizard for now; someone will need to reach out manually until that&apos;s built.
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
+// ── Step 5: Blog Post Settings ───────────────────────────────────────────────
+
+function KnowledgeFileRow({ file, onDelete, isDeleting }: {
+  file: KnowledgeFile;
+  onDelete: () => void;
+  isDeleting: boolean;
+}) {
+  const statusVariant: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
+    ready: 'default', processing: 'secondary', pending: 'outline', error: 'destructive',
+  };
+  return (
+    <div className="flex items-center justify-between border border-border rounded-md px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-sm truncate">{file.originalName}</p>
+        <p className="text-xs text-muted-foreground">{(file.sizeBytes / 1024).toFixed(0)} KB</p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <Badge variant={statusVariant[file.status] ?? 'outline'} className="text-xs capitalize">{file.status}</Badge>
+        <button onClick={onDelete} disabled={isDeleting} className="text-muted-foreground hover:text-destructive">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Step5BlogSettings({ projectId, data, onChange }: {
+  projectId: string;
+  data: WizardData;
+  onChange: (d: WizardData) => void;
+}) {
+  const { data: files, isLoading: filesLoading } = useKnowledgeFiles(projectId);
+  const uploadMut = useUploadKnowledgeFile(projectId);
+  const deleteMut = useDeleteKnowledgeFile(projectId);
+
+  const IMAGE_MODES: Array<{ value: WizardData['heroImageMode']; label: string; note?: string }> = [
+    { value: 'ai_generated', label: 'AI-generated' },
+    { value: 'stock_photos', label: 'Stock photos' },
+    { value: 'custom_upload', label: 'Custom upload', note: 'Mode preference saves, but there\u2019s no upload UI wired for this yet — flagging rather than faking it.' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {!data.heroImageMode && (
+        <Alert>
+          <AlertDescription>
+            Image settings are required to continue onboarding. Knowledge base and writer notes are optional; you can configure them later in Settings.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Images */}
+      <div className="border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm">Images</span>
+            <Badge variant="outline" className="text-xs">Required</Badge>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {IMAGE_MODES.map(mode => (
+            <button
+              key={mode.value}
+              type="button"
+              title={mode.note}
+              onClick={() => onChange({ ...data, heroImageMode: mode.value })}
+              className={cn(
+                'border rounded-md px-3 py-2 text-xs text-center transition-colors',
+                data.heroImageMode === mode.value ? 'border-foreground bg-accent/50 font-medium' : 'border-border hover:bg-accent/30',
+              )}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+        {data.heroImageMode === 'custom_upload' && (
+          <p className="text-xs text-muted-foreground">
+            Custom upload isn&apos;t wired to an actual upload endpoint yet — the mode preference will save, but there&apos;s nowhere to upload the images themselves right now.
+          </p>
+        )}
+      </div>
+
+      {/* Knowledge base */}
+      <div className="border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FileStack className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium text-sm">Knowledge base</span>
+            <span className="text-xs text-muted-foreground">up to 25 · PDF, text, Markdown, CSV, JSON</span>
+          </div>
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              className="hidden"
+              accept=".pdf,.txt,.md,.csv,.json"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadMut.mutate(file);
+                e.target.value = '';
+              }}
+            />
+            <span className="inline-flex items-center gap-1.5 text-xs border border-border rounded-md px-2.5 py-1.5 hover:bg-accent transition-colors">
+              {uploadMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              Upload
+            </span>
+          </label>
+        </div>
+        {filesLoading && <Skeleton className="h-10 w-full" />}
+        {!filesLoading && (!files || files.length === 0) && (
+          <p className="text-xs text-muted-foreground">No documents yet.</p>
+        )}
+        {files && files.length > 0 && (
+          <div className="space-y-1.5">
+            {files.map(f => (
+              <KnowledgeFileRow
+                key={f._id}
+                file={f}
+                onDelete={() => deleteMut.mutate(f._id)}
+                isDeleting={deleteMut.isPending && deleteMut.variables === f._id}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Writer notes */}
+      <div className="border border-border rounded-lg p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          <span className="font-medium text-sm">Writer notes</span>
+          <span className="text-xs text-muted-foreground">optional</span>
+        </div>
         <Textarea
-          placeholder="What does your company do in 2–3 sentences?"
-          value={(data.description as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('description', e.target.value)}
+          placeholder="Tone, style, things to always mention or avoid — anything the AI writer should know."
+          value={data.writerNotes}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onChange({ ...data, writerNotes: e.target.value })}
           rows={3}
         />
       </div>
@@ -121,186 +496,44 @@ function Step1({ data, onChange }: { data: Record<string, unknown>; onChange: (d
   );
 }
 
-function Step2({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
-  const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
+// ── Step 6: Auto Publish ─────────────────────────────────────────────────────
+
+function Step6AutoPublish({ mode, onChange }: { mode: 'auto' | 'manual'; onChange: (m: 'auto' | 'manual') => void }) {
   return (
-    <div className="space-y-5">
-      <div className="space-y-1.5">
-        <Label>What the business sells</Label>
-        <Textarea
-          placeholder="Describe your main product or service offering"
-          value={(data.whatItSells as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('whatItSells', e.target.value)}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Key features and benefits</Label>
-        <Textarea
-          placeholder="List the main features and what they mean for customers"
-          value={(data.keyFeatures as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('keyFeatures', e.target.value)}
-          rows={4}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Product tiers and inclusions</Label>
-        <Textarea
-          placeholder="Describe your pricing tiers or plan inclusions"
-          value={(data.pricingTiers as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('pricingTiers', e.target.value)}
-          rows={2}
-        />
+    <div className="space-y-4">
+      <div className="text-center">
+        <h3 className="text-lg font-semibold">Choose Your Publishing Mode</h3>
+        <p className="text-sm text-muted-foreground mt-1">Select how you&apos;d like content publishing to be managed</p>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-1.5">
-          <Label>Free trial or demo?</Label>
-          <Input
-            placeholder="e.g. 14-day free trial"
-            value={(data.freeTrialAvailable as string) ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('freeTrialAvailable', e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label>Avg. lifetime value per client</Label>
-          <Input
-            placeholder="e.g. $2,400/year"
-            value={(data.lifetimeValuePerClient as string) ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('lifetimeValuePerClient', e.target.value)}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Step3({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
-  const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
-  return (
-    <div className="space-y-5">
-      <div className="space-y-1.5">
-        <Label>Customer segments</Label>
-        <p className="text-xs text-muted-foreground">List the primary groups you serve</p>
-        <TagInput
-          value={(data.segments as string[]) ?? []}
-          onChange={v => set('segments', v)}
-          placeholder="e.g. Marketing leaders, SMB founders"
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Customer pain points</Label>
-        <Textarea
-          placeholder="What problems do your customers face that you solve?"
-          value={(data.painPoints as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('painPoints', e.target.value)}
-          rows={4}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Keywords they talk about</Label>
-        <Textarea
-          placeholder="Words and phrases your customers use when searching"
-          value={(data.keywordsTheyUse as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('keywordsTheyUse', e.target.value)}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Top use cases to rank for</Label>
-        <Textarea
-          placeholder="What jobs do customers hire you for?"
-          value={(data.topUseCases as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('topUseCases', e.target.value)}
-          rows={3}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Step4({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
-  const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
-  return (
-    <div className="space-y-5">
-      <div className="space-y-1.5">
-        <Label>Main competitors</Label>
-        <p className="text-xs text-muted-foreground">List 3–7 competitors with links where possible</p>
-        <TagInput
-          value={(data.mainCompetitors as string[]) ?? []}
-          onChange={v => set('mainCompetitors', v)}
-          placeholder="Enter competitor name or URL"
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Differentiation</Label>
-        <Textarea
-          placeholder="How do you differ from those competitors?"
-          value={(data.differentiation as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('differentiation', e.target.value)}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Unique strengths</Label>
-        <Textarea
-          placeholder="What can only you claim?"
-          value={(data.uniqueStrengths as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('uniqueStrengths', e.target.value)}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Trade-offs you accept</Label>
-        <Textarea
-          placeholder="What do you deliberately not do or not be best at?"
-          value={(data.tradeOffs as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('tradeOffs', e.target.value)}
-          rows={2}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Proof</Label>
-        <Textarea
-          placeholder="Claims you can back up — customer count, years in business, certifications"
-          value={(data.proof as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('proof', e.target.value)}
-          rows={2}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Step5({ data, onChange }: { data: Record<string, unknown>; onChange: (d: Record<string, unknown>) => void }) {
-  const set = (key: string, val: unknown) => onChange({ ...data, [key]: val });
-  return (
-    <div className="space-y-5">
-      <div className="space-y-1.5">
-        <Label>Case studies</Label>
-        <Textarea
-          placeholder="Named client results, before/after metrics, success stories"
-          value={(data.caseStudies as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('caseStudies', e.target.value)}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Organic discussions</Label>
-        <Textarea
-          placeholder="Reddit threads, forum posts, Google reviews, news mentions about you"
-          value={(data.organicDiscussions as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('organicDiscussions', e.target.value)}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label>Social media presence</Label>
-        <Textarea
-          placeholder="Active platforms, follower counts, engagement level"
-          value={(data.socialMediaPresence as string) ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => set('socialMediaPresence', e.target.value)}
-          rows={3}
-        />
+        <button
+          type="button"
+          onClick={() => onChange('auto')}
+          className={cn(
+            'border rounded-lg p-5 text-left space-y-2 transition-colors',
+            mode === 'auto' ? 'border-foreground bg-accent/50' : 'border-border hover:bg-accent/30',
+          )}
+        >
+          <Zap className="h-5 w-5 text-muted-foreground" />
+          <p className="font-semibold text-sm">Auto Publish</p>
+          <p className="text-xs text-muted-foreground">
+            Automatically publishes, tracks, and rewrites content based on Google&apos;s feedback. Edit or remove any page anytime.
+          </p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange('manual')}
+          className={cn(
+            'border rounded-lg p-5 text-left space-y-2 transition-colors',
+            mode === 'manual' ? 'border-foreground bg-accent/50' : 'border-border hover:bg-accent/30',
+          )}
+        >
+          <Settings2 className="h-5 w-5 text-muted-foreground" />
+          <p className="font-semibold text-sm">Manual Publish</p>
+          <p className="text-xs text-muted-foreground">
+            Review and publish content yourself each week. Full editorial control, slower optimization cycles.
+          </p>
+        </button>
       </div>
     </div>
   );
@@ -308,28 +541,30 @@ function Step5({ data, onChange }: { data: Record<string, unknown>; onChange: (d
 
 // ── Step titles ────────────────────────────────────────────────────────────
 
-const STEP_META = {
-  1: { title: 'Company details',               subtitle: 'Confirm your company basics and target regions or languages' },
-  2: { title: 'Product & pricing',             subtitle: "Capture what you sell, how it works, and how it's priced" },
-  3: { title: 'Target customers',              subtitle: 'Describe your audience and the queries they care about' },
-  4: { title: 'Competitors & differentiation', subtitle: 'Share your competitive landscape and how you win' },
-  5: { title: 'Social proof & trust',          subtitle: 'Add proof points and public signals that build credibility' },
-} as const;
+const STEP_META: Record<StepNumber, { title: string; subtitle: string }> = {
+  1: { title: 'Business',                subtitle: 'Confirm your company and product basics' },
+  2: { title: 'Audience & Competitors',  subtitle: 'Who you\u2019re writing for, and who you\u2019re up against' },
+  3: { title: 'Setup Analytics',         subtitle: 'Connect Google Search Console' },
+  4: { title: 'Site Integration',        subtitle: 'Connect your CMS so we can publish articles' },
+  5: { title: 'Blog Post Settings',      subtitle: 'Images, knowledge base, and custom writer instructions' },
+  6: { title: 'Auto Publish',            subtitle: 'Select how you\u2019d like RankAI to manage your content publishing' },
+};
 
 // ── Loading screen ─────────────────────────────────────────────────────────
 
+const ANALYSING_MESSAGES = [
+  'Crawling your website…',
+  'Reading your pages…',
+  'Building your business profile…',
+  'Almost ready…',
+];
+
 function AnalysingScreen() {
-  const messages = [
-    'Crawling your website…',
-    'Reading your pages…',
-    'Building your business profile…',
-    'Almost ready…',
-  ];
   const [msgIndex, setMsgIndex] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setMsgIndex(i => (i + 1) % messages.length);
+      setMsgIndex(i => (i + 1) % ANALYSING_MESSAGES.length);
     }, 4000);
     return () => clearInterval(interval);
   }, []);
@@ -338,7 +573,7 @@ function AnalysingScreen() {
     <div className="min-h-screen flex flex-col items-center justify-center gap-5">
       <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       <div className="text-center space-y-1">
-        <p className="text-sm font-medium">{messages[msgIndex]}</p>
+        <p className="text-sm font-medium">{ANALYSING_MESSAGES[msgIndex]}</p>
         <p className="text-xs text-muted-foreground">
           We&apos;re analysing your site. Takes 1–2 minutes.
         </p>
@@ -370,48 +605,82 @@ export default function OnboardingPage() {
   )?.status === 'COMPLETED';
 
   const { data: businessContextData, isLoading: isLoadingContext } = useBusinessContext(projectId);
+  const { data: project } = useProject(projectId);
   const saveStep      = useSaveOnboardingStep(projectId);
   const startPipeline = useStartPipeline(projectId);
+  const updateCms     = useUpdateCms(projectId);
 
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-  const [stepData, setStepData] = useState<Record<number, Record<string, unknown>>>({
-    1: {}, 2: {}, 3: {}, 4: {}, 5: {},
-  });
-  const [prefilled, setPrefilled] = useState(false);
+  const [currentStep, setCurrentStep] = useState<StepNumber>(1);
+  const [data, setData] = useState<WizardData>(EMPTY_WIZARD_DATA);
+  const [integrationChoice, setIntegrationChoice] = useState<'self' | 'team' | null>(null);
+  // Tracks which project's data we've already prefilled into local wizard
+  // state, keyed by projectId rather than a bare boolean so navigating
+  // between projects' onboarding wizards re-prefills correctly. Set
+  // synchronously during render (not in a useEffect) — this is React's
+  // documented pattern for "adjust state based on a prop/query result",
+  // and avoids the cascading-render issue calling setState from inside an
+  // effect body would cause.
+  const [prefilledFor, setPrefilledFor] = useState<string | null>(null);
 
-  // Pre-fill from BusinessContext once BP is done
-  useEffect(() => {
-    if (!businessContextData || prefilled) return;
-    const bc = businessContextData;
-    setStepData({
-      1: (bc.company     as Record<string, unknown>) ?? {},
-      2: (bc.product     as Record<string, unknown>) ?? {},
-      3: (bc.customers   as Record<string, unknown>) ?? {},
-      4: (bc.competition as Record<string, unknown>) ?? {},
-      5: (bc.socialProof as Record<string, unknown>) ?? {},
-    });
-    setPrefilled(true);
-  }, [businessContextData, prefilled]);
+  if (businessContextData && project && prefilledFor !== projectId) {
+    setPrefilledFor(projectId);
+    setData(d => ({
+      ...d,
+      company:     (businessContextData.company as Record<string, unknown>) ?? {},
+      product:     (businessContextData.product as Record<string, unknown>) ?? {},
+      segments:    businessContextData.customers?.segments ?? [],
+      competitors: businessContextData.competition?.mainCompetitors?.map(c => c.domain) ?? [],
+      writerNotes: project.blogWriterInstruction ?? '',
+      heroImageMode: project.heroImageMode ?? '',
+    }));
+  }
+
+  // aiDraftedSteps still uses the OLD field-based numbering (1=company,
+  // 2=product, 3=customers, 4=competition, 5=socialProof) — see
+  // project.service.ts's module comment. Map that onto the new UI steps.
+  const aiDrafted = businessContextData?.aiDraftedSteps ?? [];
+  const step1AiFilled = aiDrafted.includes(1) && aiDrafted.includes(2);
+  const step2AiFilled = aiDrafted.includes(3) && aiDrafted.includes(4);
+
+  const buildStepPayload = (step: StepNumber): Record<string, unknown> => {
+    switch (step) {
+      case 1: return { company: data.company, product: data.product };
+      case 2: return { customers: { segments: data.segments }, competition: { mainCompetitors: data.competitors } };
+      case 3: return {};
+      case 4: return {};
+      case 5: return { blogWriterInstruction: data.writerNotes, heroImageMode: data.heroImageMode };
+      case 6: return {};
+    }
+  };
 
   const handleContinue = async () => {
-    await saveStep.mutateAsync({ step: currentStep, data: stepData[currentStep] });
-    if (currentStep < 5) setCurrentStep((currentStep + 1) as 1 | 2 | 3 | 4 | 5);
+    await saveStep.mutateAsync({ step: currentStep, data: buildStepPayload(currentStep) });
+    if (currentStep < 6) setCurrentStep((currentStep + 1) as StepNumber);
   };
 
   const handleComplete = async () => {
-    await saveStep.mutateAsync({ step: 5, data: stepData[5] });
+    // autoPublish lives on CmsConfig, not BusinessContext/Project — save it
+    // directly before marking the wizard step done. updateCmsConfig upserts
+    // now specifically so this works even if Site Integration was skipped
+    // and no CmsConfig doc exists yet (see cms.service.ts).
+    await updateCms.mutateAsync({ autoPublish: data.autoPublishMode === 'auto' });
+    await saveStep.mutateAsync({ step: 6, data: {} });
     await startPipeline.mutateAsync();
     router.push(`/projects/${projectId}/overview`);
   };
 
   const handleBack = () => {
-    if (currentStep > 1) setCurrentStep((currentStep - 1) as 1 | 2 | 3 | 4 | 5);
+    if (currentStep > 1) setCurrentStep((currentStep - 1) as StepNumber);
   };
 
   const meta     = STEP_META[currentStep];
-  const isSaving = saveStep.isPending;
-  const isLast   = currentStep === 5;
-  const error    = saveStep.error ?? startPipeline.error;
+  const isSaving = saveStep.isPending || updateCms.isPending;
+  const isLast   = currentStep === 6;
+  const error    = saveStep.error ?? startPipeline.error ?? updateCms.error;
+
+  // Step 5 gates Continue on an image mode being chosen (matches the
+  // target product's "Image settings are required to continue" banner).
+  const canContinue = currentStep !== 5 || !!data.heroImageMode;
 
   // Show loading until BUSINESS_PROFILE completes
   if (!bpDone || isLoadingContext) {
@@ -423,7 +692,7 @@ export default function OnboardingPage() {
 
       {/* Step progress bar */}
       <div className="border-b border-border">
-        <div className="max-w-2xl mx-auto px-6 py-4">
+        <div className="max-w-2xl mx-auto px-6 py-4 overflow-x-auto">
           <div className="flex items-center">
             {STEPS.map((step, i) => {
               const isActive    = step.number === currentStep;
@@ -432,13 +701,13 @@ export default function OnboardingPage() {
                 <div key={step.number} className="flex items-center">
                   <div className="flex items-center gap-2">
                     <div className={cn(
-                      'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors',
+                      'w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors shrink-0',
                       (isActive || isCompleted) ? 'bg-foreground text-background' : 'border border-border text-muted-foreground',
                     )}>
                       {step.number}
                     </div>
                     <span className={cn(
-                      'text-sm transition-colors',
+                      'text-sm transition-colors whitespace-nowrap',
                       isActive    && 'text-foreground font-medium',
                       isCompleted && 'text-foreground',
                       !isActive && !isCompleted && 'text-muted-foreground',
@@ -446,7 +715,7 @@ export default function OnboardingPage() {
                       {step.label}
                     </span>
                   </div>
-                  {i < STEPS.length - 1 && <div className="w-8 h-px bg-border mx-3" />}
+                  {i < STEPS.length - 1 && <div className="w-6 h-px bg-border mx-2 shrink-0" />}
                 </div>
               );
             })}
@@ -455,11 +724,13 @@ export default function OnboardingPage() {
       </div>
 
       {/* AI pre-fill notice */}
-      <div className="max-w-2xl mx-auto px-6 pt-6">
-        <div className="text-xs text-muted-foreground bg-accent/50 border border-border rounded-md px-3 py-2">
-          ✦ Fields pre-filled by AI from your website. Review and edit anything that needs updating.
+      {((currentStep === 1 && step1AiFilled) || (currentStep === 2 && step2AiFilled)) && (
+        <div className="max-w-2xl mx-auto px-6 pt-6">
+          <div className="text-xs text-muted-foreground bg-accent/50 border border-border rounded-md px-3 py-2">
+            ✦ Fields pre-filled by AI from your website. Review and edit anything that needs updating.
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Form area */}
       <div className="max-w-2xl mx-auto px-6 py-6">
@@ -478,11 +749,19 @@ export default function OnboardingPage() {
             </Alert>
           )}
 
-          {currentStep === 1 && <Step1 data={stepData[1]} onChange={d => setStepData(p => ({ ...p, 1: d }))} />}
-          {currentStep === 2 && <Step2 data={stepData[2]} onChange={d => setStepData(p => ({ ...p, 2: d }))} />}
-          {currentStep === 3 && <Step3 data={stepData[3]} onChange={d => setStepData(p => ({ ...p, 3: d }))} />}
-          {currentStep === 4 && <Step4 data={stepData[4]} onChange={d => setStepData(p => ({ ...p, 4: d }))} />}
-          {currentStep === 5 && <Step5 data={stepData[5]} onChange={d => setStepData(p => ({ ...p, 5: d }))} />}
+          {currentStep === 1 && <Step1Business data={data} onChange={setData} />}
+          {currentStep === 2 && <Step2Audience data={data} onChange={setData} />}
+          {currentStep === 3 && <Step3Analytics projectId={projectId} />}
+          {currentStep === 4 && (
+            <Step4Integration projectId={projectId} choice={integrationChoice} onChoice={setIntegrationChoice} />
+          )}
+          {currentStep === 5 && <Step5BlogSettings projectId={projectId} data={data} onChange={setData} />}
+          {currentStep === 6 && (
+            <Step6AutoPublish
+              mode={data.autoPublishMode}
+              onChange={m => setData({ ...data, autoPublishMode: m })}
+            />
+          )}
 
           <div className="flex items-center justify-between pt-2">
             <Button type="button" variant="outline" onClick={handleBack} disabled={currentStep === 1 || isSaving}>
@@ -492,11 +771,11 @@ export default function OnboardingPage() {
             {isLast ? (
               <Button type="button" onClick={handleComplete} disabled={isSaving || startPipeline.isPending}>
                 {(isSaving || startPipeline.isPending)
-                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Starting…</>
-                  : 'Looks good — start pipeline'}
+                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Completing…</>
+                  : 'Complete'}
               </Button>
             ) : (
-              <Button type="button" onClick={handleContinue} disabled={isSaving}>
+              <Button type="button" onClick={handleContinue} disabled={isSaving || !canContinue}>
                 {isSaving
                   ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
                   : 'Continue'}

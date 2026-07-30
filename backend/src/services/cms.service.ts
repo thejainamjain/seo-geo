@@ -117,10 +117,16 @@ export const cmsService = {
       }
     }
 
+    // Upsert, not a plain update: the onboarding wizard's "Auto Publish"
+    // step calls this to set autoPublish even when the user skipped "Site
+    // Integration" and never connected a CMS — a CmsConfig doc may not
+    // exist yet. Schema defaults (blogPostPath, allowedPublishDays,
+    // publishHourUtc) fill in via setDefaultsOnInsert so a bare upsert
+    // doesn't leave those fields unset.
     const config = await CmsConfig.findOneAndUpdate(
       { projectId },
       { ...input },
-      { new: true },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
     ).select('-encryptedCredentials');
     if (!config) throw new NotFoundError('CmsConfig');
 

@@ -52,7 +52,7 @@ export const projectsApi = {
     apiClient.get<{ businessContext: BusinessContext | null }>(`/projects/${projectId}/business`)
       .then(r => r.data.businessContext),
 
-  saveOnboardingStep: (projectId: string, step: 1|2|3|4|5, data: Record<string, unknown>) =>
+  saveOnboardingStep: (projectId: string, step: 1|2|3|4|5|6, data: Record<string, unknown>) =>
     apiClient.post<SaveOnboardingStepResult>(`/projects/${projectId}/onboarding/step`, { step, data })
       .then(r => r.data),
 

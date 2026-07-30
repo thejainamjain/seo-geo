@@ -5,20 +5,22 @@ import { usePathname, useParams } from 'next/navigation';
 import {
   LayoutDashboard,
   BarChart2,
-  ShieldCheck,
-  Globe,
-  FileText,
-  BookOpen,
+  Terminal,
+  PenSquare,
   Settings,
   LogOut,
   ChevronDown,
   Building2,
+  Sparkles,
+  PlayCircle,
+  HelpCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/lib/stores/auth.store';
 import { useProjects } from '@/lib/hooks';
 import { useLogout } from '@/lib/hooks';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,14 +28,30 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
+// Matches the target product's nav IA (Home / Analytics / Technical SEO &
+// GEO / Keywords & Content / Settings). Two items are judgment calls —
+// flagged here rather than silently guessed:
+//  - "Website Audit" isn't included as its own item: the target app shows
+//    it as a nav entry separate from "Technical SEO & GEO", but we only
+//    have one existing page (/audit) that could back either of them, and
+//    no spec/screenshot for what distinguishes the two. Shipping both as
+//    separate items pointing at the same route would just be two nav
+//    links with identical content — worse than one honest one. /audit is
+//    wired to "Technical SEO & GEO" for now; send over what "Website
+//    Audit" should actually show and I'll split them apart for real.
+//  - "Business" is kept even though the target nav doesn't show it as a
+//    top-level item — in the real product it likely lives inside Settings
+//    instead, but that's a Settings-page redesign we haven't scoped yet.
+//    Dropping it now would remove the only way to view/edit the AI-drafted
+//    business profile with nothing to replace it, so it stays until
+//    Settings gets rebuilt.
 const NAV_ITEMS = [
-  { label: 'Overview',      href: 'overview',  icon: LayoutDashboard },
-  { label: 'Business',      href: 'business',  icon: Building2 },
-  { label: 'Analytics',     href: 'geo',       icon: BarChart2 },
-  { label: 'Technical SEO', href: 'audit',     icon: ShieldCheck },
-  { label: 'Keywords',      href: 'keywords',  icon: FileText },
-  { label: 'Blogs',         href: 'blogs',     icon: BookOpen },
-  { label: 'Settings',      href: 'settings',  icon: Settings },
+  { label: 'Home',                 href: 'overview',  icon: LayoutDashboard },
+  { label: 'Analytics',            href: 'geo',       icon: BarChart2 },
+  { label: 'Technical SEO & GEO',  href: 'audit',     icon: Terminal },
+  { label: 'Keywords & Content',   href: 'keywords',  icon: PenSquare },
+  { label: 'Business',             href: 'business',  icon: Building2 },
+  { label: 'Settings',             href: 'settings',  icon: Settings },
 ];
 
 export function Sidebar() {
@@ -132,7 +150,45 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom */}
-      <div className="px-3 pb-4 space-y-0.5 border-t border-border pt-3">
+      <div className="px-3 pb-4 space-y-2 border-t border-border pt-3">
+        {/*
+          "Upgrade to Pro" — no billing/Stripe integration exists yet
+          (flagged separately). Styled with the app's existing primary
+          button, not a new brand color, per "keep CSS as-is". Disabled
+          until there's a real checkout flow to send people to.
+        */}
+        <Button variant="default" className="w-full justify-center gap-1.5" size="sm" disabled>
+          <Sparkles className="h-3.5 w-3.5" />
+          Upgrade to Pro
+        </Button>
+
+        {/*
+          Tutorial — target product opens a walkthrough-video modal here.
+          No video assets or copy source were provided, so this is a
+          disabled placeholder rather than fabricated content/links.
+        */}
+        <button
+          disabled
+          className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-muted-foreground/50 cursor-not-allowed"
+          title="Not wired up yet — no walkthrough content provided"
+        >
+          <PlayCircle className="h-4 w-4 shrink-0" />
+          Tutorial
+        </button>
+
+        {/*
+          Help — target product opens a chat widget (Intercom/Crisp-style).
+          No such integration exists in this codebase. Mailto is a
+          reasonable placeholder; swap for a real widget when you pick one.
+        */}
+        <a
+          href="mailto:support@seo-geo.app"
+          className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        >
+          <HelpCircle className="h-4 w-4 shrink-0" />
+          Help
+        </a>
+
         <div className="px-2 py-1.5 text-xs text-muted-foreground truncate">
           {user?.email}
         </div>

@@ -75,6 +75,8 @@ export interface IProject extends Document {
   autoBlogConfig?:       Record<string, unknown>;
   keywordPillars?:       Record<string, unknown>;
   blogWriterInstruction?: string;
+  /** Source for blog hero images — set in onboarding's "Blog Post Settings" step */
+  heroImageMode?: 'ai_generated' | 'stock_photos' | 'custom_upload';
 
   // Pipeline state
   pipeline: IPipeline;
@@ -144,6 +146,10 @@ const ProjectSchema = new Schema<IProject>(
     autoBlogConfig:        { type: Schema.Types.Mixed },
     keywordPillars:        { type: Schema.Types.Mixed },
     blogWriterInstruction: { type: String },
+    heroImageMode: {
+      type: String,
+      enum: ['ai_generated', 'stock_photos', 'custom_upload'],
+    },
 
     pipeline: { type: PipelineSchema, default: () => ({ status: 'PENDING', steps: defaultSteps() }) },
   },

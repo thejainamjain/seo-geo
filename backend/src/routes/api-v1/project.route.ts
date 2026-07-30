@@ -29,6 +29,7 @@ const SaveOnboardingStepSchema = z.object({
     z.literal(3),
     z.literal(4),
     z.literal(5),
+    z.literal(6),
   ]),
   data: z.record(z.unknown()),
 });
@@ -52,7 +53,7 @@ router.get('/:projectId/business',  projectHandler.getBusinessContext);
 
 // Onboarding wizard — save one step at a time
 // POST /api/v1/projects/:projectId/onboarding/step
-// Body: { step: 1-5, data: { ...step fields } }
+// Body: { step: 1-6, data: { ...step fields } }
 router.post(
   '/:projectId/onboarding/step',
   validate(SaveOnboardingStepSchema),

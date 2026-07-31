@@ -39,6 +39,24 @@ export const blogHandler = {
     }
   },
 
+  async uploadImage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.file) {
+        res.status(400).json({ message: 'No image provided' });
+        return;
+      }
+      const result = await blogService.uploadImage(
+        req.userId,
+        req.params['projectId'] as string,
+        req.params['blogId']    as string,
+        req.file,
+      );
+      res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const blog = await blogService.updateBlog(

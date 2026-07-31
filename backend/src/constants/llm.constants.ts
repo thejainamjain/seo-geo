@@ -10,7 +10,6 @@ export const PROMPTS = {
   Rules:
   - Title format: "[Number] Best [Keyword] in [Location] ([Year])"
   - Start with <h1>{title}</h1>
-  - Then hero image: <div class="hero-image-container" style="text-align: center; margin: 20px 0;"><img src="{{HERO_IMAGE_URL}}" alt="${keyword}" class="hero-image" style="max-width: 100%; height: auto; border-radius: 8px;" /></div>
   - Then <h2>TL;DR</h2> summary
   - Then <hr> and intro paragraph with CTA link to ${contactUrl}
   - Then main sections with h2/h3 headings, lists, local pricing

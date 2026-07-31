@@ -43,6 +43,7 @@ import { Blog }   from '@/models/Blog';
 import { Keyword } from '@/models/Keyword';
 import { logger } from '@/open-tele';
 import { publishBlog as cmsPushBlog, type BlogPublishPayload, type CmsConfigForPublish } from '@/lib/cms';
+import { stripLegacyHeroImagePlaceholder } from '@/lib/blog-content';
 
 /**
  * True if right now falls within a project's configured publish window
@@ -107,12 +108,24 @@ export async function publishBlogToCms(opts: PublishBlogToCmsOptions): Promise<P
     ? opts.resolvedHeroImageUrl
     : blog.heroImageUrl;
 
+  // Same self-heal as blogService.getBlog — see lib/blog-content.ts. Applied
+  // here too (not just on read) so a blog that gets auto-published without
+  // ever being opened in the editor doesn't ship a broken placeholder to
+  // the CMS. Not persisted here — getBlog already persists the cleanup on
+  // first read, this is just a defensive belt-and-suspenders pass on the
+  // exact string being sent out.
+  const { content: cleanContent, changed: hadLegacyPlaceholder } =
+    stripLegacyHeroImagePlaceholder(blog.content ?? '');
+  if (hadLegacyPlaceholder) {
+    logger.info('Stripped legacy hero-image placeholder before CMS publish', { context, blogId });
+  }
+
   const payload: BlogPublishPayload = {
     blogId,
     title:        blog.title,
     slug:         blog.slug,
     description:  blog.description ?? '',
-    content:      blog.content     ?? '',
+    content:      cleanContent,
     heroImageUrl: heroImageUrl ?? undefined,
     seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
     blogPostPath: cmsConfig.blogPostPath,

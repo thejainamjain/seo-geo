@@ -167,6 +167,17 @@ export function useUpdateBlogStatus(projectId: string) {
   });
 }
 
+export function useUploadBlogImage(projectId: string) {
+  return useMutation({
+    mutationFn: ({ blogId, file }: { blogId: string; file: File }) =>
+      blogsApi.uploadImage(projectId, blogId, file),
+    // No cache invalidation — this doesn't change the blog document itself.
+    // The editor inserts the returned URL into content; that only becomes
+    // a real change (and gets invalidated) when the user saves via
+    // useUpdateBlogContent, same as any other in-progress edit.
+  });
+}
+
 export function useUpdateBlogContent(projectId: string) {
   const queryClient = useQueryClient();
  
@@ -176,7 +187,7 @@ export function useUpdateBlogContent(projectId: string) {
       payload,
     }: {
       blogId:  string;
-      payload: { title?: string; description?: string; content?: string };
+      payload: { title?: string; description?: string; content?: string; heroImageUrl?: string | null };
     }) => blogsApi.updateContent(projectId, blogId, payload),
     onSuccess: (_, { blogId }) => {
       void queryClient.invalidateQueries({ queryKey: ['blogs', projectId, blogId] });

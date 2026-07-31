@@ -96,11 +96,22 @@ export const blogsApi = {
   updateContent: (
     projectId: string,
     blogId: string,
-    payload: { title?: string; description?: string; content?: string },
+    payload: { title?: string; description?: string; content?: string; heroImageUrl?: string | null },
   ) =>
     apiClient
       .patch<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`, payload)
       .then(r => r.data.blog),
+
+  // multipart/form-data — field name must be exactly 'image' (multer config
+  // on the backend, see routes/api-v1/blog.route.ts). No manual Content-Type
+  // header — same reasoning as knowledgeApi.upload above.
+  uploadImage: (projectId: string, blogId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    return apiClient
+      .post<{ url: string }>(`/projects/${projectId}/blogs/${blogId}/images`, formData)
+      .then(r => r.data.url);
+  },
 };
 
 // ── Audit ─────────────────────────────────────────────────────────────────

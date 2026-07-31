@@ -78,7 +78,11 @@ export const knowledgeService = {
     const { url, publicId } = await uploadToCloudinary(
       file.buffer,
       `${projectId}-${Date.now()}-${file.originalname}`,
-      file.mimetype,
+      {
+        folder:       'knowledge-files',
+        resourceType: 'raw',
+        format:       file.mimetype === 'application/pdf' ? 'pdf' : undefined,
+      },
     );
 
     const knowledgeFile = await ProjectKnowledgeFile.create({

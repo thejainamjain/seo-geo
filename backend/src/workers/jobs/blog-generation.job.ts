@@ -32,10 +32,17 @@
  *   We sanitize it and check for collisions — append jobIndex if collision.
  *
  * HERO IMAGE:
- *   Placeholder {{HERO_IMAGE_URL}} is left in content intentionally.
- *   CMS publish job (or a dedicated hero-image job) replaces it with
- *   a real Unsplash → Cloudinary .avif URL at publish time.
- *   This keeps blog generation fast — Unsplash API calls are slow.
+ *   heroImageUrl starts null. Resolved later — either by the user uploading
+ *   one in the editor (see blogService.uploadImage), or automatically via
+ *   Unsplash at publish time if still unset (see cms-publish.job.ts). It is
+ *   always a separate field, never embedded inline in `content` — the
+ *   frontend renders it as its own element (components/editor/hero-image.tsx).
+ *   (Earlier versions of this job asked the LLM to embed a
+ *   {{HERO_IMAGE_URL}} placeholder directly in `content`, meant to be
+ *   substituted later — that substitution step was never actually built,
+ *   so every blog generated that way shipped a permanently broken <img>.
+ *   Fixed by removing the instruction from the prompt and self-healing
+ *   already-generated content — see lib/blog-content.ts.)
  *
  * KNOWLEDGE CONTEXT:
  *   Fetches ready ProjectKnowledgeFile docs, extracts their text from Cloudinary
@@ -356,7 +363,7 @@ export async function runBlogGenerationJob(job: Job<BlogJobData>): Promise<void>
 
     // Hero image is a placeholder — replaced at CMS publish time
     // by Unsplash API → Cloudinary .avif pipeline in cms-publish.job.ts
-    heroImageUrl: null, // {{HERO_IMAGE_URL}} placeholder is inside content
+    heroImageUrl: null, // resolved later — user upload or Unsplash at publish time (see job header comment)
 
     // Source analysis — what SERP results informed this blog
     // Stored for the rewrite engine to understand content provenance

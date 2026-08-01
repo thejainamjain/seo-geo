@@ -33,10 +33,13 @@
  *
  * HERO IMAGE:
  *   heroImageUrl starts null. Resolved later — either by the user uploading
- *   one in the editor (see blogService.uploadImage), or automatically via
- *   Unsplash at publish time if still unset (see cms-publish.job.ts). It is
- *   always a separate field, never embedded inline in `content` — the
- *   frontend renders it as its own element (components/editor/hero-image.tsx).
+ *   one directly in the editor (see blogService.uploadImage), or
+ *   automatically at publish time if still unset: first from the project's
+ *   uploaded image pool (lib/hero-image-pool.ts, the primary automatic
+ *   source), falling back to Unsplash only if the pool has nothing left
+ *   (see cms-publish.job.ts). It is always a separate field, never embedded
+ *   inline in `content` — the frontend renders it as its own element
+ *   (components/editor/hero-image.tsx).
  *   (Earlier versions of this job asked the LLM to embed a
  *   {{HERO_IMAGE_URL}} placeholder directly in `content`, meant to be
  *   substituted later — that substitution step was never actually built,
@@ -363,7 +366,7 @@ export async function runBlogGenerationJob(job: Job<BlogJobData>): Promise<void>
 
     // Hero image is a placeholder — replaced at CMS publish time
     // by Unsplash API → Cloudinary .avif pipeline in cms-publish.job.ts
-    heroImageUrl: null, // resolved later — user upload or Unsplash at publish time (see job header comment)
+    heroImageUrl: null, // resolved later — user upload, pool image, or Unsplash at publish time (see job header comment)
 
     // Source analysis — what SERP results informed this blog
     // Stored for the rewrite engine to understand content provenance

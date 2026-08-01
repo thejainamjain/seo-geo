@@ -21,6 +21,7 @@
  *   BusinessContext        5-step onboarding wizard data per project
  *   CmsConfig              CMS type + encrypted credentials + publish schedule
  *   ProjectKnowledgeFile   uploaded docs (PDFs, etc.) for AI context
+ *   ProjectImage           user-uploaded hero image pool (primary image source)
  *   Audit                  one crawl run per project
  *
  * ROUND 3 — SEO Engine
@@ -80,6 +81,9 @@ export type { ICmsConfig } from "./CmsConfig";
 
 export { ProjectKnowledgeFile } from "./ProjectKnowledgeFile";
 export type { IProjectKnowledgeFile } from "./ProjectKnowledgeFile";
+
+export { ProjectImage } from "./ProjectImage";
+export type { IProjectImage } from "./ProjectImage";
 
 export { Audit } from "./Audit";
 export type { IAudit } from "./Audit";

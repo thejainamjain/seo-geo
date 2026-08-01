@@ -1,9 +1,11 @@
-import { Blog, Project, OrganizationMember, Keyword, type IBlog } from '../models';
+import { Blog, Project, OrganizationMember, type IBlog } from '../models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
-import { publishBlog as cmsPushBlog, type BlogPublishPayload } from '../lib/cms';
+import { publishBlogToCms } from '../lib/blog-cms-publisher';
 import { CmsConfig } from '../models/CmsConfig';
 import { uploadToCloudinary } from '../lib/cloudinary';
 import { stripLegacyHeroImagePlaceholder } from '../lib/blog-content';
+import { fetchHeroImageUrl } from '../lib/unsplash';
+import { claimPoolImage } from '../lib/hero-image-pool';
 import { logger } from '../open-tele';
 
 const IMAGE_MAX_BYTES  = 5 * 1024 * 1024; // 5MB — generous for web-optimised images
@@ -204,57 +206,55 @@ export const blogService = {
       throw new ValidationError('No CMS connected — connect a CMS in Settings to publish');
     }
 
-    const payload: BlogPublishPayload = {
-      blogId,
-      title:        blog.title,
-      slug:         blog.slug,
-      description:  blog.description ?? '',
-      content:      blog.content     ?? '',
-      heroImageUrl: blog.heroImageUrl,
-      seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
-      blogPostPath: cmsConfig.blogPostPath,
-      domain:       project.domain,
-    };
+    // Resolve hero image the same way the auto-publish paths do (see
+    // workers/jobs/cms-publish.job.ts and content-generation.job.ts):
+    // keep an existing image if the blog already has one, otherwise claim
+    // one from the project's uploaded image pool (primary source),
+    // otherwise fall back to Unsplash. This was previously only
+    // implemented on the cron path — the manual Publish button shipped
+    // blogs with no image at all unless one had already been set. Fixed
+    // by resolving it here too before delegating to the shared publish
+    // helper below.
+    const context = `blog-service-publish:${projectId}:${blogId}`;
+    let heroImageUrl: string | null = blog.heroImageUrl ?? null;
+    if (!heroImageUrl) {
+      heroImageUrl = await claimPoolImage(projectId, blogId);
+    }
+    if (!heroImageUrl) {
+      heroImageUrl = await fetchHeroImageUrl(blog.title ?? 'business technology', context);
+    }
 
-    const result = await cmsPushBlog(cmsConfig, payload, projectId);
+    // Delegate to the shared publish-and-persist helper (lib/blog-cms-
+    // publisher.ts) instead of pushing to the CMS and updating the Blog
+    // document by hand here — the inline version had drifted from the
+    // shared helper's idempotency guard (which stops a retried Publish
+    // click from creating a duplicate CMS post) and its keyword-status
+    // update, despite that module's header claiming this call site was
+    // already consolidated into it.
+    const result = await publishBlogToCms({
+      blogId,
+      projectId,
+      domain: project.domain,
+      cmsConfig,
+      resolvedHeroImageUrl: heroImageUrl,
+    });
 
     if (!result.success) {
       throw new ValidationError(result.error ?? 'CMS publish failed');
     }
 
-    const now = new Date();
-    blog.status           = 'published';
-    blog.cmsReference     = result.cmsReference;
-    blog.publishedUrl     = result.publishedUrl;
-    blog.publishedDate    = now;
-    blog.publishedContent = blog.content;
-
-    await Blog.findByIdAndUpdate(blogId, {
-      $push: {
-        history: {
-          $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
-          $slice: -50,
-        },
-      },
-    });
-
-    await blog.save();
-
-    // Update keyword status if linked
-    if (blog.keywordId) {
-      await Keyword.findByIdAndUpdate(blog.keywordId, {
-        $set: { status: 'published' },
-      });
-    }
+    const updated = await Blog.findOne({ _id: blogId, projectId });
+    if (!updated) throw new NotFoundError('Blog');
 
     logger.info('Blog published to CMS', {
       projectId,
       blogId,
       cmsType:      cmsConfig.cmsType,
       publishedUrl: result.publishedUrl,
+      skipped:      result.skipped ?? false,
     });
 
-    return blog;
+    return updated;
   },
 
   async unpublishBlog(userId: string, projectId: string, blogId: string) {

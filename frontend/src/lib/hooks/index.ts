@@ -72,6 +72,36 @@ export function useBusinessContext(projectId: string) {
   });
 }
 
+export function usePoolImages(projectId: string) {
+  return useQuery({
+    queryKey: ['poolImages', projectId],
+    queryFn:  () => projectsApi.listPoolImages(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+export function useUploadPoolImage(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (file: File) => projectsApi.uploadPoolImage(projectId, file),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['poolImages', projectId] });
+    },
+  });
+}
+
+export function useDeletePoolImage(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (imageId: string) => projectsApi.deletePoolImage(projectId, imageId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['poolImages', projectId] });
+    },
+  });
+}
+
 export function useSaveOnboardingStep(projectId: string) {
   const queryClient = useQueryClient();
 

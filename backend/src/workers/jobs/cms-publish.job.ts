@@ -18,9 +18,13 @@
  *         Keyword (status → 'published')
  *
  * HERO IMAGE FLOW:
- *   1. fetchHeroImageUrl(keyword) → Unsplash CDN URL (or null if fetch fails)
- *   2. URL is passed as heroImageUrl in BlogPublishPayload
- *   3. Each CMS publisher handles upload/attachment in its own way:
+ *   1. claimPoolImage(projectId, blogId) → the project's own uploaded
+ *      image pool (models/ProjectImage.ts), oldest unclaimed first. This
+ *      is the PRIMARY source.
+ *   2. If the pool has nothing left, fetchHeroImageUrl(keyword) → Unsplash
+ *      CDN URL. Fallback only, not a co-equal "mode".
+ *   3. URL is passed as heroImageUrl in BlogPublishPayload
+ *   4. Each CMS publisher handles upload/attachment in its own way:
  *      - WordPress: uploads to media library → sets featured_media
  *      - Others: embeds URL directly in content or CMS fields
  *   Hero image failure is non-fatal — publish continues without it.
@@ -44,6 +48,7 @@ import { Blog }               from '@/models/Blog';
 import { CmsConfig }          from '@/models/CmsConfig';
 import { publishBlogToCms, isNowAllowedPublishTime } from '@/lib/blog-cms-publisher';
 import { fetchHeroImageUrl }  from '@/lib/unsplash';
+import { claimPoolImage }     from '@/lib/hero-image-pool';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -124,11 +129,17 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
     const context = `cms-publish-cron:${projectId}:${blogId}`;
 
     // ── 7a. Resolve hero image ─────────────────────────────────────────────
-    // Use existing heroImageUrl if already set (e.g. manually assigned),
-    // otherwise fetch from Unsplash using the blog title as the search query.
-    // Falls back to null — publish continues without hero image.
+    // Use existing heroImageUrl if already set (e.g. manually assigned via
+    // the blog editor), otherwise claim one from the project's uploaded
+    // image pool (primary source), otherwise fetch from Unsplash
+    // (fallback), and only then leave it null (publish continues without
+    // an image).
 
     let heroImageUrl: string | null = blog.heroImageUrl ?? null;
+
+    if (!heroImageUrl) {
+      heroImageUrl = await claimPoolImage(projectId, blogId);
+    }
 
     if (!heroImageUrl) {
       // Prefer the blog title for image search — more specific than keyword string

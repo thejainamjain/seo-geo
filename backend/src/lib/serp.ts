@@ -360,7 +360,7 @@ const REGION_TO_COUNTRY_MAP: Array<{ pattern: RegExp; code: string }> = [
   { pattern: /qatar|doha/i,                                                                                code: 'qa' },
   { pattern: /israel|tel aviv|jerusalem/i,                                                                 code: 'il' },
   { pattern: /turkey|t[uü]rkiye|istanbul|ankara/i,                                                         code: 'tr' },
-  { pattern: /united states|\busa\b|new york|california|texas|chicago|los angeles|san francisco | washington dc | seattle | arizona/i,        code: 'us' },
+  { pattern: /united states|\busa\b|new york|california|texas|chicago|los angeles|san francisco/i,        code: 'us' },
 ];
 
 export function deriveCountryCodeFromRegions(

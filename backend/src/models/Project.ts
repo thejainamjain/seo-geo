@@ -75,15 +75,9 @@ export interface IProject extends Document {
   autoBlogConfig?:       Record<string, unknown>;
   keywordPillars?:       Record<string, unknown>;
   blogWriterInstruction?: string;
-  /**
-   * Source for automatically-resolved blog hero images — set in onboarding's
-   * "Blog Post Settings" step. 'stock_photos' (Unsplash, see lib/unsplash.ts)
-   * is the only implemented method; there is no AI-image-generation path in
-   * this app. This is independent of the per-blog manual upload/replace
-   * capability in components/editor/hero-image.tsx, which is always
-   * available regardless of this setting.
-   */
-  heroImageMode?: 'stock_photos';
+  // Note: hero images have no per-project "mode" setting — resolution is
+  // always: the project's uploaded image pool first (see ProjectImage),
+  // then Unsplash as fallback. See lib/hero-image-pool.ts.
 
   // Pipeline state
   pipeline: IPipeline;
@@ -153,10 +147,6 @@ const ProjectSchema = new Schema<IProject>(
     autoBlogConfig:        { type: Schema.Types.Mixed },
     keywordPillars:        { type: Schema.Types.Mixed },
     blogWriterInstruction: { type: String },
-    heroImageMode: {
-      type: String,
-      enum: ['stock_photos'],
-    },
 
     pipeline: { type: PipelineSchema, default: () => ({ status: 'PENDING', steps: defaultSteps() }) },
   },

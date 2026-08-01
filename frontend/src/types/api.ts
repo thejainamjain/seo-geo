@@ -61,9 +61,27 @@ export interface Project {
   isCmsConnected:      boolean;
   isOnboardingComplete: boolean;
   blogWriterInstruction?: string;
-  heroImageMode?: 'stock_photos';
+  // Note: no heroImageMode / defaultHeroImageUrl fields — hero image
+  // resolution is always: the project's uploaded image pool first (see
+  // ProjectImage / the hero-images endpoints below), then Unsplash.
   createdAt:           string;
   updatedAt:           string;
+}
+
+// ── Project image pool ───────────────────────────────────────────────────
+// Uploaded once in Settings ("Image configuration"); primary source for
+// blog hero images, claimed one-per-blog. Unsplash is the fallback once
+// this pool has nothing 'available' left. See backend lib/hero-image-pool.ts.
+
+export interface ProjectImage {
+  _id:           string;
+  projectId:     string;
+  url:           string;
+  status:        'available' | 'used';
+  usedByBlogId?: string;
+  usedAt?:       string;
+  createdAt:     string;
+  updatedAt:     string;
 }
 
 // ── Blog ──────────────────────────────────────────────────────────────────

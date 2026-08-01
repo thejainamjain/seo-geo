@@ -3,6 +3,7 @@ import { apiClient } from './client';
 import type {
   AuthResponse,
   Project,
+  ProjectImage,
   PipelineStatus,
   ResumeResult,
   PipelineStep,
@@ -59,6 +60,28 @@ export const projectsApi = {
 
   startPipeline: (projectId: string) =>
     apiClient.post<StartPipelineResult>(`/projects/${projectId}/pipeline/start`)
+      .then(r => r.data),
+
+  // Hero image pool ("Image configuration" in Settings) — primary source
+  // for blog hero images, no count limit. See routes/api-v1/project.route.ts.
+  listPoolImages: (projectId: string) =>
+    apiClient
+      .get<{ images: ProjectImage[] }>(`/projects/${projectId}/settings/hero-images`)
+      .then(r => r.data.images),
+
+  // multipart/form-data — field name must be exactly 'image' (multer config
+  // on the backend). Mirrors blogsApi.uploadImage's pattern.
+  uploadPoolImage: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    return apiClient
+      .post<{ image: ProjectImage }>(`/projects/${projectId}/settings/hero-images`, formData)
+      .then(r => r.data.image);
+  },
+
+  deletePoolImage: (projectId: string, imageId: string) =>
+    apiClient
+      .delete<{ deleted: boolean }>(`/projects/${projectId}/settings/hero-images/${imageId}`)
       .then(r => r.data),
 };
 

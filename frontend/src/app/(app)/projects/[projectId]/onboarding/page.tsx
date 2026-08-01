@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   useBusinessContext, useSaveOnboardingStep, useStartPipeline, useProject,
   useGscStatus, useUpdateCms,
   useKnowledgeFiles, useUploadKnowledgeFile, useDeleteKnowledgeFile,
+  useUploadPoolImage, useDeletePoolImage, usePoolImages,
 } from '@/lib/hooks';
 import { pipelineApi, gscApi } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -18,8 +20,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger,
+} from '@/components/ui/dialog';
+import {
   Loader2, X, Plus, BarChart2, Wrench, Headphones, Sparkles, Zap,
-  Settings2, CheckCircle2, Trash2, FileStack, Upload,
+  Settings2, CheckCircle2, Trash2, FileStack, Upload, ImageIcon, ImagePlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { KnowledgeFile } from '@/types/api';
@@ -106,13 +111,12 @@ interface WizardData {
   segments: string[];
   competitors: string[];
   writerNotes: string;
-  heroImageMode: 'stock_photos';
   autoPublishMode: 'auto' | 'manual';
 }
 
 const EMPTY_WIZARD_DATA: WizardData = {
   company: {}, product: {}, segments: [], competitors: [],
-  writerNotes: '', heroImageMode: 'stock_photos', autoPublishMode: 'auto',
+  writerNotes: '', autoPublishMode: 'auto',
 };
 
 // ── Step 1: Business (merges old "Company" + "Product & pricing" steps) ─────
@@ -353,6 +357,114 @@ function Step4Integration({ projectId, choice, onChoice }: {
   );
 }
 
+// ── Image configuration dialog ───────────────────────────────────────────────
+// Deliberately NOT a clone of the richer reference UI (brand colors, theme+
+// text-based images, AI-generated fallback) — this app only has two real
+// image sources: the user's uploaded pool (primary, no limit) and Unsplash
+// (automatic fallback once the pool runs out).
+
+function ImageConfigDialog({ projectId }: { projectId: string }) {
+  const [open, setOpen] = useState(false);
+  const { data: images, isLoading } = usePoolImages(projectId);
+  const uploadMut = useUploadPoolImage(projectId);
+  const deleteMut = useDeletePoolImage(projectId);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const availableCount = images?.filter(img => img.status === 'available').length ?? 0;
+  const hasImages = !!images && images.length > 0;
+
+  function handleFile(file: File) {
+    uploadMut.mutate(file);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button type="button" className="text-xs font-medium text-primary hover:underline shrink-0">
+          Configure
+        </button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Image configuration</DialogTitle>
+          <DialogDescription>
+            Upload the images you want used as blog hero images — no limit. We work through them in upload order, one per blog. Unsplash only kicks in automatically once none are left; there&apos;s no AI image generation anywhere in this app.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="rounded-lg border border-border p-3 flex items-start gap-2">
+            <ImageIcon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{availableCount} available</span> to use next
+              {hasImages && images!.some(img => img.status === 'used') && ' — images already used on a past blog are tagged below and won\u2019t be reused'}.
+              Once your uploads run out, new blogs automatically fall back to a relevant Unsplash photo.
+            </p>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+              e.target.value = '';
+            }}
+          />
+
+          {!isLoading && !hasImages && (
+            <p className="text-xs text-muted-foreground">No images added yet.</p>
+          )}
+
+          <div className="grid grid-cols-3 gap-2 max-h-80 overflow-y-auto pr-1">
+            <button
+              type="button"
+              disabled={uploadMut.isPending}
+              onClick={() => fileInputRef.current?.click()}
+              className="aspect-square rounded-md border border-dashed border-border hover:border-muted-foreground/50 hover:bg-muted/30 transition-colors flex flex-col items-center justify-center gap-1 text-muted-foreground"
+            >
+              {uploadMut.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+              <span className="text-[10px] text-center px-1">{uploadMut.isPending ? 'Uploading…' : 'Add image'}</span>
+            </button>
+
+            {isLoading && <div className="aspect-square rounded-md bg-muted animate-pulse" />}
+
+            {images?.map(img => (
+              <div key={img._id} className="relative aspect-square rounded-md overflow-hidden bg-muted group">
+                <Image src={img.url} alt="" fill className="object-cover" />
+                {img.status === 'used' && (
+                  <Badge variant="secondary" className="absolute top-1 left-1 text-[10px] px-1 py-0">
+                    Used
+                  </Badge>
+                )}
+                <button
+                  type="button"
+                  onClick={() => deleteMut.mutate(img._id)}
+                  disabled={deleteMut.isPending}
+                  title="Remove"
+                  className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100"
+                >
+                  <X className="h-4 w-4 text-white" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            PNG, JPEG, WebP, or GIF — max 5MB each.
+          </p>
+
+          {uploadMut.isError && (
+            <p className="text-xs text-destructive">Upload failed — try again.</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Step 5: Blog Post Settings ───────────────────────────────────────────────
 
 function KnowledgeFileRow({ file, onDelete, isDeleting }: {
@@ -392,12 +504,15 @@ function Step5BlogSettings({ projectId, data, onChange }: {
     <div className="space-y-6">
       {/* Images */}
       <div className="border border-border rounded-lg p-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-sm">Images</span>
-          <Badge variant="outline" className="text-xs">Unsplash</Badge>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm">Images</span>
+            <Badge variant="outline" className="text-xs">Your uploads + Unsplash</Badge>
+          </div>
+          <ImageConfigDialog projectId={projectId} />
         </div>
         <p className="text-xs text-muted-foreground">
-          Every generated blog automatically gets a relevant hero image fetched from Unsplash — no setup needed. You can always replace it with your own upload from the blog editor after it&apos;s generated.
+          Blogs use images you upload here first, then automatically fall back to Unsplash once those run out — no setup needed either way. You can always replace a specific blog&apos;s image from its editor after it&apos;s generated.
         </p>
       </div>
 
@@ -597,7 +712,6 @@ export default function OnboardingPage() {
       segments:    businessContextData.customers?.segments ?? [],
       competitors: businessContextData.competition?.mainCompetitors?.map(c => c.domain) ?? [],
       writerNotes: project.blogWriterInstruction ?? '',
-      heroImageMode: 'stock_photos',
     }));
   }
 
@@ -614,7 +728,7 @@ export default function OnboardingPage() {
       case 2: return { customers: { segments: data.segments }, competition: { mainCompetitors: data.competitors } };
       case 3: return {};
       case 4: return {};
-      case 5: return { blogWriterInstruction: data.writerNotes, heroImageMode: data.heroImageMode };
+      case 5: return { blogWriterInstruction: data.writerNotes };
       case 6: return {};
     }
   };
@@ -646,7 +760,6 @@ export default function OnboardingPage() {
 
   // Step 5 gates Continue on an image mode being chosen (matches the
   // target product's "Image settings are required to continue" banner).
-  const canContinue = currentStep !== 5 || !!data.heroImageMode;
 
   // Show loading until BUSINESS_PROFILE completes
   if (!bpDone || isLoadingContext) {
@@ -741,7 +854,7 @@ export default function OnboardingPage() {
                   : 'Complete'}
               </Button>
             ) : (
-              <Button type="button" onClick={handleContinue} disabled={isSaving || !canContinue}>
+              <Button type="button" onClick={handleContinue} disabled={isSaving}>
                 {isSaving
                   ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
                   : 'Continue'}

@@ -101,4 +101,57 @@ export const projectHandler = {
       next(err);
     }
   },
+
+  /**
+   * GET /api/v1/projects/:projectId/settings/hero-images
+   * Lists the project's hero image pool (available + already-used).
+   */
+  async listPoolImages(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const images = await projectService.listPoolImages(
+        req.userId,
+        req.params['projectId'] as string,
+      );
+      res.status(200).json({ images });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * POST /api/v1/projects/:projectId/settings/hero-images
+   * Adds one image to the pool (multipart, field name 'image'). No count limit.
+   */
+  async uploadPoolImage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.file) {
+        res.status(400).json({ message: 'No image provided' });
+        return;
+      }
+      const image = await projectService.uploadPoolImage(
+        req.userId,
+        req.params['projectId'] as string,
+        req.file,
+      );
+      res.status(201).json({ image });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * DELETE /api/v1/projects/:projectId/settings/hero-images/:imageId
+   */
+  async deletePoolImage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await projectService.deletePoolImage(
+        req.userId,
+        req.params['projectId'] as string,
+        req.params['imageId'] as string,
+      );
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
 };

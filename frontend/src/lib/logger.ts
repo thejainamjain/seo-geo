@@ -24,20 +24,16 @@ function format(message: string, context?: LogContext) {
 export const logger = {
   debug(message: string, context?: LogContext) {
     if (process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line no-console
       console.debug(...format(`[debug] ${message}`, context));
     }
   },
   info(message: string, context?: LogContext) {
-    // eslint-disable-next-line no-console
     console.info(...format(`[info] ${message}`, context));
   },
   warn(message: string, context?: LogContext) {
-    // eslint-disable-next-line no-console
     console.warn(...format(`[warn] ${message}`, context));
   },
   error(message: string, context?: LogContext) {
-    // eslint-disable-next-line no-console
     console.error(...format(`[error] ${message}`, context));
   },
 };

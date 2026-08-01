@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { projectHandler } from '@/handlers/project.handler';
 import { requireAuth } from '@/middleware/auth';
@@ -6,6 +7,10 @@ import { validate } from '@/middleware/validate';
 import { resumePipeline, getPipelineStatus } from '@/lib/pipeline-resume';
 
 const router = Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 5 * 1024 * 1024 }, // mirrors blog.route.ts / projectService.uploadPoolImage
+});
 
 // ── Validation schemas ─────────────────────────────────────────────────────
 
@@ -67,6 +72,13 @@ router.post(
   validate(StartPipelineSchema),
   projectHandler.startPipeline,
 );
+
+// Project-level hero image pool — the PRIMARY source for blog hero images
+// (Unsplash is the fallback, see lib/hero-image-pool.ts). No upload count
+// limit by design.
+router.get('/:projectId/settings/hero-images', projectHandler.listPoolImages);
+router.post('/:projectId/settings/hero-images', upload.single('image'), projectHandler.uploadPoolImage);
+router.delete('/:projectId/settings/hero-images/:imageId', projectHandler.deletePoolImage);
 
 // Pipeline status + resume (existing)
 router.get('/:id/pipeline/status', async (req, res, next) => {

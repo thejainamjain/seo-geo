@@ -1,13 +1,20 @@
 import { Queue } from 'bullmq';
-import { Project, OrganizationMember, BusinessContext } from '../models';
+import { Project, OrganizationMember, BusinessContext, ProjectImage } from '../models';
 import { QUEUE_NAMES, JOB_RETRY_CONFIG, JOB_PRIORITY, PIPELINE_STEP } from '../constants/seo-pipeline.constants';
 import { getConnectionOptions } from '../loaders/redis';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../utils/errors';
+import { uploadToCloudinary, deleteFromCloudinary } from '../lib/cloudinary';
 import { logger } from '../open-tele';
 
 const seoPipelineQueue = new Queue(QUEUE_NAMES.SEO_PIPELINE, {
   connection: getConnectionOptions(),
 });
+
+// Mirrors blog.service.ts's IMAGE_MAX_BYTES/IMAGE_ALLOWED_MIMES — same kind
+// of upload (a hero image), kept as separate constants rather than a shared
+// import since the two services don't otherwise depend on each other.
+const IMAGE_MAX_BYTES  = 5 * 1024 * 1024;
+const IMAGE_ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 // ── Step data shapes ───────────────────────────────────────────────────────
 //
@@ -26,10 +33,11 @@ const seoPipelineQueue = new Queue(QUEUE_NAMES.SEO_PIPELINE, {
 //                                         flow handles itself — see gscApi)
 //   UI step 4 "Site Integration"       → no BusinessContext field (CMS setup
 //                                         handled by cmsApi)
-//   UI step 5 "Blog Post Settings"     → Project.blogWriterInstruction +
-//                                         Project.heroImageMode (knowledge
-//                                         files are their own collection,
-//                                         handled by knowledgeApi)
+//   UI step 5 "Blog Post Settings"     → Project.blogWriterInstruction
+//                                         (knowledge files and the hero
+//                                         image pool are their own
+//                                         collections — knowledgeApi and
+//                                         ProjectImage respectively)
 //   UI step 6 "Auto Publish"           → marks isOnboardingComplete
 // socialProof isn't part of the wizard at all anymore (not in the current
 // product flow) — the AI still drafts it, it's just not reviewed here.
@@ -200,15 +208,13 @@ export const projectService = {
       }
 
       case 5: {
-        // "Blog Post Settings" — writer notes + hero image mode live on
-        // Project (not BusinessContext); knowledge files are their own
-        // collection, already handled by knowledgeApi.
+        // "Blog Post Settings" — writer notes live on Project (not
+        // BusinessContext); knowledge files and the hero image pool are
+        // their own collections, handled elsewhere (knowledgeApi and
+        // projectService.uploadPoolImage respectively).
         const projectUpdate: Record<string, unknown> = {};
         if (typeof data.blogWriterInstruction === 'string') {
           projectUpdate.blogWriterInstruction = data.blogWriterInstruction;
-        }
-        if (typeof data.heroImageMode === 'string') {
-          projectUpdate.heroImageMode = data.heroImageMode;
         }
         if (Object.keys(projectUpdate).length > 0) {
           await Project.findByIdAndUpdate(project._id, projectUpdate);
@@ -336,5 +342,81 @@ export const projectService = {
   // Legacy — kept so route doesn't break
   async startPipeline(userId: string, projectId: string) {
     return projectService.resumeAfterOnboarding(userId, projectId);
+  },
+
+  /**
+   * Lists every image in the project's hero-image pool (uploaded in
+   * Settings), newest first — both 'available' and 'used' ones, so the
+   * settings UI can show which images have already been claimed by a
+   * blog (matching the reference UI's "images already used in past
+   * blogs are tagged below").
+   */
+  async listPoolImages(userId: string, projectId: string) {
+    await projectService.getProject(userId, projectId); // access check
+
+    return ProjectImage.find({ projectId }).sort({ createdAt: -1 }).lean();
+  },
+
+  /**
+   * Uploads an image into the project's hero-image pool — the PRIMARY
+   * source for blog hero images (see lib/hero-image-pool.ts). No count
+   * limit by design. Same validation limits as blogService.uploadImage,
+   * kept in sync deliberately since both are "upload an image that
+   * becomes a hero image" operations.
+   */
+  async uploadPoolImage(userId: string, projectId: string, file: Express.Multer.File) {
+    logger.debug('projectService.uploadPoolImage', {
+      userId, projectId, mimeType: file.mimetype, sizeBytes: file.size,
+    });
+
+    await projectService.getProject(userId, projectId); // access check
+
+    if (!IMAGE_ALLOWED_MIMES.includes(file.mimetype)) {
+      logger.warn('Pool image upload rejected — invalid type', {
+        projectId, mimeType: file.mimetype,
+      });
+      throw new ValidationError(
+        `Invalid image type: ${file.mimetype}. Allowed: PNG, JPEG, WebP, GIF`,
+      );
+    }
+    if (file.size > IMAGE_MAX_BYTES) {
+      logger.warn('Pool image upload rejected — too large', {
+        projectId, sizeBytes: file.size,
+      });
+      throw new ValidationError('Image exceeds 5MB limit');
+    }
+
+    const { url, publicId } = await uploadToCloudinary(
+      file.buffer,
+      `${projectId}-pool-${Date.now()}-${file.originalname}`,
+      { folder: 'project-hero-image-pool', resourceType: 'image' },
+    );
+
+    const image = await ProjectImage.create({ projectId, url, publicId, status: 'available' });
+
+    logger.info('Pool image uploaded', { projectId, imageId: String(image._id) });
+    return image;
+  },
+
+  /**
+   * Removes one image from the pool. Deliberately allowed regardless of
+   * whether the image is 'available' or already 'used' — deleting it
+   * here doesn't touch any blog that already claimed it, since the
+   * claimed URL was copied onto that Blog's heroImageUrl directly (not a
+   * reference back to this collection).
+   */
+  async deletePoolImage(userId: string, projectId: string, imageId: string) {
+    logger.debug('projectService.deletePoolImage', { userId, projectId, imageId });
+
+    await projectService.getProject(userId, projectId); // access check
+
+    const image = await ProjectImage.findOne({ _id: imageId, projectId });
+    if (!image) throw new NotFoundError('Pool image');
+
+    await deleteFromCloudinary(image.publicId, 'image');
+    await image.deleteOne();
+
+    logger.info('Pool image deleted', { projectId, imageId });
+    return { deleted: true };
   },
 };

@@ -44,11 +44,12 @@ import { Blog }              from '@/models/Blog';
 import { CmsConfig }         from '@/models/CmsConfig';
 import { searchOrganic, deriveCountryCodeFromRegions } from '@/lib/serp';
 import { analyzeSerpResults, generateBlogPost }        from '@/lib/llm';
-import { publishBlog }       from '@/lib/cms';
+import { publishBlogToCms, isNowAllowedPublishTime } from '@/lib/blog-cms-publisher';
+import { fetchHeroImageUrl } from '@/lib/unsplash';
+import { claimPoolImage } from '@/lib/hero-image-pool';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
 import { findRelevantKnowledge, findRelevantLearnings, formatChunksForPrompt } from '@/lib/vector-search';
 import { formatBusinessContext } from '@/lib/business-context-formatter';
-import type { BlogPublishPayload } from '@/lib/cms';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -100,15 +101,6 @@ function formatSerpBrief(briefJson: string | undefined): string {
   } catch {
     return '';
   }
-}
-
-// ── Day check (same as cms-publish.job.ts) ────────────────────────────────
-
-function isNowAllowedPublishTime(allowedDays: number[], publishHourUtc: number): boolean {
-  const now      = new Date();
-  const todayUtc = now.getUTCDay();
-  const hourUtc  = now.getUTCHours();
-  return allowedDays.includes(todayUtc) && hourUtc >= publishHourUtc;
 }
 
 // ── Main job handler ───────────────────────────────────────────────────────
@@ -382,10 +374,10 @@ export async function runContentGenerationJob(
 // ── CMS publish helper ─────────────────────────────────────────────────────
 
 async function handlePublish(
-  projectId: string,
-  keywordId: string,
-  blogId:    string,
-  domain:    string,
+  projectId:  string,
+  keywordId:  string,
+  blogId:     string,
+  domain:     string,
   blogStatus: string,
 ): Promise<void> {
   // Only publish 'ready' blogs
@@ -422,43 +414,38 @@ async function handlePublish(
   const blog = await Blog.findById(blogId).lean();
   if (!blog) return;
 
-  const payload: BlogPublishPayload = {
-    blogId,
-    title:        blog.title,
-    slug:         blog.slug,
-    description:  blog.description ?? '',
-    content:      blog.content ?? '',
-    heroImageUrl: blog.heroImageUrl,
-    seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
-    blogPostPath: cmsConfig.blogPostPath,
-    domain,
-  };
+  const context = `content-generation-publish:${projectId}:${blogId}`;
+
+  // Resolve hero image (see workers/jobs/cms-publish.job.ts's identical
+  // logic): keep an existing image, otherwise claim one from the
+  // project's uploaded image pool (primary source), otherwise fall back
+  // to Unsplash. This is the path a freshly-generated auto-published blog
+  // actually takes — blog-generation.job.ts always creates blogs with
+  // heroImageUrl: null — so without this resolution step, every
+  // auto-published blog shipped with no image at all.
+  let heroImageUrl: string | null = blog.heroImageUrl ?? null;
+  if (!heroImageUrl) {
+    heroImageUrl = await claimPoolImage(projectId, blogId);
+  }
+  if (!heroImageUrl) {
+    heroImageUrl = await fetchHeroImageUrl(blog.title ?? 'business technology', context);
+  }
 
   try {
-    const result = await publishBlog(cmsConfig, payload, projectId);
+    // Delegate to the shared publish-and-persist helper instead of pushing
+    // to the CMS and updating the Blog document by hand here (see
+    // blogService.publishBlog for the identical fix and reasoning).
+    const result = await publishBlogToCms({
+      blogId,
+      projectId,
+      domain,
+      cmsConfig,
+      resolvedHeroImageUrl: heroImageUrl,
+    });
 
     if (!result.success) {
       throw new Error(result.error ?? 'CMS publish returned success:false');
     }
-
-    const now = new Date();
-    await Blog.findByIdAndUpdate(blogId, {
-      $set: {
-        status:           'published',
-        cmsReference:     result.cmsReference,
-        publishedUrl:     result.publishedUrl,
-        publishedDate:    now,
-        publishedContent: blog.content ?? '',
-      },
-      $push: {
-        history: {
-          $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
-          $slice: -50,
-        },
-      },
-    });
-
-    await Keyword.findByIdAndUpdate(keywordId, { $set: { status: 'published' } });
 
     logger.info('Blog published to CMS', {
       projectId,
@@ -466,6 +453,7 @@ async function handlePublish(
       keywordId,
       cmsType:      cmsConfig.cmsType,
       publishedUrl: result.publishedUrl,
+      skipped:      result.skipped ?? false,
     });
 
   } catch (publishErr) {

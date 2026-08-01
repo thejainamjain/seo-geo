@@ -98,11 +98,17 @@ export const blogService = {
     if (!blog) throw new NotFoundError('Blog');
 
     if (!IMAGE_ALLOWED_MIMES.includes(file.mimetype)) {
+      logger.warn('Blog image upload rejected — invalid type', {
+        projectId, blogId, mimeType: file.mimetype,
+      });
       throw new ValidationError(
         `Invalid image type: ${file.mimetype}. Allowed: PNG, JPEG, WebP, GIF`,
       );
     }
     if (file.size > IMAGE_MAX_BYTES) {
+      logger.warn('Blog image upload rejected — too large', {
+        projectId, blogId, sizeBytes: file.size,
+      });
       throw new ValidationError('Image exceeds 5MB limit');
     }
 

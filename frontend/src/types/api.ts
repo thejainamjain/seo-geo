@@ -61,7 +61,7 @@ export interface Project {
   isCmsConnected:      boolean;
   isOnboardingComplete: boolean;
   blogWriterInstruction?: string;
-  heroImageMode?: 'ai_generated' | 'stock_photos' | 'custom_upload';
+  heroImageMode?: 'stock_photos';
   createdAt:           string;
   updatedAt:           string;
 }

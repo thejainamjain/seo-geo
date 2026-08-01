@@ -106,13 +106,13 @@ interface WizardData {
   segments: string[];
   competitors: string[];
   writerNotes: string;
-  heroImageMode: '' | 'ai_generated' | 'stock_photos' | 'custom_upload';
+  heroImageMode: 'stock_photos';
   autoPublishMode: 'auto' | 'manual';
 }
 
 const EMPTY_WIZARD_DATA: WizardData = {
   company: {}, product: {}, segments: [], competitors: [],
-  writerNotes: '', heroImageMode: '', autoPublishMode: 'auto',
+  writerNotes: '', heroImageMode: 'stock_photos', autoPublishMode: 'auto',
 };
 
 // ── Step 1: Business (merges old "Company" + "Product & pricing" steps) ─────
@@ -388,51 +388,17 @@ function Step5BlogSettings({ projectId, data, onChange }: {
   const uploadMut = useUploadKnowledgeFile(projectId);
   const deleteMut = useDeleteKnowledgeFile(projectId);
 
-  const IMAGE_MODES: Array<{ value: WizardData['heroImageMode']; label: string; note?: string }> = [
-    { value: 'ai_generated', label: 'AI-generated' },
-    { value: 'stock_photos', label: 'Stock photos' },
-    { value: 'custom_upload', label: 'Custom upload', note: 'Mode preference saves, but there\u2019s no upload UI wired for this yet — flagging rather than faking it.' },
-  ];
-
   return (
     <div className="space-y-6">
-      {!data.heroImageMode && (
-        <Alert>
-          <AlertDescription>
-            Image settings are required to continue onboarding. Knowledge base and writer notes are optional; you can configure them later in Settings.
-          </AlertDescription>
-        </Alert>
-      )}
-
       {/* Images */}
-      <div className="border border-border rounded-lg p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-sm">Images</span>
-            <Badge variant="outline" className="text-xs">Required</Badge>
-          </div>
+      <div className="border border-border rounded-lg p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-sm">Images</span>
+          <Badge variant="outline" className="text-xs">Unsplash</Badge>
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          {IMAGE_MODES.map(mode => (
-            <button
-              key={mode.value}
-              type="button"
-              title={mode.note}
-              onClick={() => onChange({ ...data, heroImageMode: mode.value })}
-              className={cn(
-                'border rounded-md px-3 py-2 text-xs text-center transition-colors',
-                data.heroImageMode === mode.value ? 'border-foreground bg-accent/50 font-medium' : 'border-border hover:bg-accent/30',
-              )}
-            >
-              {mode.label}
-            </button>
-          ))}
-        </div>
-        {data.heroImageMode === 'custom_upload' && (
-          <p className="text-xs text-muted-foreground">
-            Custom upload isn&apos;t wired to an actual upload endpoint yet — the mode preference will save, but there&apos;s nowhere to upload the images themselves right now.
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground">
+          Every generated blog automatically gets a relevant hero image fetched from Unsplash — no setup needed. You can always replace it with your own upload from the blog editor after it&apos;s generated.
+        </p>
       </div>
 
       {/* Knowledge base */}
@@ -631,7 +597,7 @@ export default function OnboardingPage() {
       segments:    businessContextData.customers?.segments ?? [],
       competitors: businessContextData.competition?.mainCompetitors?.map(c => c.domain) ?? [],
       writerNotes: project.blogWriterInstruction ?? '',
-      heroImageMode: project.heroImageMode ?? '',
+      heroImageMode: 'stock_photos',
     }));
   }
 

@@ -1,11 +1,12 @@
 'use client';
 
 import { use, useState } from 'react';
-import { useBlog, useUpdateBlogStatus, useUpdateBlogContent } from '@/lib/hooks';
+import { useBlog, useUpdateBlogStatus, useUpdateBlogContent, useUploadBlogImage } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor } from '@/components/editor/rich-text-editor';
+import { HeroImage } from '@/components/editor/hero-image';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
@@ -22,18 +23,21 @@ export default function BlogDetailPage({
   const { data: blog, isLoading } = useBlog(projectId, blogId);
   const updateStatus  = useUpdateBlogStatus(projectId);
   const updateContent = useUpdateBlogContent(projectId);
+  const uploadImage   = useUploadBlogImage(projectId);
 
-  const [editing,      setEditing]      = useState(false);
-  const [editTitle,    setEditTitle]    = useState('');
-  const [editDesc,     setEditDesc]     = useState('');
-  const [editContent,  setEditContent]  = useState('');
-  const [saveFeedback, setSaveFeedback] = useState('');
+  const [editing,        setEditing]        = useState(false);
+  const [editTitle,      setEditTitle]      = useState('');
+  const [editDesc,       setEditDesc]       = useState('');
+  const [editContent,    setEditContent]    = useState('');
+  const [editHeroImage,  setEditHeroImage]  = useState<string | null>(null);
+  const [saveFeedback,   setSaveFeedback]   = useState('');
 
   function startEdit() {
     if (!blog) return;
     setEditTitle(blog.title ?? '');
     setEditDesc(blog.description ?? '');
     setEditContent(blog.content ?? '');
+    setEditHeroImage(blog.heroImageUrl ?? null);
     setEditing(true);
   }
 
@@ -44,13 +48,15 @@ export default function BlogDetailPage({
 
   function saveEdit() {
     if (!blog) return;
+    const heroChanged = editHeroImage !== (blog.heroImageUrl ?? null);
     updateContent.mutate(
       {
         blogId,
         payload: {
-          title:       editTitle       !== blog.title       ? editTitle       : undefined,
-          description: editDesc        !== blog.description ? editDesc        : undefined,
-          content:     editContent     !== blog.content     ? editContent     : undefined,
+          title:        editTitle       !== blog.title       ? editTitle       : undefined,
+          description:  editDesc        !== blog.description ? editDesc        : undefined,
+          content:      editContent     !== blog.content     ? editContent     : undefined,
+          heroImageUrl: heroChanged ? editHeroImage : undefined,
         },
       },
       {
@@ -209,15 +215,20 @@ export default function BlogDetailPage({
 
         {/* Content tab */}
         <TabsContent value="content">
+          <HeroImage
+            url={editing ? editHeroImage : (blog.heroImageUrl ?? null)}
+            onChange={setEditHeroImage}
+            uploadImage={file => uploadImage.mutateAsync({ blogId, file })}
+            editable={editing}
+          />
           {editing ? (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">
-                Editing raw HTML. Changes are saved as a new version in history.
+                Changes are saved as a new version in history.
               </p>
-              <Textarea
-                value={editContent}
-                onChange={e => setEditContent(e.target.value)}
-                className="font-mono text-xs min-h-[600px] resize-y"
+              <RichTextEditor
+                content={editContent}
+                onChange={setEditContent}
               />
             </div>
           ) : blog.content ? (

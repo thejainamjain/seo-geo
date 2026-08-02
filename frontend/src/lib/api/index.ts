@@ -62,6 +62,24 @@ export const projectsApi = {
     apiClient.post<StartPipelineResult>(`/projects/${projectId}/pipeline/start`)
       .then(r => r.data),
 
+  // Image configuration — brand color, blog theme toggle, hero image
+  // fallback mode. Partial update; only send the field(s) that changed.
+  updateSettings: (projectId: string, updates: {
+    brandColor?:            string;
+    useDefaultBlogTheme?:   boolean;
+    heroImageFallbackMode?: 'unsplash' | 'text_card';
+  }) =>
+    apiClient
+      .patch<{ project: Project }>(`/projects/${projectId}/settings`, updates)
+      .then(r => r.data.project),
+
+  // Preview-only — does not save. UI should call updateSettings with the
+  // returned color if the user confirms it.
+  detectBrandColor: (projectId: string) =>
+    apiClient
+      .post<{ color: string | null }>(`/projects/${projectId}/settings/brand-color/detect`)
+      .then(r => r.data.color),
+
   // Hero image pool ("Image configuration" in Settings) — primary source
   // for blog hero images, no count limit. See routes/api-v1/project.route.ts.
   listPoolImages: (projectId: string) =>

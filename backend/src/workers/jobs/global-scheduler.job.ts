@@ -92,6 +92,44 @@ function todayKey(): string {
   return new Date().toISOString().split('T')[0]!; // "2026-06-29"
 }
 
+// ── Orphaned repeatable job cleanup ────────────────────────────────────────
+
+/**
+ * geoAnalyticsQueue / gscMonitorQueue exist ONLY to receive per-project,
+ * one-off fan-out jobs (added with a plain `{ projectId }` payload — see
+ * runGeoAnalyticsScheduler/runGscMonitorScheduler below). An earlier
+ * version of this system mistakenly registered the weekly cron as a
+ * BullMQ repeatable job directly on these two queues instead of on the
+ * dedicated scheduler queue (see scheduler.worker.ts's registerSchedulers,
+ * which now does this correctly). BullMQ repeatable job definitions are
+ * stored in Redis independently of the code that created them, so fixing
+ * the registration code did NOT remove the already-scheduled cron — it
+ * kept firing every week with an empty `{}` payload, and every fire
+ * failed 3 times with "Project not found: undefined" (job.data.projectId
+ * was never set, since a repeat job carries no per-project data). See
+ * runGeoAnalyticsJob/runGscMonitorJob's projectId guard for the
+ * complementary fix that makes any future misuse fail fast instead of
+ * retrying uselessly.
+ *
+ * Idempotent and safe to run on every boot: once the stale entries are
+ * gone this is a no-op, and it can never remove a legitimate job since
+ * these queues are never supposed to hold a repeatable one.
+ */
+export async function removeOrphanedRepeatableJobs(): Promise<void> {
+  for (const queue of [geoAnalyticsQueue, gscMonitorQueue]) {
+    const repeatables = await queue.getRepeatableJobs();
+    for (const repeatable of repeatables) {
+      await queue.removeRepeatableByKey(repeatable.key);
+      logger.warn('Removed orphaned repeatable job from per-project queue', {
+        queue:   queue.name,
+        jobName: repeatable.name,
+        pattern: repeatable.pattern,
+        key:     repeatable.key,
+      });
+    }
+  }
+}
+
 // ── Scheduler 1: GEO analytics fan-out ────────────────────────────────────
 
 export async function runGeoAnalyticsScheduler(): Promise<void> {
@@ -223,7 +261,7 @@ export async function runCmsResyncRetryScheduler(): Promise<void> {
         autoPublish:          cmsConfig.autoPublish,
         allowedPublishDays:   cmsConfig.allowedPublishDays,
         publishHourUtc:       cmsConfig.publishHourUtc,
-      });
+      }, project.brandColor, project.useDefaultBlogTheme);
 
       if (result.success) {
         await BlogOptimization.updateOne({ _id: record._id }, { $set: { cmsResyncPending: false } });

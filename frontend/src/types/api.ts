@@ -63,7 +63,11 @@ export interface Project {
   blogWriterInstruction?: string;
   // Note: no heroImageMode / defaultHeroImageUrl fields — hero image
   // resolution is always: the project's uploaded image pool first (see
-  // ProjectImage / the hero-images endpoints below), then Unsplash.
+  // ProjectImage / the hero-images endpoints below), then the fallback
+  // mode below.
+  brandColor?:            string;
+  useDefaultBlogTheme?:   boolean;
+  heroImageFallbackMode?: 'unsplash' | 'text_card';
   createdAt:           string;
   updatedAt:           string;
 }

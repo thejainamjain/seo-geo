@@ -154,4 +154,41 @@ export const projectHandler = {
       next(err);
     }
   },
+
+  /**
+   * PATCH /api/v1/projects/:projectId/settings
+   * Body validated by UpdateProjectSettingsSchema (route-level zod).
+   */
+  async updateSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const project = await projectService.updateSettings(
+        req.userId,
+        req.params['projectId'] as string,
+        req.body as {
+          brandColor?:            string;
+          useDefaultBlogTheme?:   boolean;
+          heroImageFallbackMode?: 'unsplash' | 'text_card';
+        },
+      );
+      res.status(200).json({ project });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * POST /api/v1/projects/:projectId/settings/brand-color/detect
+   * Preview-only — does not save. Returns { color: string | null }.
+   */
+  async detectBrandColor(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await projectService.detectBrandColorForProject(
+        req.userId,
+        req.params['projectId'] as string,
+      );
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
 };

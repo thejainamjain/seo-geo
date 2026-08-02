@@ -44,6 +44,7 @@ import { Keyword } from '@/models/Keyword';
 import { logger } from '@/open-tele';
 import { publishBlog as cmsPushBlog, type BlogPublishPayload, type CmsConfigForPublish } from '@/lib/cms';
 import { stripLegacyHeroImagePlaceholder } from '@/lib/blog-content';
+import { applyDefaultBlogTheme } from '@/lib/blog-theme';
 
 /**
  * True if right now falls within a project's configured publish window
@@ -72,6 +73,14 @@ export interface PublishBlogToCmsOptions {
    *  before publishing if none is set yet). Omit to use the blog's
    *  existing heroImageUrl as-is. */
   resolvedHeroImageUrl?: string | null;
+  /** Project.brandColor — passed through to applyDefaultBlogTheme when
+   *  useDefaultBlogTheme is true. Ignored otherwise. */
+  brandColor?: string;
+  /** Project.useDefaultBlogTheme — when true, lib/blog-theme.ts's scoped
+   *  typography <style> block is injected into content before it's sent
+   *  to the CMS. See "CONTENT THEMING" note below for why this changes
+   *  what publishedContent stores but not what `history` stores. */
+  useDefaultBlogTheme?: boolean;
 }
 
 export interface PublishBlogToCmsResult {
@@ -120,12 +129,22 @@ export async function publishBlogToCms(opts: PublishBlogToCmsOptions): Promise<P
     logger.info('Stripped legacy hero-image placeholder before CMS publish', { context, blogId });
   }
 
+  // CONTENT THEMING: `cmsContent` (what actually gets sent to the CMS, and
+  // what publishedContent below records) gets the theme wrapper.
+  // `cleanContent` — un-themed — is what goes into `history`, so a later
+  // "revert to this version" in the editor never restores theme-wrapper
+  // HTML into an editable draft. The theme is a publish-time presentation
+  // layer, not part of the content itself.
+  const cmsContent = opts.useDefaultBlogTheme
+    ? applyDefaultBlogTheme(cleanContent, opts.brandColor)
+    : cleanContent;
+
   const payload: BlogPublishPayload = {
     blogId,
     title:        blog.title,
     slug:         blog.slug,
     description:  blog.description ?? '',
-    content:      cleanContent,
+    content:      cmsContent,
     heroImageUrl: heroImageUrl ?? undefined,
     seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
     blogPostPath: cmsConfig.blogPostPath,
@@ -146,12 +165,12 @@ export async function publishBlogToCms(opts: PublishBlogToCmsOptions): Promise<P
       cmsReference:     result.cmsReference,
       publishedUrl:     result.publishedUrl,
       publishedDate:    now,
-      publishedContent: blog.content ?? '',
+      publishedContent: cmsContent,
       ...(opts.resolvedHeroImageUrl !== undefined ? { heroImageUrl: opts.resolvedHeroImageUrl } : {}),
     },
     $push: {
       history: {
-        $each:  [{ content: blog.content ?? '', status: 'published', writer: 'system', createdAt: now }],
+        $each:  [{ content: cleanContent, status: 'published', writer: 'system', createdAt: now }],
         $slice: -50,
       },
     },
@@ -210,6 +229,8 @@ export async function updateBlogOnCms(
   projectId: string,
   domain:    string,
   cmsConfig: CmsConfigForPublish,
+  brandColor?: string,
+  useDefaultBlogTheme?: boolean,
 ): Promise<UpdateBlogOnCmsResult> {
   const context = `blog-cms-updater:${projectId}:${blogId}`;
 
@@ -234,12 +255,20 @@ export async function updateBlogOnCms(
     return { success: false, error: 'Blog has no cmsReference — nothing to update, use publishBlogToCms() instead' };
   }
 
+  // Same theming as publishBlogToCms — see that function's CONTENT
+  // THEMING note. A resync needs to reapply the theme too, or an
+  // approved-rewrite resync would silently strip it from an
+  // already-themed live post.
+  const cmsContent = useDefaultBlogTheme
+    ? applyDefaultBlogTheme(blog.content ?? '', brandColor)
+    : (blog.content ?? '');
+
   const payload: BlogPublishPayload = {
     blogId,
     title:        blog.title,
     slug:         blog.slug,
     description:  blog.description ?? '',
-    content:      blog.content     ?? '',
+    content:      cmsContent,
     heroImageUrl: blog.heroImageUrl ?? undefined,
     seoSchema:    blog.seoSchema as Record<string, unknown> | undefined,
     blogPostPath: cmsConfig.blogPostPath,
@@ -261,7 +290,7 @@ export async function updateBlogOnCms(
     $set: {
       cmsReference:      result.cmsReference ?? blog.cmsReference,
       publishedUrl:      result.publishedUrl ?? blog.publishedUrl,
-      publishedContent:  blog.content ?? '',
+      publishedContent:  cmsContent,
     },
   });
 

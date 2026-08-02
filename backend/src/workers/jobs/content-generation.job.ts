@@ -45,8 +45,7 @@ import { CmsConfig }         from '@/models/CmsConfig';
 import { searchOrganic, deriveCountryCodeFromRegions } from '@/lib/serp';
 import { analyzeSerpResults, generateBlogPost }        from '@/lib/llm';
 import { publishBlogToCms, isNowAllowedPublishTime } from '@/lib/blog-cms-publisher';
-import { fetchHeroImageUrl } from '@/lib/unsplash';
-import { claimPoolImage } from '@/lib/hero-image-pool';
+import { resolveHeroImage } from '@/lib/hero-image-resolver';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
 import { findRelevantKnowledge, findRelevantLearnings, formatChunksForPrompt } from '@/lib/vector-search';
 import { formatBusinessContext } from '@/lib/business-context-formatter';
@@ -235,7 +234,13 @@ export async function runContentGenerationJob(
         blogId: String(existingBlog._id),
       });
       // Jump straight to publish check below
-      await handlePublish(projectId, keywordId, String(existingBlog._id), project.domain, existingBlog.status);
+      await handlePublish({
+        projectId, keywordId, blogId: String(existingBlog._id), domain: project.domain,
+        blogStatus: existingBlog.status,
+        brandColor: project.brandColor,
+        heroImageFallbackMode: project.heroImageFallbackMode,
+        useDefaultBlogTheme: project.useDefaultBlogTheme,
+      });
       return;
     }
 
@@ -355,7 +360,13 @@ export async function runContentGenerationJob(
 
     // ── 6. CMS publish (if autoPublish enabled) ───────────────────────────
 
-    await handlePublish(projectId, keywordId, String(blog._id), project.domain, 'ready');
+    await handlePublish({
+      projectId, keywordId, blogId: String(blog._id), domain: project.domain,
+      blogStatus: 'ready',
+      brandColor: project.brandColor,
+      heroImageFallbackMode: project.heroImageFallbackMode,
+      useDefaultBlogTheme: project.useDefaultBlogTheme,
+    });
 
   } catch (err) {
     // If anything threw after we set status to 'generating',
@@ -373,13 +384,20 @@ export async function runContentGenerationJob(
 
 // ── CMS publish helper ─────────────────────────────────────────────────────
 
-async function handlePublish(
-  projectId:  string,
-  keywordId:  string,
-  blogId:     string,
-  domain:     string,
-  blogStatus: string,
-): Promise<void> {
+interface HandlePublishOptions {
+  projectId:  string;
+  keywordId:  string;
+  blogId:     string;
+  domain:     string;
+  blogStatus: string;
+  brandColor?:            string;
+  heroImageFallbackMode?: 'unsplash' | 'text_card';
+  useDefaultBlogTheme?:   boolean;
+}
+
+async function handlePublish(opts: HandlePublishOptions): Promise<void> {
+  const { projectId, keywordId, blogId, domain, blogStatus, brandColor, heroImageFallbackMode, useDefaultBlogTheme } = opts;
+
   // Only publish 'ready' blogs
   if (blogStatus !== 'ready') return;
 
@@ -416,20 +434,20 @@ async function handlePublish(
 
   const context = `content-generation-publish:${projectId}:${blogId}`;
 
-  // Resolve hero image (see workers/jobs/cms-publish.job.ts's identical
-  // logic): keep an existing image, otherwise claim one from the
-  // project's uploaded image pool (primary source), otherwise fall back
-  // to Unsplash. This is the path a freshly-generated auto-published blog
-  // actually takes — blog-generation.job.ts always creates blogs with
-  // heroImageUrl: null — so without this resolution step, every
+  // Resolve hero image via the single shared resolver (lib/hero-image-
+  // resolver.ts) — this is the path a freshly-generated auto-published
+  // blog actually takes (blog-generation.job.ts always creates blogs
+  // with heroImageUrl: null), so without this resolution step, every
   // auto-published blog shipped with no image at all.
-  let heroImageUrl: string | null = blog.heroImageUrl ?? null;
-  if (!heroImageUrl) {
-    heroImageUrl = await claimPoolImage(projectId, blogId);
-  }
-  if (!heroImageUrl) {
-    heroImageUrl = await fetchHeroImageUrl(blog.title ?? 'business technology', context);
-  }
+  const heroImageUrl = await resolveHeroImage({
+    projectId,
+    blogId,
+    blogTitle: blog.title,
+    existingHeroImageUrl: blog.heroImageUrl,
+    brandColor,
+    fallbackMode: heroImageFallbackMode,
+    context,
+  });
 
   try {
     // Delegate to the shared publish-and-persist helper instead of pushing
@@ -441,6 +459,8 @@ async function handlePublish(
       domain,
       cmsConfig,
       resolvedHeroImageUrl: heroImageUrl,
+      brandColor,
+      useDefaultBlogTheme,
     });
 
     if (!result.success) {

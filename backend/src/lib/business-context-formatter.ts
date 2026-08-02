@@ -1,3 +1,5 @@
+import { normalizeToStringArray } from '../utils/normalize';
+
 /**
  * Shared utility — formats BusinessContext into a compact string for LLM prompts.
  * Used by: blog-generation.job.ts, content-generation.job.ts
@@ -16,8 +18,12 @@ export function formatBusinessContext(bc: {
 
   if (bc.company?.name)                lines.push(`Company: ${bc.company.name}`);
   if (bc.company?.description)         lines.push(`About: ${bc.company.description}`);
-  if (bc.company?.targetRegions?.length)
-    lines.push(`Markets: ${bc.company.targetRegions.join(', ')}`);
+  // Defensive: company is Schema.Types.Mixed on the backend, so this
+  // string[] type is not enforced at the DB layer — a legacy record can
+  // still hold targetRegions as a plain string. See utils/normalize.ts.
+  const targetRegions = normalizeToStringArray(bc.company?.targetRegions);
+  if (targetRegions.length)
+    lines.push(`Markets: ${targetRegions.join(', ')}`);
   if (bc.product?.whatItSells)         lines.push(`Product: ${bc.product.whatItSells}`);
   if (bc.product?.keyFeatures)         lines.push(`Features: ${bc.product.keyFeatures}`);
   if (bc.product?.pricingTiers)        lines.push(`Pricing: ${bc.product.pricingTiers}`);

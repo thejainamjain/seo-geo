@@ -43,6 +43,15 @@ const StartPipelineSchema = z.object({
   keywordPrimaryCountryCode: z.string().optional(),
 });
 
+// Partial project settings update — Image configuration's brand color +
+// blog theme toggle + hero image fallback mode. All optional so the
+// frontend can PATCH just the field that changed.
+const UpdateProjectSettingsSchema = z.object({
+  brandColor:            z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'brandColor must be a 6-digit hex color, e.g. #2563EB').optional(),
+  useDefaultBlogTheme:   z.boolean().optional(),
+  heroImageFallbackMode: z.enum(['unsplash', 'text_card']).optional(),
+}).refine(data => Object.keys(data).length > 0, { message: 'At least one field is required' });
+
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 router.use(requireAuth);
@@ -79,6 +88,10 @@ router.post(
 router.get('/:projectId/settings/hero-images', projectHandler.listPoolImages);
 router.post('/:projectId/settings/hero-images', upload.single('image'), projectHandler.uploadPoolImage);
 router.delete('/:projectId/settings/hero-images/:imageId', projectHandler.deletePoolImage);
+
+// Project settings — brand color, blog theme toggle, hero image fallback mode
+router.patch('/:projectId/settings', validate(UpdateProjectSettingsSchema), projectHandler.updateSettings);
+router.post('/:projectId/settings/brand-color/detect', projectHandler.detectBrandColor);
 
 // Pipeline status + resume (existing)
 router.get('/:id/pipeline/status', async (req, res, next) => {

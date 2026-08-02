@@ -11,7 +11,6 @@ import {
   LogOut,
   ChevronDown,
   Building2,
-  Sparkles,
   PlayCircle,
   HelpCircle,
 } from 'lucide-react';
@@ -20,7 +19,6 @@ import { useAuthStore } from '@/lib/stores/auth.store';
 import { useProjects } from '@/lib/hooks';
 import { useLogout } from '@/lib/hooks';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -152,15 +150,18 @@ export function Sidebar() {
       {/* Bottom */}
       <div className="px-3 pb-4 space-y-2 border-t border-border pt-3">
         {/*
-          "Upgrade to Pro" — no billing/Stripe integration exists yet
-          (flagged separately). Styled with the app's existing primary
-          button, not a new brand color, per "keep CSS as-is". Disabled
-          until there's a real checkout flow to send people to.
-        */}
-        <Button variant="default" className="w-full justify-center gap-1.5" size="sm" disabled>
+          PRO / BILLING — deferred.
+          No billing/Stripe integration, no plan model, no entitlement
+          checks anywhere in the app. Rather than ship a disabled button
+          that implies a Pro tier exists, this is commented out entirely
+          until billing is actually built. Re-enable + wire to a real
+          checkout flow then.
+
+        <Button variant="default" className="w-full justify-center gap-1.5" size="sm">
           <Sparkles className="h-3.5 w-3.5" />
           Upgrade to Pro
         </Button>
+        */}
 
         {/*
           Tutorial — target product opens a walkthrough-video modal here.

@@ -12,22 +12,18 @@
  *
  * READS:  Blog (status: 'ready', for this project)
  *         CmsConfig (cmsType + encryptedCredentials + schedule)
- *         Project (domain)
+ *         Project (domain, brandColor, heroImageFallbackMode)
  * WRITES: Blog (status → 'published', cmsReference, publishedUrl,
  *               publishedDate, publishedContent, heroImageUrl)
  *         Keyword (status → 'published')
  *
- * HERO IMAGE FLOW:
- *   1. claimPoolImage(projectId, blogId) → the project's own uploaded
- *      image pool (models/ProjectImage.ts), oldest unclaimed first. This
- *      is the PRIMARY source.
- *   2. If the pool has nothing left, fetchHeroImageUrl(keyword) → Unsplash
- *      CDN URL. Fallback only, not a co-equal "mode".
- *   3. URL is passed as heroImageUrl in BlogPublishPayload
- *   4. Each CMS publisher handles upload/attachment in its own way:
- *      - WordPress: uploads to media library → sets featured_media
- *      - Others: embeds URL directly in content or CMS fields
- *   Hero image failure is non-fatal — publish continues without it.
+ * HERO IMAGE: resolved via lib/hero-image-resolver.ts's resolveHeroImage
+ * (pool → project.heroImageFallbackMode's chosen method, with the other
+ * fallback method tried as a last resort). See that file for the full
+ * order — kept in one place because this same resolution needs to happen
+ * identically in content-generation.job.ts and blogService.publishBlog.
+ * Non-fatal at every step — publish continues without a hero image if
+ * every source comes up empty.
  *
  * DAY + HOUR CHECK:
  *   Publishing only runs on allowedPublishDays at or after publishHourUtc.
@@ -47,8 +43,7 @@ import { Project }            from '@/models/Project';
 import { Blog }               from '@/models/Blog';
 import { CmsConfig }          from '@/models/CmsConfig';
 import { publishBlogToCms, isNowAllowedPublishTime } from '@/lib/blog-cms-publisher';
-import { fetchHeroImageUrl }  from '@/lib/unsplash';
-import { claimPoolImage }     from '@/lib/hero-image-pool';
+import { resolveHeroImage } from '@/lib/hero-image-resolver';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -128,24 +123,19 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
     const blogId  = String(blog._id);
     const context = `cms-publish-cron:${projectId}:${blogId}`;
 
-    // ── 7a. Resolve hero image ─────────────────────────────────────────────
-    // Use existing heroImageUrl if already set (e.g. manually assigned via
-    // the blog editor), otherwise claim one from the project's uploaded
-    // image pool (primary source), otherwise fetch from Unsplash
-    // (fallback), and only then leave it null (publish continues without
-    // an image).
+    // ── 7a. Resolve hero image via the single shared resolver ─────────────
+    // (see lib/hero-image-resolver.ts for the full order — pool, then
+    // project.heroImageFallbackMode, with a cross-fallback last resort)
 
-    let heroImageUrl: string | null = blog.heroImageUrl ?? null;
-
-    if (!heroImageUrl) {
-      heroImageUrl = await claimPoolImage(projectId, blogId);
-    }
-
-    if (!heroImageUrl) {
-      // Prefer the blog title for image search — more specific than keyword string
-      const imageQuery = blog.title ?? 'business technology';
-      heroImageUrl = await fetchHeroImageUrl(imageQuery, context);
-    }
+    const heroImageUrl = await resolveHeroImage({
+      projectId,
+      blogId,
+      blogTitle: blog.title,
+      existingHeroImageUrl: blog.heroImageUrl,
+      brandColor: project.brandColor,
+      fallbackMode: project.heroImageFallbackMode,
+      context,
+    });
 
     // ── 7b. Publish via the shared helper ────────────────────────────────
     //     (heroImageUrl resolved above stays caller-side — it's specific
@@ -158,6 +148,8 @@ export async function runCmsPublishJob(data: CmsPublishJobData): Promise<void> {
         domain:    project.domain,
         cmsConfig,
         resolvedHeroImageUrl: heroImageUrl,
+        brandColor: project.brandColor,
+        useDefaultBlogTheme: project.useDefaultBlogTheme,
       });
 
       if (!result.success) {

@@ -3,7 +3,9 @@ import { Project, OrganizationMember, BusinessContext, ProjectImage } from '../m
 import { QUEUE_NAMES, JOB_RETRY_CONFIG, JOB_PRIORITY, PIPELINE_STEP } from '../constants/seo-pipeline.constants';
 import { getConnectionOptions } from '../loaders/redis';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../utils/errors';
+import { normalizeToStringArray } from '../utils/normalize';
 import { uploadToCloudinary, deleteFromCloudinary } from '../lib/cloudinary';
+import { detectBrandColor } from '../lib/brand-color-detect';
 import { logger } from '../open-tele';
 
 const seoPipelineQueue = new Queue(QUEUE_NAMES.SEO_PIPELINE, {
@@ -152,6 +154,19 @@ export const projectService = {
         // "Business" — company + product together
         const company = (data.company as Record<string, unknown>) ?? {};
         const product = (data.product as Record<string, unknown>) ?? {};
+
+        // Defensive normalization: company is stored as Schema.Types.Mixed
+        // (see BusinessContext.ts), so nothing at the DB layer enforces
+        // targetRegions being a string[] the way the IBusinessContext
+        // interface promises. Every downstream consumer (serp.ts's
+        // deriveCountryCodeFromRegions, business-context-formatter.ts, the
+        // Business settings page) calls .join()/.length on it and will
+        // crash on a wrong shape. Coerce here — the single write path for
+        // this field — so no caller can ever persist a non-array value.
+        if ('targetRegions' in company) {
+          company.targetRegions = normalizeToStringArray(company.targetRegions);
+        }
+
         await BusinessContext.findOneAndUpdate(
           { projectId: project._id },
           { company, product, $addToSet: { completedSteps: step } },
@@ -418,5 +433,51 @@ export const projectService = {
 
     logger.info('Pool image deleted', { projectId, imageId });
     return { deleted: true };
+  },
+
+  /**
+   * Partial update for Image configuration's project-level settings —
+   * brandColor, useDefaultBlogTheme, heroImageFallbackMode. Schema-level
+   * validation (hex format, enum) already ran in the route's zod schema;
+   * this just persists whatever subset of fields was sent.
+   */
+  async updateSettings(userId: string, projectId: string, updates: {
+    brandColor?:            string;
+    useDefaultBlogTheme?:   boolean;
+    heroImageFallbackMode?: 'unsplash' | 'text_card';
+  }) {
+    logger.debug('projectService.updateSettings', { userId, projectId, updates });
+
+    const project = await projectService.getProject(userId, projectId); // access check
+
+    const before = {
+      brandColor:            project.brandColor,
+      useDefaultBlogTheme:   project.useDefaultBlogTheme,
+      heroImageFallbackMode: project.heroImageFallbackMode,
+    };
+
+    Object.assign(project, updates);
+    await project.save();
+
+    logger.info('Project settings updated', { projectId, before, after: updates });
+    return project;
+  },
+
+  /**
+   * Auto-detects a brand color from the project's own domain (see
+   * lib/brand-color-detect.ts). Deliberately does NOT save the result —
+   * this is a preview action for the Settings UI; the user confirms via
+   * updateSettings above. Returns null (not an error) when nothing could
+   * be detected, so the UI can show its "enter manually" fallback.
+   */
+  async detectBrandColorForProject(userId: string, projectId: string): Promise<{ color: string | null }> {
+    logger.debug('projectService.detectBrandColorForProject', { userId, projectId });
+
+    const project = await projectService.getProject(userId, projectId); // access check
+
+    const color = await detectBrandColor(project.domain);
+
+    logger.info('Brand color detection attempted', { projectId, domain: project.domain, detected: color });
+    return { color };
   },
 };

@@ -64,11 +64,44 @@ export function useProject(projectId: string) {
   });
 }
 
-export function useBusinessContext(projectId: string) {
+// Image configuration — brand color, blog theme toggle, hero image
+// fallback mode. Invalidates useProject's cache so every consumer
+// (Settings page, onboarding wizard) sees the change immediately.
+export function useUpdateProjectSettings(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (updates: {
+      brandColor?:            string;
+      useDefaultBlogTheme?:   boolean;
+      heroImageFallbackMode?: 'unsplash' | 'text_card';
+    }) => projectsApi.updateSettings(projectId, updates),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
+  });
+}
+
+// Preview-only mutation (POST because it does network I/O, but doesn't
+// persist) — the caller decides whether to confirm the detected color via
+// useUpdateProjectSettings.
+export function useDetectBrandColor(projectId: string) {
+  return useMutation({
+    mutationFn: () => projectsApi.detectBrandColor(projectId),
+  });
+}
+
+// `waitFor` lets a caller delay the initial fetch until some other
+// condition is true (e.g. the onboarding wizard waits for the
+// BUSINESS_PROFILE pipeline step to finish before fetching — see
+// onboarding/page.tsx). Defaults to true so existing callers that just want
+// "fetch as soon as we have a projectId" (Business settings page, Settings
+// page) are unaffected.
+export function useBusinessContext(projectId: string, waitFor = true) {
   return useQuery({
     queryKey: ['businessContext', projectId],
     queryFn:  () => projectsApi.getBusinessContext(projectId),
-    enabled:  !!projectId,
+    enabled:  !!projectId && waitFor,
   });
 }
 

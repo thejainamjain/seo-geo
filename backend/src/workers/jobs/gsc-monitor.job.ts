@@ -60,7 +60,7 @@
  */
 
 import type { Job } from 'bullmq';
-import { Queue }        from 'bullmq';
+import { Queue, UnrecoverableError } from 'bullmq';
 import { logger }       from '@/open-tele';
 import { Project, BlogLearning, BlogOptimization, ProjectLearningChunk, Blog, GoogleToken, Keyword } from '@/models';
 import { embedText }    from '@/lib/embeddings';
@@ -407,6 +407,16 @@ function detectInsights(
 
 export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise<void> {
   const { projectId } = job.data;
+
+  // Defense in depth — see runGeoAnalyticsJob's identical guard in
+  // geo-analytics.job.ts for the full explanation. This queue must only
+  // ever receive one-off jobs with a real projectId; a job without one
+  // can never succeed, so fail it immediately instead of retrying 3 times.
+  if (!projectId) {
+    throw new UnrecoverableError(
+      `GSC monitor job ${job.id} received no projectId — refusing to retry`,
+    );
+  }
 
   logger.info('GSC monitor job started', { projectId, jobId: job.id });
 

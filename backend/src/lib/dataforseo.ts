@@ -31,7 +31,8 @@ import config from '@/utils/config';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const DATAFORSEO_BASE_URL = 'https://api.dataforseo.com';
+const DATAFORSEO_LIVE_BASE_URL    = 'https://api.dataforseo.com';
+const DATAFORSEO_SANDBOX_BASE_URL = 'https://sandbox.dataforseo.com';
 const FETCH_TIMEOUT_MS    = 30_000; // 30s — DataForSEO can be slow on large domains
 
 /**
@@ -72,15 +73,22 @@ function getAuthHeader(): string {
 // ── Sandbox vs live URL ────────────────────────────────────────────────────
 
 /**
- * DataForSEO provides identical sandbox endpoints at the same path.
- * In sandbox mode, calls are free but return simulated data.
- * Switch to live by setting NODE_ENV=production.
+ * DataForSEO's sandbox is a genuinely separate host — per their docs
+ * (docs.dataforseo.com/v3/appendix-sandbox), the ONLY thing that changes
+ * between sandbox and live is the hostname: api.dataforseo.com vs
+ * sandbox.dataforseo.com. Request/response shape and credentials are
+ * identical; sandbox just returns canned data at zero cost.
+ *
+ * FIX: this previously always returned the live URL and left a comment
+ * claiming "sandbox vs live is determined by the credentials used" — that
+ * isn't how DataForSEO's sandbox works, and the module docblock at the top
+ * of this file already documented the INTENDED behavior ("NODE_ENV=development
+ * → uses sandbox endpoints (free)") that this function never implemented.
+ * The result: every call in local development was silently hitting the
+ * live, billed endpoint.
  */
 function getBaseUrl(): string {
-  // DataForSEO sandbox is the same URL — controlled by credentials
-  // Sandbox credentials are provided by DataForSEO separately
-  // Using same URL — sandbox vs live is determined by the credentials used
-  return DATAFORSEO_BASE_URL;
+  return config.env === 'production' ? DATAFORSEO_LIVE_BASE_URL : DATAFORSEO_SANDBOX_BASE_URL;
 }
 
 // ── Core DataForSEO fetch ──────────────────────────────────────────────────

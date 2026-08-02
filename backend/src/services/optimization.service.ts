@@ -155,7 +155,7 @@ export const optimizationService = {
           autoPublish:          cmsConfig.autoPublish,
           allowedPublishDays:   cmsConfig.allowedPublishDays,
           publishHourUtc:       cmsConfig.publishHourUtc,
-        });
+        }, project.brandColor, project.useDefaultBlogTheme);
         resyncSucceeded = resyncResult.success;
 
         if (resyncSucceeded) {

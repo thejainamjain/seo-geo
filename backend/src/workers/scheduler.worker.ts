@@ -35,6 +35,7 @@ import {
   runGeoAnalyticsScheduler,
   runGscMonitorScheduler,
   runCmsResyncRetryScheduler,
+  removeOrphanedRepeatableJobs,
 } from './jobs/global-scheduler.job';
 import { reconcileCmsPublishSchedules } from '@/lib/cms-publish-scheduler';
 import { runWeeklyGenerationTrigger }   from '@/lib/keyword-generation-scheduler';
@@ -291,6 +292,12 @@ export interface SchedulerWorkers {
 }
 
 export async function bootSchedulers(): Promise<SchedulerWorkers> {
+  // One-time (idempotent) sweep for a historical bug — see
+  // removeOrphanedRepeatableJobs()'s doc comment in global-scheduler.job.ts.
+  // Must run before registerSchedulers() creates workers that would
+  // otherwise start picking up the stale jobs immediately on boot.
+  await removeOrphanedRepeatableJobs();
+
   // Register repeatable jobs — idempotent, safe on every restart
   await registerSchedulers();
 

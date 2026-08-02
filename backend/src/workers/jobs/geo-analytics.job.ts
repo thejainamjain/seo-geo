@@ -33,6 +33,7 @@
  */
 
 import type { Job } from 'bullmq';
+import { UnrecoverableError } from 'bullmq';
 import { logger }          from '@/open-tele';
 import { Project }         from '@/models/Project';
 import { Keyword }         from '@/models/Keyword';
@@ -77,6 +78,20 @@ function domainAppearsInCitations(
 
 export async function runGeoAnalyticsJob(job: Job<{ projectId: string }>): Promise<void> {
   const { projectId } = job.data;
+
+  // Defense in depth: this queue must only ever receive one-off jobs with
+  // a real projectId (see runGeoAnalyticsScheduler's fan-out). A job that
+  // arrives without one can never succeed no matter how many times BullMQ
+  // retries it — historically this happened when a stale repeatable job
+  // definition was left behind in Redis (see
+  // removeOrphanedRepeatableJobs() in global-scheduler.job.ts, which
+  // cleans those up on boot). UnrecoverableError tells BullMQ to fail the
+  // job immediately instead of burning all 3 configured attempts.
+  if (!projectId) {
+    throw new UnrecoverableError(
+      `GEO analytics job ${job.id} received no projectId — refusing to retry`,
+    );
+  }
 
   logger.info('GEO analytics job started', { projectId, jobId: job.id });
 

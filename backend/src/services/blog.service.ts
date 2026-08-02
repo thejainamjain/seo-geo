@@ -4,8 +4,7 @@ import { publishBlogToCms } from '../lib/blog-cms-publisher';
 import { CmsConfig } from '../models/CmsConfig';
 import { uploadToCloudinary } from '../lib/cloudinary';
 import { stripLegacyHeroImagePlaceholder } from '../lib/blog-content';
-import { fetchHeroImageUrl } from '../lib/unsplash';
-import { claimPoolImage } from '../lib/hero-image-pool';
+import { resolveHeroImage } from '../lib/hero-image-resolver';
 import { logger } from '../open-tele';
 
 const IMAGE_MAX_BYTES  = 5 * 1024 * 1024; // 5MB — generous for web-optimised images
@@ -206,23 +205,23 @@ export const blogService = {
       throw new ValidationError('No CMS connected — connect a CMS in Settings to publish');
     }
 
-    // Resolve hero image the same way the auto-publish paths do (see
-    // workers/jobs/cms-publish.job.ts and content-generation.job.ts):
-    // keep an existing image if the blog already has one, otherwise claim
-    // one from the project's uploaded image pool (primary source),
-    // otherwise fall back to Unsplash. This was previously only
-    // implemented on the cron path — the manual Publish button shipped
-    // blogs with no image at all unless one had already been set. Fixed
-    // by resolving it here too before delegating to the shared publish
-    // helper below.
+    // Resolve hero image via the single shared resolver (lib/hero-image-
+    // resolver.ts) — used identically by the two auto-publish paths
+    // (cms-publish.job.ts, content-generation.job.ts). This was
+    // previously only implemented on the cron path — the manual Publish
+    // button shipped blogs with no image at all unless one had already
+    // been set. Fixed by resolving it here too before delegating to the
+    // shared publish helper below.
     const context = `blog-service-publish:${projectId}:${blogId}`;
-    let heroImageUrl: string | null = blog.heroImageUrl ?? null;
-    if (!heroImageUrl) {
-      heroImageUrl = await claimPoolImage(projectId, blogId);
-    }
-    if (!heroImageUrl) {
-      heroImageUrl = await fetchHeroImageUrl(blog.title ?? 'business technology', context);
-    }
+    const heroImageUrl = await resolveHeroImage({
+      projectId,
+      blogId,
+      blogTitle: blog.title,
+      existingHeroImageUrl: blog.heroImageUrl,
+      brandColor: project.brandColor,
+      fallbackMode: project.heroImageFallbackMode,
+      context,
+    });
 
     // Delegate to the shared publish-and-persist helper (lib/blog-cms-
     // publisher.ts) instead of pushing to the CMS and updating the Blog
@@ -237,6 +236,8 @@ export const blogService = {
       domain: project.domain,
       cmsConfig,
       resolvedHeroImageUrl: heroImageUrl,
+      brandColor: project.brandColor,
+      useDefaultBlogTheme: project.useDefaultBlogTheme,
     });
 
     if (!result.success) {

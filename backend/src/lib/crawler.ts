@@ -624,15 +624,26 @@ export function isBotBlocked(statusCode: number): boolean {
  * MIN_BODY_LENGTH, the page is genuinely JS-rendered (blank shell).
  * If raw body has content but stripped body doesn't, it's a content
  * structure issue — not a JS-rendering issue — so Cheerio result is fine.
+ *
+ * FIX 2: the SPA-root check below used to only run when the WHOLE page's
+ * raw body text was under 500 chars. In practice almost no real page hits
+ * that: even a fully client-rendered app ships nav links, a footer,
+ * a cookie banner, and often a server-rendered <title>/<meta> block, which
+ * together easily clear 500 chars — so this branch rarely fired and
+ * genuinely JS-rendered pages (whose actual content lives inside
+ * #root/#__next and is empty pre-hydration) were misclassified as static
+ * and never handed to Playwright. We now check the SPA root element's OWN
+ * text content against MIN_BODY_LENGTH, independent of how much chrome
+ * surrounds it — a hydrated/SSR page has real content inside the root; a
+ * CSR-only shell doesn't, no matter how much boilerplate is elsewhere in
+ * <body>.
  */
 export function isJsRendered(visibleBodyText: string, $?: CheerioAPI): boolean {
   if (visibleBodyText.trim().length < MIN_BODY_LENGTH) return true;
-  // Secondary: SPA root with very little visible content
-  if ($ && visibleBodyText.trim().length < 500) {
-    const hasSpaRoot = $('body').find(
-      '#root, #app, #__next, #gatsby-focus-wrapper, [data-reactroot]'
-    ).length > 0;
-    if (hasSpaRoot) return true;
+
+  if ($) {
+    const spaRoot = $('#root, #app, #__next, #gatsby-focus-wrapper, [data-reactroot]').first();
+    if (spaRoot.length > 0 && spaRoot.text().trim().length < MIN_BODY_LENGTH) return true;
   }
   return false;
 }

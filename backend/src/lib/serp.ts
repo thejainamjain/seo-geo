@@ -24,6 +24,7 @@
 
 import { logger } from '../open-tele';
 import config from '@/utils/config';
+import { normalizeToStringArray } from '../utils/normalize';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -367,12 +368,21 @@ export function deriveCountryCodeFromRegions(
   targetRegions: string[] | undefined,
   projectId:     string,
 ): string {
-  if (!targetRegions || targetRegions.length === 0) {
+  // Defensive: company is Schema.Types.Mixed (see BusinessContext.ts), so
+  // the string[] type above is a compile-time promise only — a record
+  // written before the onboarding wizard's targetRegions fix (or any
+  // future writer bug) can still hand us a plain string here. Normalize
+  // rather than trust the declared type, so a shape mismatch degrades to
+  // "no regions" instead of crashing the calling pipeline step, as it did
+  // for COMPETITOR_DISCOVERY ("targetRegions.join is not a function").
+  const regions = normalizeToStringArray(targetRegions);
+
+  if (regions.length === 0) {
     logger.debug('No target regions set — defaulting country to us', { projectId });
     return 'us';
   }
 
-  const regionText = targetRegions.join(' ');
+  const regionText = regions.join(' ');
 
   for (const { pattern, code } of REGION_TO_COUNTRY_MAP) {
     if (pattern.test(regionText)) {

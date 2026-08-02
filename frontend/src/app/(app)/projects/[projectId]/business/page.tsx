@@ -98,33 +98,28 @@ export default function BusinessPage({
   const [website,        setWebsite]        = useState('');
   const [description,    setDescription]    = useState('');
   const [targetRegions,  setTargetRegions]  = useState('');
-  const [companyReady,   setCompanyReady]   = useState(false);
 
   // ── Step 2: Product ───────────────────────────────────────────────────
   const [whatItSells,    setWhatItSells]    = useState('');
   const [keyFeatures,    setKeyFeatures]    = useState('');
   const [pricingTiers,   setPricingTiers]   = useState('');
-  const [productReady,   setProductReady]   = useState(false);
 
   // ── Step 3: Customers ─────────────────────────────────────────────────
   const [segments,       setSegments]       = useState('');
   const [painPoints,     setPainPoints]     = useState('');
   const [keywords,       setKeywords]       = useState('');
   const [topUseCases,    setTopUseCases]    = useState('');
-  const [customersReady, setCustomersReady] = useState(false);
 
   // ── Step 4: Competition ───────────────────────────────────────────────
   const [competitors,    setCompetitors]    = useState('');
   const [differentiation,setDifferentiation]= useState('');
   const [strengths,      setStrengths]      = useState('');
   const [tradeOffs,      setTradeOffs]      = useState('');
-  const [compReady,      setCompReady]      = useState(false);
 
   // ── Step 5: Social proof ──────────────────────────────────────────────
   const [caseStudies,    setCaseStudies]    = useState('');
   const [discussions,    setDiscussions]    = useState('');
   const [socialMedia,    setSocialMedia]    = useState('');
-  const [socialReady,    setSocialReady]    = useState(false);
 
   // Populate local state once data loads — only on first load
   const [initialized, setInitialized] = useState(false);
@@ -133,7 +128,14 @@ export default function BusinessPage({
     setCompanyName(bc.company?.name ?? '');
     setWebsite(bc.company?.website ?? '');
     setDescription(bc.company?.description ?? '');
-    setTargetRegions((bc.company?.targetRegions ?? []).join(', '));
+    // Defensive: targetRegions should be a string[], but company is stored
+    // as Schema.Types.Mixed on the backend (no schema-level cast), so a
+    // legacy/corrupted record — or a bug in another writer — could hand us
+    // a string instead. Array.isArray guards against the
+    // "targetRegions.join is not a function" crash regardless of what's
+    // actually in the DB.
+    const rawTargetRegions = bc.company?.targetRegions;
+    setTargetRegions((Array.isArray(rawTargetRegions) ? rawTargetRegions : []).join(', '));
     setWhatItSells(bc.product?.whatItSells ?? '');
     setKeyFeatures(bc.product?.keyFeatures ?? '');
     setPricingTiers(bc.product?.pricingTiers ?? '');

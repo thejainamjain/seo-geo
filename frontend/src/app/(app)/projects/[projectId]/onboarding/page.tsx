@@ -1,17 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import Image from 'next/image';
 import {
   useBusinessContext, useSaveOnboardingStep, useStartPipeline, useProject,
   useGscStatus, useUpdateCms,
   useKnowledgeFiles, useUploadKnowledgeFile, useDeleteKnowledgeFile,
-  useUploadPoolImage, useDeletePoolImage, usePoolImages,
 } from '@/lib/hooks';
 import { pipelineApi, gscApi } from '@/lib/api';
+import { ImageConfigDialog } from '@/components/settings/image-config-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,11 +19,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger,
-} from '@/components/ui/dialog';
-import {
   Loader2, X, Plus, BarChart2, Wrench, Headphones, Sparkles, Zap,
-  Settings2, CheckCircle2, Trash2, FileStack, Upload, ImageIcon, ImagePlus,
+  Settings2, CheckCircle2, Trash2, FileStack, Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { KnowledgeFile } from '@/types/api';
@@ -357,114 +353,6 @@ function Step4Integration({ projectId, choice, onChoice }: {
   );
 }
 
-// ── Image configuration dialog ───────────────────────────────────────────────
-// Deliberately NOT a clone of the richer reference UI (brand colors, theme+
-// text-based images, AI-generated fallback) — this app only has two real
-// image sources: the user's uploaded pool (primary, no limit) and Unsplash
-// (automatic fallback once the pool runs out).
-
-function ImageConfigDialog({ projectId }: { projectId: string }) {
-  const [open, setOpen] = useState(false);
-  const { data: images, isLoading } = usePoolImages(projectId);
-  const uploadMut = useUploadPoolImage(projectId);
-  const deleteMut = useDeletePoolImage(projectId);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const availableCount = images?.filter(img => img.status === 'available').length ?? 0;
-  const hasImages = !!images && images.length > 0;
-
-  function handleFile(file: File) {
-    uploadMut.mutate(file);
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <button type="button" className="text-xs font-medium text-primary hover:underline shrink-0">
-          Configure
-        </button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Image configuration</DialogTitle>
-          <DialogDescription>
-            Upload the images you want used as blog hero images — no limit. We work through them in upload order, one per blog. Unsplash only kicks in automatically once none are left; there&apos;s no AI image generation anywhere in this app.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <div className="rounded-lg border border-border p-3 flex items-start gap-2">
-            <ImageIcon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">{availableCount} available</span> to use next
-              {hasImages && images!.some(img => img.status === 'used') && ' — images already used on a past blog are tagged below and won\u2019t be reused'}.
-              Once your uploads run out, new blogs automatically fall back to a relevant Unsplash photo.
-            </p>
-          </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-              e.target.value = '';
-            }}
-          />
-
-          {!isLoading && !hasImages && (
-            <p className="text-xs text-muted-foreground">No images added yet.</p>
-          )}
-
-          <div className="grid grid-cols-3 gap-2 max-h-80 overflow-y-auto pr-1">
-            <button
-              type="button"
-              disabled={uploadMut.isPending}
-              onClick={() => fileInputRef.current?.click()}
-              className="aspect-square rounded-md border border-dashed border-border hover:border-muted-foreground/50 hover:bg-muted/30 transition-colors flex flex-col items-center justify-center gap-1 text-muted-foreground"
-            >
-              {uploadMut.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
-              <span className="text-[10px] text-center px-1">{uploadMut.isPending ? 'Uploading…' : 'Add image'}</span>
-            </button>
-
-            {isLoading && <div className="aspect-square rounded-md bg-muted animate-pulse" />}
-
-            {images?.map(img => (
-              <div key={img._id} className="relative aspect-square rounded-md overflow-hidden bg-muted group">
-                <Image src={img.url} alt="" fill className="object-cover" />
-                {img.status === 'used' && (
-                  <Badge variant="secondary" className="absolute top-1 left-1 text-[10px] px-1 py-0">
-                    Used
-                  </Badge>
-                )}
-                <button
-                  type="button"
-                  onClick={() => deleteMut.mutate(img._id)}
-                  disabled={deleteMut.isPending}
-                  title="Remove"
-                  className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100"
-                >
-                  <X className="h-4 w-4 text-white" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <p className="text-[11px] text-muted-foreground">
-            PNG, JPEG, WebP, or GIF — max 5MB each.
-          </p>
-
-          {uploadMut.isError && (
-            <p className="text-xs text-destructive">Upload failed — try again.</p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ── Step 5: Blog Post Settings ───────────────────────────────────────────────
 
 function KnowledgeFileRow({ file, onDelete, isDeleting }: {
@@ -685,7 +573,16 @@ export default function OnboardingPage() {
     (s: { step: string; status: string }) => s.step === 'BUSINESS_PROFILE'
   )?.status === 'COMPLETED';
 
-  const { data: businessContextData, isLoading: isLoadingContext } = useBusinessContext(projectId);
+  // businessContextData must not be fetched until BUSINESS_PROFILE has
+  // actually finished — otherwise this query resolves at mount time with
+  // an empty/incomplete company object (the AI draft hasn't run yet), the
+  // prefill effect below fires with that stale snapshot, and its
+  // `prefilledFor` guard then permanently blocks prefilling again once the
+  // real AI-drafted data becomes available. This was the cause of the
+  // Business step never auto-filling. `waitFor: bpDone` delays the fetch
+  // itself (not just the prefill) so the query's own cached data is
+  // correct on the one time it does run.
+  const { data: businessContextData, isLoading: isLoadingContext } = useBusinessContext(projectId, bpDone);
   const { data: project } = useProject(projectId);
   const saveStep      = useSaveOnboardingStep(projectId);
   const startPipeline = useStartPipeline(projectId);
@@ -705,9 +602,19 @@ export default function OnboardingPage() {
 
   if (businessContextData && project && prefilledFor !== projectId) {
     setPrefilledFor(projectId);
+    const loadedCompany = (businessContextData.company as Record<string, unknown>) ?? {};
     setData(d => ({
       ...d,
-      company:     (businessContextData.company as Record<string, unknown>) ?? {},
+      // targetRegions comes back from the API as string[] (AI-drafted or
+      // previously saved correctly); the wizard's Input edits it as one
+      // comma-separated string, so join it here for display. See
+      // buildStepPayload's case 1 for the reverse conversion on save.
+      company: {
+        ...loadedCompany,
+        targetRegions: Array.isArray(loadedCompany.targetRegions)
+          ? (loadedCompany.targetRegions as string[]).join(', ')
+          : (loadedCompany.targetRegions ?? ''),
+      },
       product:     (businessContextData.product as Record<string, unknown>) ?? {},
       segments:    businessContextData.customers?.segments ?? [],
       competitors: businessContextData.competition?.mainCompetitors?.map(c => c.domain) ?? [],
@@ -724,7 +631,23 @@ export default function OnboardingPage() {
 
   const buildStepPayload = (step: StepNumber): Record<string, unknown> => {
     switch (step) {
-      case 1: return { company: data.company, product: data.product };
+      case 1: return {
+        // targetRegions is edited in the wizard as a single comma-separated
+        // string (same UX as the Business settings page), but
+        // BusinessContext.company.targetRegions is a string[] everywhere
+        // it's consumed downstream (serp.ts, business-context-formatter.ts,
+        // the Business settings page). Split it back into an array here —
+        // sending the raw string was the cause of the
+        // "targetRegions.join is not a function" crashes in both the
+        // Business page and the COMPETITOR_DISCOVERY pipeline step.
+        company: {
+          ...data.company,
+          targetRegions: typeof data.company.targetRegions === 'string'
+            ? (data.company.targetRegions as string).split(',').map(s => s.trim()).filter(Boolean)
+            : (data.company.targetRegions ?? []),
+        },
+        product: data.product,
+      };
       case 2: return { customers: { segments: data.segments }, competition: { mainCompetitors: data.competitors } };
       case 3: return {};
       case 4: return {};

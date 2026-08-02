@@ -47,8 +47,6 @@ SERPAPI_KEY=
 DATAFORSEO_LOGIN=
 DATAFORSEO_PASSWORD=
 DATAFORSEO_SANDBOX=true
-USE_MOCK_SERP=true
-USE_MOCK_DATAFORSEO=true
 CHECK_BROKEN_LINKS=false
 MAX_CRAWL_PAGES=50
 ```
@@ -108,8 +106,6 @@ pm2 startup    # run the printed sudo command to survive reboots
 ```bash
 # backend/.env
 NODE_ENV=production
-USE_MOCK_SERP=false
-USE_MOCK_DATAFORSEO=false
 DATAFORSEO_SANDBOX=false
 CHECK_BROKEN_LINKS=true
 MAX_CRAWL_PAGES=100

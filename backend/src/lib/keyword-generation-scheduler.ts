@@ -46,7 +46,8 @@
  * IDEMPOTENCY:
  *   Every enqueue (both the per-keyword CONTENT_GENERATION jobs and the
  *   per-week trigger jobs) uses a deterministic jobId
- *   (`content-generation:{keywordId}`, `weekly-trigger:{projectId}:{weekNumber}`).
+ *   (`content-generation-{keywordId}`, `weekly-trigger-{projectId}-{weekNumber}` —
+ *   dashes, not colons: BullMQ rejects ':' in custom job IDs).
  *   BullMQ ignores an add() with a jobId that already exists and isn't yet
  *   completed/failed — the same dedup pattern this codebase already
  *   relies on in workers/jobs/global-scheduler.job.ts. Safe to call this
@@ -71,8 +72,18 @@ const weeklyTriggerQueue = new Queue<{ projectId: string; weekNumber: number }>(
 
 const GENERATION_BUFFER_MS = 24 * 60 * 60 * 1000; // 24h before week boundary
 
+// NOTE: jobId must not contain ':' — BullMQ uses it as an internal Redis
+// key delimiter and Job.validateOptions() throws "Custom Id cannot contain
+// :" if you pass one. This function previously returned a colon-separated
+// id, which meant EVERY call to enqueueContentGeneration() below threw —
+// including the week-1 "immediate" branch, which runs first in
+// scheduleWeeklyGeneration()'s loop. That's why automatic blog generation
+// silently stopped working: this exception propagated out of
+// scheduleWeeklyGeneration() and up into keyword-research.job.ts, which is
+// also why KEYWORD_RESEARCH pipeline steps were failing permanently even
+// though the keywords themselves had already been upserted successfully.
 function contentGenerationJobId(keywordId: string): string {
-  return `content-generation:${keywordId}`;
+  return `content-generation-${keywordId}`;
 }
 
 async function enqueueContentGeneration(projectId: string, keywordId: string): Promise<void> {
@@ -126,7 +137,8 @@ export async function scheduleWeeklyGeneration(
       'weekly-generation-trigger',
       { projectId, weekNumber },
       {
-        jobId:    `weekly-trigger:${projectId}:${weekNumber}`,
+        // See contentGenerationJobId() above — jobId can't contain ':'.
+        jobId:    `weekly-trigger-${projectId}-${weekNumber}`,
         delay,
         attempts: 3,
         backoff:  { type: 'exponential', delay: 30_000 },

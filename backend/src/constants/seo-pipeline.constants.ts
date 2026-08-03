@@ -59,6 +59,7 @@ export const QUEUE_NAMES = {
   BLOG_GENERATION:     'seo-blog-generation',
   GEO_ANALYTICS:       'seo-geo-analytics',
   GSC_MONITOR:         'seo-gsc-monitor',
+  KEYWORD_RANKING_SYNC: 'seo-keyword-ranking-sync', // property-wide GSC query-dimension pull -> KeywordRanking snapshots
   CMS_PUBLISH_CRON: 'seo-cms-publish',
   CONTENT_GENERATION:  'seo-content-generation',  // on-demand per-keyword SERP+Blog+Publish
   WEEKLY_GENERATION_TRIGGER: 'seo-weekly-generation-trigger', // per-project, per-week — fans out to CONTENT_GENERATION
@@ -132,6 +133,7 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   BLOG_GENERATION:      { attempts: 4,  backoffDelay: 30_000 },
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
+  KEYWORD_RANKING_SYNC: { attempts: 3,  backoffDelay: 15_000 },
   CONTENT_GENERATION:   { attempts: 3,  backoffDelay: 15_000 },
   KNOWLEDGE_PROCESSING: { attempts: 3,  backoffDelay: 10_000 },
   BLOG_OPTIMIZATION:    { attempts: 3,  backoffDelay: 20_000 },

@@ -62,8 +62,9 @@
 import type { Job } from 'bullmq';
 import { Queue, UnrecoverableError } from 'bullmq';
 import { logger }       from '@/open-tele';
-import { Project, BlogLearning, BlogOptimization, ProjectLearningChunk, Blog, GoogleToken, Keyword } from '@/models';
+import { Project, BlogLearning, BlogOptimization, ProjectLearningChunk, Blog, Keyword } from '@/models';
 import { embedText }    from '@/lib/embeddings';
+import { getValidAccessToken } from '@/lib/gsc-client';
 import { getConnectionOptions } from '@/loaders/redis';
 import { QUEUE_NAMES, JOB_RETRY_CONFIG } from '@/constants/seo-pipeline.constants';
 import type { BlogOptimizationJobData } from './blog-optimization.job';
@@ -94,7 +95,6 @@ const ROLLBACK_CTR_DEGRADATION_THRESHOLD = 0.10; // 10% relative drop
 // to inform a rewrite, not time-critical alerts — a monthly refresh is
 // enough to notice if a chronic issue is still unresolved.
 const INSIGHT_DEDUP_WINDOW_DAYS = 30;
-import config from '@/utils/config';
 
 // ── Thresholds ─────────────────────────────────────────────────────────────
 
@@ -123,42 +123,6 @@ interface BlogGscMetrics {
   ctr:         number;
   avgPosition: number;
   topQueries:  string[];
-}
-
-// ── Token refresh ──────────────────────────────────────────────────────────
-
-async function refreshAccessToken(
-  refreshToken: string,
-  projectId:    string,
-): Promise<{ accessToken: string; expiryDate: Date }> {
-  logger.debug('Refreshing GSC access token', { projectId });
-
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body:    new URLSearchParams({
-      grant_type:    'refresh_token',
-      refresh_token: refreshToken,
-      client_id: config.google.clientId(),
-      client_secret: config.google.clientSecret(),
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`GSC token refresh failed: ${response.status} ${body}`);
-  }
-
-  const data = await response.json() as {
-    access_token:  string;
-    expires_in:    number;
-  };
-
-  const expiryDate = new Date(Date.now() + data.expires_in * 1000);
-
-  logger.info('GSC access token refreshed', { projectId, expiresIn: data.expires_in });
-
-  return { accessToken: data.access_token, expiryDate };
 }
 
 // ── GSC API call ───────────────────────────────────────────────────────────
@@ -424,34 +388,11 @@ export async function runGscMonitorJob(job: Job<{ projectId: string }>): Promise
   const project = await Project.findById(projectId).lean();
   if (!project) throw new Error(`Project not found: ${projectId}`);
 
-  // 2. Load GoogleToken
-  // select('+accessToken +refreshToken') required now that these are
-  // select: false at the schema level (see models/GoogleToken.ts) — this
-  // is the one legitimate internal caller that actually needs the real
-  // secret values to make GSC API calls and refresh the token.
-  const tokenDoc = await GoogleToken.findOne({ projectId }).select('+accessToken +refreshToken');
-  if (!tokenDoc) {
+  // 2. Load a valid (refreshed if needed) GSC access token
+  const accessToken = await getValidAccessToken(projectId);
+  if (!accessToken) {
     logger.warn('No GSC token found for project — skipping GSC monitor', { projectId });
     return; // Not an error — user may have disconnected GSC
-  }
-
-  // 3. Refresh token if expired (with 5 minute buffer)
-  let accessToken = tokenDoc.accessToken;
-  const bufferMs  = 5 * 60 * 1000;
-
-  if (tokenDoc.expiryDate.getTime() - Date.now() < bufferMs) {
-    logger.info('GSC token expiring soon — refreshing', {
-      projectId,
-      expiryDate: tokenDoc.expiryDate.toISOString(),
-    });
-
-    const refreshed = await refreshAccessToken(tokenDoc.refreshToken, projectId);
-    accessToken = refreshed.accessToken;
-
-    await GoogleToken.findByIdAndUpdate(tokenDoc._id, {
-      accessToken:  refreshed.accessToken,
-      expiryDate:   refreshed.expiryDate,
-    });
   }
 
   // 4. Load all published blogs

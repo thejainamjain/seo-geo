@@ -21,7 +21,7 @@
  *   serve that correctly — see
  *   docs/07-phases6-8-content-generation-publish-audit.md for the history.
  *
- * THREE SCHEDULERS:
+ * FOUR SCHEDULERS:
  *
  *   1. GEO_ANALYTICS_SCHEDULER — every Monday at 10:00 UTC
  *      Finds all projects with at least one published keyword
@@ -31,7 +31,15 @@
  *      Finds all projects with GSC connected + published blogs
  *      Enqueues one gsc-monitor job per project
  *
- *   3. CMS_RESYNC_RETRY_SCHEDULER — every 4 hours
+ *   3. KEYWORD_RANKING_SYNC_SCHEDULER — daily at 12:00 UTC
+ *      Finds all projects with GSC connected + published blogs (same
+ *      eligibility as GSC_MONITOR_SCHEDULER)
+ *      Enqueues one keyword-ranking-sync job per project — see
+ *      workers/jobs/keyword-ranking-sync.job.ts. Runs daily (not weekly
+ *      like the other two) because "Top Movers" needs day-over-day
+ *      snapshots to compute a trend at all.
+ *
+ *   4. CMS_RESYNC_RETRY_SCHEDULER — every 4 hours
  *      Retries BlogOptimization records whose earlier CMS re-sync attempt
  *      failed (see lib/blog-cms-publisher.ts's updateBlogOnCms(), called
  *      from workers/jobs/blog-optimization.job.ts and
@@ -47,7 +55,8 @@
  *      whatever's left.
  *
  * IDEMPOTENCY:
- *   Per-project jobs use jobId: `{type}:{projectId}:{date}` so the same
+ *   Per-project jobs use jobId: `{type}-{projectId}-{date}` (dashes, not
+ *   colons — BullMQ rejects ':' in custom job IDs) so the same
  *   project is never double-enqueued on the same day even if scheduler retries.
  *   CMS_RESYNC_RETRY_SCHEDULER doesn't need this — it queries
  *   `cmsResyncPending: true` fresh each run and only clears the flag on
@@ -79,6 +88,14 @@ const geoAnalyticsQueue = new Queue<{ projectId: string }>(QUEUE_NAMES.GEO_ANALY
 });
 
 const gscMonitorQueue = new Queue<{ projectId: string }>(QUEUE_NAMES.GSC_MONITOR, {
+  connection: getConnectionOptions(),
+  defaultJobOptions: {
+    removeOnComplete: { count: 100 },
+    removeOnFail:     { count: 200 },
+  },
+});
+
+const keywordRankingSyncQueue = new Queue<{ projectId: string }>(QUEUE_NAMES.KEYWORD_RANKING_SYNC, {
   connection: getConnectionOptions(),
   defaultJobOptions: {
     removeOnComplete: { count: 100 },
@@ -153,7 +170,12 @@ export async function runGeoAnalyticsScheduler(): Promise<void> {
       `geo-analytics:${projectId}`,
       { projectId: String(projectId) },
       {
-        jobId:    `geo-analytics:${projectId}:${dateKey}`,
+        // jobId can't contain ':' — BullMQ's Job.validateOptions() throws
+        // "Custom Id cannot contain :" (same bug found and fixed in
+        // lib/keyword-generation-scheduler.ts — see that file for the
+        // full explanation). This one hadn't fired yet, but had the same
+        // latent issue.
+        jobId:    `geo-analytics-${projectId}-${dateKey}`,
         attempts: 3,
         backoff:  { type: 'exponential', delay: 15_000 },
       },
@@ -198,7 +220,8 @@ export async function runGscMonitorScheduler(): Promise<void> {
       `gsc-monitor:${projectId}`,
       { projectId: String(projectId) },
       {
-        jobId:    `gsc-monitor:${projectId}:${dateKey}`,
+        // jobId can't contain ':' — see the geo-analytics jobId above.
+        jobId:    `gsc-monitor-${projectId}-${dateKey}`,
         attempts: 3,
         backoff:  { type: 'exponential', delay: 15_000 },
       },
@@ -209,7 +232,53 @@ export async function runGscMonitorScheduler(): Promise<void> {
   logger.info('GSC monitor scheduler completed', { enqueued });
 }
 
-// ── Scheduler 3: CMS resync retry sweep ────────────────────────────────────
+// ── Scheduler 3: keyword ranking sync fan-out ─────────────────────────────
+
+export async function runKeywordRankingSyncScheduler(): Promise<void> {
+  logger.info('Keyword ranking sync scheduler started');
+
+  // Same eligibility as GSC monitor — needs the same GSC token, and there's
+  // no point pulling ranking data for a site with nothing published yet.
+  const tokens = await GoogleToken.find({}).select('projectId').lean();
+
+  if (tokens.length === 0) {
+    logger.info('Keyword ranking sync scheduler: no projects with GSC connected');
+    return;
+  }
+
+  const projectIds = tokens.map(t => String(t.projectId));
+
+  const publishedProjectIds = await Blog.distinct('projectId', {
+    projectId: { $in: projectIds },
+    status:    'published',
+  }) as unknown as string[];
+
+  if (publishedProjectIds.length === 0) {
+    logger.info('Keyword ranking sync scheduler: no projects with published blogs');
+    return;
+  }
+
+  const dateKey = todayKey();
+  let enqueued  = 0;
+
+  for (const projectId of publishedProjectIds) {
+    await keywordRankingSyncQueue.add(
+      `keyword-ranking-sync:${projectId}`,
+      { projectId: String(projectId) },
+      {
+        // jobId can't contain ':' — see the geo-analytics jobId above.
+        jobId:    `keyword-ranking-sync-${projectId}-${dateKey}`,
+        attempts: 3,
+        backoff:  { type: 'exponential', delay: 15_000 },
+      },
+    );
+    enqueued++;
+  }
+
+  logger.info('Keyword ranking sync scheduler completed', { enqueued });
+}
+
+// ── Scheduler 4: CMS resync retry sweep ────────────────────────────────────
 
 const CMS_RESYNC_RETRY_BATCH_SIZE = 50; // cap per run — see file header
 

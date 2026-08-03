@@ -1,5 +1,5 @@
 /**
- * models/index.ts — Central export for all 26 Mongoose collections.
+ * models/index.ts — Central export for all 27 Mongoose collections.
  *
  * Import from here instead of individual files:
  *   import { User, Organization, Project, Blog } from "../models";
@@ -32,6 +32,7 @@
  *   CTA                    call-to-action injections per page
  *   ProjectCtaForm         reusable CTA form template per project
  *   Keyword                keyword research + content calendar entry
+ *   KeywordRanking         daily GSC position/clicks/impressions snapshot per keyword
  *
  * ROUND 4 — Content Engine
  *   Blog                   AI-generated blog post (with embedded history[])
@@ -106,6 +107,9 @@ export type { ICTA, IProjectCtaForm } from "./CTA";
 
 export { Keyword } from "./Keyword";
 export type { IKeyword } from "./Keyword";
+
+export { KeywordRanking } from "./KeywordRanking";
+export type { IKeywordRanking } from "./KeywordRanking";
 
 // ── Round 4 ────────────────────────────────────────────────────────────────
 export { Blog } from "./Blog";

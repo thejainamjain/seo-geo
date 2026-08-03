@@ -173,7 +173,12 @@ export const keywordService = {
         // automatic weekly trigger — if both happen to fire for the same
         // keyword near-simultaneously (manual click racing the automatic
         // trigger), BullMQ's jobId dedup means only one actually runs.
-        jobId:    `content-generation:${keywordId}`,
+        //
+        // NOTE: jobId must not contain ':' — BullMQ uses it as an internal
+        // Redis key delimiter and Job.validateOptions() throws "Custom Id
+        // cannot contain :" if you pass one. (This was previously broken —
+        // every manual Generate click 500'd on this exact line.)
+        jobId:    `content-generation-${keywordId}`,
         attempts: retryConfig.attempts,
         backoff:  { type: 'exponential', delay: retryConfig.backoffDelay },
       },

@@ -263,8 +263,15 @@ export async function getRankedKeywords(
         language_code:      'en',
         limit,
         order_by:           ['keyword_data.keyword_info.search_volume,desc'], // highest volume first
+        // DataForSEO requires an explicit "and"/"or" string BETWEEN filter
+        // conditions — [cond1, cond2] with nothing between them is invalid
+        // and returns their 40501 "Invalid Field: 'filters'" error (which is
+        // exactly what was happening here: every call silently failed and
+        // fell back to 0 results). See:
+        // https://dataforseo.com/help-center/using-filters
         filters:            [
           ['keyword_data.keyword_info.search_volume', '>', 0],  // exclude zero-volume keywords
+          'and',
           ['ranked_serp_element.serp_item.rank_group', '<=', 30], // top 30 positions only
         ],
       },

@@ -1,5 +1,16 @@
 'use client';
 
+// TODO(website-audit-split): This page is currently a hybrid design
+// (tabs: Active/Applied/FAQs/TLDRs) that doesn't cleanly match EITHER of
+// the two reference-product pages it's meant to become:
+//   - "Website Audit" — an A-/A+ letter-grade score card + a pass/fail
+//     "Technical SEO Factors" table (10 named checks, before/after status)
+//   - "Technical SEO & GEO" — a flat "Active code changes" list grouped
+//     by URL with per-URL fix counts (closer to what ChangeTable below
+//     already renders, minus the FAQ/TLDR tabs)
+// Splitting this into two real pages/routes is still pending — see
+// components/layout/sidebar.tsx's NAV_ITEMS comment for the current state
+// (both nav concepts point at this one file today).
 import { use, useState } from 'react';
 import { useCodeChanges, useLatestAudit, useFAQs, useTLDRs } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +31,8 @@ const TYPE_LABELS: Record<string, string> = {
   canonical:         'Add canonical tag',
   alt_text:          'Add image alt text',
   link_title:        'Add link title',
+  link_target:       'Add link target',
+  internal_link:     'Add internal links',
   schema:            'Add schema markup',
   broken_link:       'Fix broken link',
   redirect_chain:    'Fix redirect chain',

@@ -80,6 +80,7 @@ export const MAX_REDIRECT_HOPS   = 3;          // More than this = CodeChange 'r
 export const SLOW_PAGE_MS        = 3000;       // >3s response = CodeChange 'page_speed'
 export const THIN_CONTENT_WORDS  = 300;        // <300 words = CodeChange 'thin_content'
 export const MAX_PAGE_SIZE_BYTES = 1_000_000;  // >1MB = CodeChange 'page_size'
+export const MIN_INTERNAL_LINKS  = 3;          // <3 internal links on a page = CodeChange 'internal_link' (see detectCodeChanges in site-crawl.job.ts)
 export const BROKEN_LINK_TIMEOUT = 8_000;      // HEAD request timeout for link checking
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -119,7 +120,7 @@ export interface PageData {
   structuredData:  StructuredDataItem[];  // parsed JSON-LD (not just boolean)
 
   // Links
-  links:       Array<{ href: string; text: string; isExternal: boolean; title: string }>;
+  links:       Array<{ href: string; text: string; isExternal: boolean; title: string; target: string }>;
   brokenLinks: Array<{ href: string; statusCode: number }>;  // checked HEAD requests
   // Unique internal links actually HEAD-checked for this page (0 if the
   // broken-link check was skipped/disabled). Used as the exact denominator
@@ -701,9 +702,10 @@ export function extractFromCheerio(
     const href = $(el).attr('href')?.trim() ?? '';
     const text = $(el).text().trim();
     const title = $(el).attr('title')?.trim() ?? '';
+    const target = $(el).attr('target')?.trim() ?? '';
     if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
     const isExternal = href.startsWith('http') && !isSameDomain(href, domain);
-    links.push({ href, text, isExternal, title });
+    links.push({ href, text, isExternal, title, target });
   });
 
   const images: PageData['images'] = [];

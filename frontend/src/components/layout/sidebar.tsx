@@ -27,16 +27,26 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 // Matches the target product's nav IA (Home / Analytics / Technical SEO &
-// GEO / Keywords & Content / Settings). Two items are judgment calls —
-// flagged here rather than silently guessed:
-//  - "Website Audit" isn't included as its own item: the target app shows
-//    it as a nav entry separate from "Technical SEO & GEO", but we only
-//    have one existing page (/audit) that could back either of them, and
-//    no spec/screenshot for what distinguishes the two. Shipping both as
-//    separate items pointing at the same route would just be two nav
-//    links with identical content — worse than one honest one. /audit is
-//    wired to "Technical SEO & GEO" for now; send over what "Website
-//    Audit" should actually show and I'll split them apart for real.
+// GEO / Keywords & Content / Settings).
+//
+// "Analytics" now points at the new combined analytics page (see
+// app/(app)/projects/[projectId]/analytics/page.tsx) — Pages/SEO Fixes/
+// Schemas/Ranked cards, Performance Overview, Top Movers, AI Search
+// Metrics (GEO), Rewrite Queue, Keyword Performance, all in one
+// scrollable page, matching the reference screenshots. It previously
+// pointed at /geo (GEO metrics only) — that page still exists at its own
+// route but is no longer linked from the nav; its content was migrated
+// into a section of the new page rather than duplicated.
+//
+// One item is still a judgment call, flagged here rather than silently
+// guessed:
+//  - "Website Audit" isn't included as its own item yet: the target app
+//    shows it as a nav entry separate from "Technical SEO & GEO", and we
+//    now know (per screenshots) they ARE meant to be two distinct pages —
+//    but the existing /audit page is an older hybrid design (tabs:
+//    Active/Applied/FAQs/TLDRs) that cleanly matches NEITHER target page.
+//    Splitting it needs real frontend work, not just a nav change — see
+//    the TODO in audit/page.tsx.
 //  - "Business" is kept even though the target nav doesn't show it as a
 //    top-level item — in the real product it likely lives inside Settings
 //    instead, but that's a Settings-page redesign we haven't scoped yet.
@@ -44,12 +54,12 @@ import {
 //    business profile with nothing to replace it, so it stays until
 //    Settings gets rebuilt.
 const NAV_ITEMS = [
-  { label: 'Home',                 href: 'overview',  icon: LayoutDashboard },
-  { label: 'Analytics',            href: 'geo',       icon: BarChart2 },
-  { label: 'Technical SEO & GEO',  href: 'audit',     icon: Terminal },
-  { label: 'Keywords & Content',   href: 'keywords',  icon: PenSquare },
-  { label: 'Business',             href: 'business',  icon: Building2 },
-  { label: 'Settings',             href: 'settings',  icon: Settings },
+  { label: 'Home',                 href: 'overview',   icon: LayoutDashboard },
+  { label: 'Analytics',            href: 'analytics',  icon: BarChart2 },
+  { label: 'Technical SEO & GEO',  href: 'audit',      icon: Terminal },
+  { label: 'Keywords & Content',   href: 'keywords',   icon: PenSquare },
+  { label: 'Business',             href: 'business',   icon: Building2 },
+  { label: 'Settings',             href: 'settings',   icon: Settings },
 ];
 
 export function Sidebar() {

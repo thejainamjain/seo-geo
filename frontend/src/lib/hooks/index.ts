@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/stores/auth.store';
 import { useRouter } from 'next/navigation';
 import type { BlogStatus, PipelineStep, CmsConnectPayload, CmsUpdatePayload, OptimizationStatus, FreeAuditPayload } from '@/types/api';
-import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, cmsApi, knowledgeApi, optimizationsApi, gscApi, toolsApi, dashboardApi } from '@/lib/api';
+import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, analyticsApi, cmsApi, knowledgeApi, optimizationsApi, gscApi, toolsApi, dashboardApi } from '@/lib/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -330,6 +330,43 @@ export function useGeoRuns(projectId: string) {
   return useQuery({
     queryKey: ['geo', projectId],
     queryFn:  () => geoApi.runs(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+// ── Analytics ─────────────────────────────────────────────────────────────
+// NOTE: for the Rewrite Queue section, the Analytics page uses the
+// existing useOptimizations() hook below directly, and for AI Search
+// Metrics (GEO) it uses useGeoRuns() above — not duplicated here.
+
+export function useAnalyticsSummary(projectId: string) {
+  return useQuery({
+    queryKey: ['analytics', 'summary', projectId],
+    queryFn:  () => analyticsApi.summary(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+export function usePerformanceOverview(projectId: string, days = 14) {
+  return useQuery({
+    queryKey: ['analytics', 'performance-overview', projectId, days],
+    queryFn:  () => analyticsApi.performanceOverview(projectId, days),
+    enabled:  !!projectId,
+  });
+}
+
+export function useTopMovers(projectId: string, limit = 5) {
+  return useQuery({
+    queryKey: ['analytics', 'top-movers', projectId, limit],
+    queryFn:  () => analyticsApi.topMovers(projectId, limit),
+    enabled:  !!projectId,
+  });
+}
+
+export function useKeywordPerformance(projectId: string, params?: { page?: number; limit?: number }) {
+  return useQuery({
+    queryKey: ['analytics', 'keyword-performance', projectId, params],
+    queryFn:  () => analyticsApi.keywordPerformance(projectId, params),
     enabled:  !!projectId,
   });
 }

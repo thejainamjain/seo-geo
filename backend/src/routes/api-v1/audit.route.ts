@@ -8,6 +8,7 @@ router.use(requireAuth);
 
 router.get('/',                               auditHandler.getLatest);
 router.get('/code-changes',                   auditHandler.listCodeChanges);
+router.get('/code-changes/type-counts',       auditHandler.getCodeChangeTypeCounts);
 router.post('/code-changes/:changeId/apply',  auditHandler.applyCodeChange);
 router.post('/code-changes/:changeId/disable',auditHandler.disableCodeChange);
 router.get('/faqs',                           auditHandler.listFAQs);

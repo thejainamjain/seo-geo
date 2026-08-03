@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { Audit, CodeChange, FAQ, TLDR } from '../models';
 import { NotFoundError, ForbiddenError } from '../utils/errors';
 import { OrganizationMember, Project } from '../models';
@@ -97,6 +98,47 @@ export const auditService = {
 
     logger.info('Code changes listed', { projectId, total });
     return { codeChanges, total, page: query.page, limit: query.limit, auditReady: true };
+  },
+
+  /**
+   * Per-type, per-status counts across ALL of the latest audit's
+   * CodeChanges — not just the current page. Backs the Technical SEO &
+   * GEO page's sidebar filter list (image reference: "Add link title
+   * 2124", "Active 2165", "Disabled 2", etc.) — those numbers need to
+   * reflect the true total, which listCodeChanges (paginated, 20/page
+   * default) can't provide without fetching every page client-side.
+   */
+  async getCodeChangeTypeCounts(userId: string, projectId: string) {
+    logger.debug('auditService.getCodeChangeTypeCounts', { userId, projectId });
+
+    await assertProjectAccess(userId, projectId);
+
+    const latestAudit = await findLatestCompletedAudit(projectId);
+    if (!latestAudit) {
+      return { auditReady: false, total: 0, activeTotal: 0, disabledTotal: 0, byType: {} };
+    }
+
+    // aggregate() does NOT auto-cast string projectId to ObjectId like
+    // find() does — explicit cast required or this $match silently
+    // matches nothing.
+    const rows = await CodeChange.aggregate([
+      { $match: { projectId: new Types.ObjectId(projectId), auditId: latestAudit._id } },
+      { $group: { _id: { type: '$type', status: '$status' }, count: { $sum: 1 } } },
+    ]);
+
+    const byType: Record<string, { pending: number; applied: number; disabled: number; failed: number }> = {};
+    let total = 0, activeTotal = 0, disabledTotal = 0;
+
+    for (const row of rows) {
+      const { type, status } = row._id as { type: string; status: 'pending' | 'applied' | 'disabled' | 'failed' };
+      byType[type] ??= { pending: 0, applied: 0, disabled: 0, failed: 0 };
+      byType[type]![status] += row.count;
+      total += row.count;
+      if (status === 'pending')  activeTotal   += row.count;
+      if (status === 'disabled') disabledTotal += row.count;
+    }
+
+    return { auditReady: true, total, activeTotal, disabledTotal, byType };
   },
 
   async applyCodeChange(userId: string, projectId: string, changeId: string) {

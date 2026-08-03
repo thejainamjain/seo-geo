@@ -27,6 +27,8 @@
  *   'non_self_canonical' — Canonical tag points to a different URL
  *   'missing_h1'         — Page has no <h1> tag
  *   'schema_invalid'     — Schema markup present but missing required fields
+ *   'link_target'        — External link missing target="_blank"
+ *   'internal_link'      — Page has fewer than MIN_INTERNAL_LINKS internal links
  *
  * REDIS CONTRACT (unchanged — downstream jobs unaffected):
  *   crawl:{projectId}:page:{base64url} → { url, title, textContent }  TTL 24hr
@@ -66,6 +68,7 @@ import {
   SLOW_PAGE_MS,
   THIN_CONTENT_WORDS,
   MAX_PAGE_SIZE_BYTES,
+  MIN_INTERNAL_LINKS,
 } from '../../lib/crawler';
 import type { PageData, RobotsChecker, BrokenLinkCache } from '../../lib/crawler';
 import type { PipelineJobData } from '../seo-pipeline.worker';
@@ -170,6 +173,20 @@ function detectCodeChanges(
     });
   }
 
+  // External links should open in a new tab (target="_blank") — standard
+  // SEO/UX practice: an external link without target leaves the visitor's
+  // site via the current tab, which is generally considered bad practice
+  // for retaining visitors browsing your own pages.
+  for (const link of page.links.filter(l => l.isExternal && !l.target)) {
+    changes.push({
+      projectId, auditId, url: page.url,
+      type:    'link_target',
+      status:  'pending',
+      oldHtml: `<a href="${link.href}"${link.title ? ` title="${link.title}"` : ''}>${link.text}</a>`,
+      newHtml: `<a href="${link.href}"${link.title ? ` title="${link.title}"` : ''} target="_blank" rel="noopener noreferrer">${link.text}</a>`,
+    });
+  }
+
   if (!page.hasSchema) {
     changes.push({
       projectId, auditId, url: page.url,
@@ -251,6 +268,34 @@ function detectCodeChanges(
       status:  'pending',
       oldHtml: `<!-- No <h1> tag found on this page -->`,
       newHtml: '',
+    });
+  }
+
+  // Insufficient internal links — standard SEO practice: internal links
+  // help search engines discover and crawl other pages on the site, and
+  // distribute page authority across them.
+  //
+  // NOTE: this was previously a no-op — FACTOR_WEIGHTS in
+  // technical-audit.job.ts had 'internal_link' reserved with a weight,
+  // and MIN_INTERNAL_LINKS was already exported from lib/crawler.ts
+  // specifically for this check, but nothing ever actually emitted this
+  // CodeChange type. Now wired up using page.links, which the crawler
+  // was already extracting (no crawler/extraction changes needed).
+  //
+  // newHtml is intentionally left empty here, same as thin_content/
+  // page_speed/etc below — a *specific* fix (which other page(s) to link
+  // to) needs site-wide context (what other pages/topics exist), which
+  // this per-page function doesn't have. See technical-audit.job.ts's
+  // newV2Types list if/when this should get an LLM-generated suggestion.
+  const internalLinkCount = page.links.filter(l => !l.isExternal).length;
+  if (internalLinkCount < MIN_INTERNAL_LINKS) {
+    changes.push({
+      projectId, auditId, url: page.url,
+      type:    'internal_link',
+      status:  'pending',
+      oldHtml: `<!-- Page has only ${internalLinkCount} internal link(s) (minimum: ${MIN_INTERNAL_LINKS}) -->`,
+      newHtml: '',
+      htmlAttributes: { internalLinkCount: String(internalLinkCount) },
     });
   }
 
@@ -938,7 +983,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     // Two kinds of factor:
     //   - Page-level (checked once per every crawled page): title,
     //     description, open_graph, canonical, schema, missing_h1, page_speed,
-    //     page_size, redirect_chain.
+    //     page_size, redirect_chain, internal_link.
     //   - Per-element (checked once per qualifying element found across all
     //     pages): alt_text (per image), link_title (per external link),
     //     schema_invalid (per structured-data block), broken_link (per
@@ -948,9 +993,10 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
     //     matches the same guard detectCodeChanges uses), non_self_canonical
     //     (pages that have a canonical tag at all).
     //
-    // 'internal_link' is intentionally omitted: no check in
-    // detectCodeChanges ever produces that CodeChange type, so there's
-    // nothing to count — it will correctly contribute 0 to the score.
+    // 'link_target' is intentionally omitted here even though the check
+    // IS implemented (detectCodeChanges fires on external links missing
+    // target="_blank") — it isn't in FACTOR_WEIGHTS at all, so it doesn't
+    // participate in scoring, only in the fix-count UI (audit.totalFixes).
     const totalImages           = allPages.reduce((sum, p) => sum + p.images.length, 0);
     const totalExternalLinks    = allPages.reduce(
       (sum, p) => sum + p.links.filter(l => l.isExternal).length,
@@ -977,6 +1023,7 @@ export async function runSiteCrawlJob(job: Job<PipelineJobData>): Promise<void> 
       page_speed:         allPages.length,
       non_self_canonical: pagesWithCanonical,
       page_size:          allPages.length,
+      internal_link:      allPages.length,
     };
 
     await Audit.findByIdAndUpdate(auditId, {

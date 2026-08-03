@@ -192,6 +192,56 @@ export interface GeoRun {
   completedAt?:         string;
 }
 
+// ── Analytics ────────────────────────────────────────────────────────────
+
+export interface AnalyticsSummary {
+  pages:    number;
+  seoFixes: number;
+  schemas:  number;
+  ranked:   number;
+}
+
+export interface PerformanceOverviewPoint {
+  date:        string;
+  clicks:      number;
+  impressions: number;
+}
+
+export interface PerformanceOverview {
+  hasData: boolean;
+  series:  PerformanceOverviewPoint[];
+}
+
+export interface TopMover {
+  keyword:      string;
+  position:     number;
+  prevPosition: number;
+  delta:        number;
+}
+
+export interface TopMovers {
+  hasData: boolean;
+  movers:  TopMover[];
+}
+
+export interface KeywordPerformanceRow {
+  keyword:      string;
+  searchVolume: number | null;
+  position:     number;
+  clicks:       number;
+  impressions:  number;
+  ctr:          number;
+  date:         string;
+}
+
+export interface KeywordPerformance {
+  hasData: boolean;
+  rows:    KeywordPerformanceRow[];
+  total:   number;
+  page:    number;
+  limit:   number;
+}
+
 // ── API response wrappers ─────────────────────────────────────────────────
 
 export interface ApiError {

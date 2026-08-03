@@ -109,7 +109,7 @@ const FACTOR_WEIGHTS: Record<string, number> = {
   link_title:         3,
   schema:             9,
   broken_link:        8,
-  internal_link:      4,   // Reserved — site-crawl.job.ts never emits this CodeChange type yet, so this currently contributes 0 to the score either way
+  internal_link:      4,   // Page has fewer than MIN_INTERNAL_LINKS internal links — see detectCodeChanges (site-crawl.job.ts)
   thin_content:       7,   // Thin pages hurt rankings significantly
   redirect_chain:     6,   // Multi-hop redirects waste crawl budget
   missing_h1:         8,   // H1 is a primary on-page ranking signal
@@ -223,10 +223,9 @@ function extractLinkRef(oldHtml: string): { href: string; text: string } | null 
  *   typeTotal. If it fails on N of them → those N lose the full weight.
  *   Score = (sum of passed weights) / (sum of all possible weights) × 100
  *
- * Note: 'internal_link' is in FACTOR_WEIGHTS but no check in
- * detectCodeChanges (site-crawl.job.ts) ever produces that CodeChange
- * type, so totalByType['internal_link'] is always 0/undefined and it
- * correctly contributes nothing to either side of the ratio.
+ * 'internal_link' IS implemented (detectCodeChanges in site-crawl.job.ts,
+ * added after this comment was originally written) — checkTotals is
+ * populated for it the same way as the other page-level factors above.
  */
 function calculateWeightedScore(input: AuditScoreInput): {
   actualScore:      number;

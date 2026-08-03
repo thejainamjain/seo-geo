@@ -36,6 +36,18 @@ export const auditHandler = {
     }
   },
 
+  async getCodeChangeTypeCounts(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await auditService.getCodeChangeTypeCounts(
+        req.userId,
+        req.params['projectId'] as string,
+      );
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async applyCodeChange(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const codeChange = await auditService.applyCodeChange(

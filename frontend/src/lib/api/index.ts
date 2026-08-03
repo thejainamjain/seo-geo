@@ -13,6 +13,10 @@ import type {
   Audit,
   Keyword,
   GeoRun,
+  AnalyticsSummary,
+  PerformanceOverview,
+  TopMovers,
+  KeywordPerformance,
   BusinessContext, 
   SaveOnboardingStepResult, 
   StartPipelineResult, 
@@ -220,6 +224,33 @@ export const geoApi = {
     apiClient
       .get<{ runs: GeoRun[] }>(`/projects/${projectId}/geo`)
       .then(r => r.data.runs),
+};
+
+// ── Analytics ────────────────────────────────────────────────────────────
+// NOTE: GEO metrics and Rewrite Queue are NOT here — the Analytics page
+// calls geoApi.runs() and optimizationsApi.list() directly, since those
+// already exist. See backend/src/services/analytics.service.ts's header
+// comment for why this deliberately isn't one monolithic endpoint.
+export const analyticsApi = {
+  summary: (projectId: string) =>
+    apiClient
+      .get<AnalyticsSummary>(`/projects/${projectId}/analytics/summary`)
+      .then(r => r.data),
+
+  performanceOverview: (projectId: string, days = 14) =>
+    apiClient
+      .get<PerformanceOverview>(`/projects/${projectId}/analytics/performance-overview`, { params: { days } })
+      .then(r => r.data),
+
+  topMovers: (projectId: string, limit = 5) =>
+    apiClient
+      .get<TopMovers>(`/projects/${projectId}/analytics/top-movers`, { params: { limit } })
+      .then(r => r.data),
+
+  keywordPerformance: (projectId: string, params?: { page?: number; limit?: number }) =>
+    apiClient
+      .get<KeywordPerformance>(`/projects/${projectId}/analytics/keyword-performance`, { params })
+      .then(r => r.data),
 };
 
 

@@ -5,8 +5,11 @@
  *       three per-project workers that process the fanned-out jobs.
  *
  * SCHEDULERS:
- *   geo-analytics-scheduler → every Monday 10:00 UTC (global fan-out)
- *   gsc-monitor-scheduler  → every Monday 11:00 UTC (global fan-out)
+ *   geo-analytics-scheduler        → every Monday 10:00 UTC (global fan-out)
+ *   gsc-monitor-scheduler         → every Monday 11:00 UTC (global fan-out)
+ *   keyword-ranking-sync-scheduler → daily 12:00 UTC (global fan-out — see
+ *     workers/jobs/keyword-ranking-sync.job.ts for why this one's daily,
+ *     not weekly, unlike the two above)
  *
  *   CMS publishing is NOT a global fan-out scheduler anymore — each
  *   project has its OWN BullMQ Job Scheduler at its own publishHourUtc /
@@ -18,9 +21,10 @@
  *   restart, and is what migrates existing projects onto this design.
  *
  * WORKERS (process fanned-out per-project jobs):
- *   cmsPublishWorker    → processes seo-cms-publish queue
- *   geoAnalyticsWorker  → processes seo-geo-analytics queue
- *   gscMonitorWorker    → processes seo-gsc-monitor queue
+ *   cmsPublishWorker         → processes seo-cms-publish queue
+ *   geoAnalyticsWorker       → processes seo-geo-analytics queue
+ *   gscMonitorWorker         → processes seo-gsc-monitor queue
+ *   keywordRankingSyncWorker → processes seo-keyword-ranking-sync queue
  *
  * BOOT: Called once from worker.ts on startup.
  *       Registers scheduler jobs with BullMQ repeat — idempotent,
@@ -34,6 +38,7 @@ import { QUEUE_NAMES }              from '@/constants/seo-pipeline.constants';
 import {
   runGeoAnalyticsScheduler,
   runGscMonitorScheduler,
+  runKeywordRankingSyncScheduler,
   runCmsResyncRetryScheduler,
   removeOrphanedRepeatableJobs,
 } from './jobs/global-scheduler.job';
@@ -42,6 +47,7 @@ import { runWeeklyGenerationTrigger }   from '@/lib/keyword-generation-scheduler
 import { runCmsPublishJob, type CmsPublishJobData } from './jobs/cms-publish.job';
 import { runGeoAnalyticsJob } from './jobs/geo-analytics.job';
 import { runGscMonitorJob }   from './jobs/gsc-monitor.job';
+import { runKeywordRankingSyncJob } from './jobs/keyword-ranking-sync.job';
 
 // ── Scheduler queue ────────────────────────────────────────────────────────
 // One queue for all three scheduler jobs — they're lightweight fan-out only.
@@ -79,6 +85,18 @@ async function registerSchedulers(): Promise<void> {
     },
   );
 
+  // Keyword ranking sync — daily at 12:00 UTC (needs daily snapshots for
+  // "Top Movers" to have anything to diff against; see
+  // workers/jobs/keyword-ranking-sync.job.ts)
+  await schedulerQueue.add(
+    'keyword-ranking-sync-scheduler',
+    {},
+    {
+      jobId:  'keyword-ranking-sync-scheduler',
+      repeat: { pattern: '0 12 * * *' },
+    },
+  );
+
   // CMS resync retry — every 4 hours, retries failed CMS re-syncs from
   // blog-optimization.job.ts / optimization.service.ts (see
   // lib/blog-cms-publisher.ts's updateBlogOnCms())
@@ -93,9 +111,10 @@ async function registerSchedulers(): Promise<void> {
 
   logger.info('Global schedulers registered', {
     schedulers: [
-      'geo-analytics-scheduler     → Mon 10:00 UTC',
-      'gsc-monitor-scheduler       → Mon 11:00 UTC',
-      'cms-resync-retry-scheduler  → every 4 hours',
+      'geo-analytics-scheduler        → Mon 10:00 UTC',
+      'gsc-monitor-scheduler          → Mon 11:00 UTC',
+      'keyword-ranking-sync-scheduler → daily 12:00 UTC',
+      'cms-resync-retry-scheduler     → every 4 hours',
       '(CMS publish is per-project now — see reconcileCmsPublishSchedules)',
     ],
   });
@@ -113,6 +132,9 @@ function createSchedulerWorker(): Worker {
           break;
         case 'gsc-monitor-scheduler':
           await runGscMonitorScheduler();
+          break;
+        case 'keyword-ranking-sync-scheduler':
+          await runKeywordRankingSyncScheduler();
           break;
         case 'cms-resync-retry-scheduler':
           await runCmsResyncRetryScheduler();
@@ -241,6 +263,43 @@ function createGscMonitorWorker(): Worker<{ projectId: string }> {
   return worker;
 }
 
+function createKeywordRankingSyncWorker(): Worker<{ projectId: string }> {
+  const worker = new Worker<{ projectId: string }>(
+    QUEUE_NAMES.KEYWORD_RANKING_SYNC,
+    async (job: Job<{ projectId: string }>) => {
+      await runKeywordRankingSyncJob(job);
+    },
+    {
+      connection:  getConnectionOptions(),
+      concurrency: 2,
+    },
+  );
+
+  worker.on('completed', (job) => {
+    logger.info('Keyword ranking sync job completed', {
+      jobId:     job.id,
+      projectId: job.data.projectId,
+    });
+  });
+
+  worker.on('failed', (job, err) => {
+    if (!job) return;
+    logger.error(new Error('Keyword ranking sync job failed'), {
+      jobId: job.id, projectId: job.data.projectId, attemptsMade: job.attemptsMade, error: err.message,
+    });
+  });
+
+  worker.on('error', (err) => {
+    logger.error(err, { context: 'keyword-ranking-sync.worker' });
+  });
+
+  logger.info('Keyword ranking sync worker started', {
+    queue: QUEUE_NAMES.KEYWORD_RANKING_SYNC, concurrency: 2,
+  });
+
+  return worker;
+}
+
 function createWeeklyGenerationTriggerWorker(): Worker<{ projectId: string; weekNumber: number }> {
   const worker = new Worker<{ projectId: string; weekNumber: number }>(
     QUEUE_NAMES.WEEKLY_GENERATION_TRIGGER,
@@ -287,6 +346,7 @@ export interface SchedulerWorkers {
   cmsPublishWorker:             Worker<CmsPublishJobData>;
   geoAnalyticsWorker:           Worker<{ projectId: string }>;
   gscMonitorWorker:             Worker<{ projectId: string }>;
+  keywordRankingSyncWorker:     Worker<{ projectId: string }>;
   weeklyGenerationTriggerWorker: Worker<{ projectId: string; weekNumber: number }>;
   close: () => Promise<void>;
 }
@@ -311,6 +371,7 @@ export async function bootSchedulers(): Promise<SchedulerWorkers> {
   const cmsPublishWorker   = createCmsPublishWorker();
   const geoAnalyticsWorker = createGeoAnalyticsWorker();
   const gscMonitorWorker   = createGscMonitorWorker();
+  const keywordRankingSyncWorker      = createKeywordRankingSyncWorker();
   const weeklyGenerationTriggerWorker = createWeeklyGenerationTriggerWorker();
 
   logger.info('All scheduler workers booted', {
@@ -319,6 +380,7 @@ export async function bootSchedulers(): Promise<SchedulerWorkers> {
       'cmsPublishWorker',
       'geoAnalyticsWorker',
       'gscMonitorWorker',
+      'keywordRankingSyncWorker',
       'weeklyGenerationTriggerWorker',
     ],
   });
@@ -328,12 +390,14 @@ export async function bootSchedulers(): Promise<SchedulerWorkers> {
     cmsPublishWorker,
     geoAnalyticsWorker,
     gscMonitorWorker,
+    keywordRankingSyncWorker,
     weeklyGenerationTriggerWorker,
     close: async () => {
       await schedulerWorker.close();
       await cmsPublishWorker.close();
       await geoAnalyticsWorker.close();
       await gscMonitorWorker.close();
+      await keywordRankingSyncWorker.close();
       await weeklyGenerationTriggerWorker.close();
       logger.info('All scheduler workers closed');
     },

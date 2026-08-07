@@ -2,7 +2,8 @@ import { normalizeToStringArray } from '../utils/normalize';
 
 /**
  * Shared utility — formats BusinessContext into a compact string for LLM prompts.
- * Used by: blog-generation.job.ts, content-generation.job.ts
+ * Used by: content-generation.job.ts (deprecated/blog-generation.job.ts also
+ * used this before it was superseded — see deprecated/README.md)
  * 
  * Kept under ~2000 chars — enough context without overwhelming the prompt.
  * All fields expected as strings (normalized by business-profile.job.ts mapper).

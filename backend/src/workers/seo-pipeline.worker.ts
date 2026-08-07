@@ -56,12 +56,15 @@ export interface PipelineJobData {
   step:      PipelineStep;
 }
 
-export interface BlogJobData {
-  projectId: string;
-  keywordId: string;
-  jobIndex:  number; // 1–25
-  total:     number; // actual count of keywords selected (≤ 25)
-}
+// DEPRECATED — BlogJobData was only used by deprecated/blog-generation.job.ts
+// (see that file / deprecated/README.md). Commented out, not deleted, so
+// the history/reasoning stays visible in place rather than only in git blame.
+// export interface BlogJobData {
+//   projectId: string;
+//   keywordId: string;
+//   jobIndex:  number; // 1–25
+//   total:     number; // actual count of keywords selected (≤ 25)
+// }
 
 // ── Queue instances ────────────────────────────────────────────────────────
 // Exported so job files can import and enqueue directly.
@@ -74,13 +77,18 @@ export const seoPipelineQueue = new Queue<PipelineJobData>(QUEUE_NAMES.SEO_PIPEL
   },
 });
 
-export const blogGenerationQueue = new Queue<BlogJobData>(QUEUE_NAMES.BLOG_GENERATION, {
-  connection:        getConnectionOptions(),
-  defaultJobOptions: {
-    removeOnComplete: { count: 200 },
-    removeOnFail:     { count: 500 },
-  },
-});
+// DEPRECATED — nothing ever called blogGenerationQueue.add() anywhere in
+// the codebase (verified by grep across the whole backend), and its only
+// intended consumer (deprecated/blog-generation.job.ts) is dead code, so
+// this queue had zero producers AND zero consumers. Commented out rather
+// than deleted — see deprecated/README.md.
+// export const blogGenerationQueue = new Queue<BlogJobData>(QUEUE_NAMES.BLOG_GENERATION, {
+//   connection:        getConnectionOptions(),
+//   defaultJobOptions: {
+//     removeOnComplete: { count: 200 },
+//     removeOnFail:     { count: 500 },
+//   },
+// });
 
 // ── Pipeline step helpers ──────────────────────────────────────────────────
 

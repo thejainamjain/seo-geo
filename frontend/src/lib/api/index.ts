@@ -22,7 +22,7 @@ import type {
   StartPipelineResult, 
   CmsConfig, 
   CmsConnectPayload, 
-  CmsUpdatePayload, TLDR, FAQ,
+  CmsUpdatePayload, TLDR, FAQ, CodeChangeTypeCounts,
   KnowledgeFile,
   Optimization,
   OptimizationStatus,
@@ -120,13 +120,26 @@ export const pipelineApi = {
 // ── Blogs ─────────────────────────────────────────────────────────────────────
  
 export const blogsApi = {
-  list: (projectId: string, status?: BlogStatus) =>
-    apiClient
-      .get<{ blogs: Blog[]; total: number; page: number; limit: number }>(
+  list: async (projectId: string, status?: BlogStatus) => {
+    const allBlogs: Blog[] = [];
+    let page = 1;
+    let total = Infinity;
+
+    while (allBlogs.length < total) {
+      const res = await apiClient.get<{ blogs: Blog[]; total: number; page: number; limit: number }>(
         `/projects/${projectId}/blogs`,
-        { params: status ? { status } : undefined },
-      )
-      .then(r => r.data.blogs),
+        { params: { ...(status ? { status } : {}), page, limit: 100 } },
+      );
+
+      allBlogs.push(...res.data.blogs);
+      total = res.data.total;
+      page++;
+
+      if (res.data.blogs.length === 0) break; // safety exit
+    }
+
+    return allBlogs;
+  },
  
   get: (projectId: string, blogId: string) =>
     apiClient
@@ -141,15 +154,19 @@ export const blogsApi = {
   updateContent: (
     projectId: string,
     blogId: string,
-    payload: { title?: string; description?: string; content?: string; heroImageUrl?: string | null },
+    payload: {
+      title?: string; description?: string; content?: string;
+      heroImageUrl?: string | null; slug?: string; snapshot?: boolean;
+    },
   ) =>
     apiClient
       .patch<{ blog: Blog }>(`/projects/${projectId}/blogs/${blogId}`, payload)
       .then(r => r.data.blog),
 
   // multipart/form-data — field name must be exactly 'image' (multer config
-  // on the backend, see routes/api-v1/blog.route.ts). No manual Content-Type
-  // header — same reasoning as knowledgeApi.upload above.
+  // on the backend, see routes/api-v1/blog.route.ts). See
+  // knowledgeApi.upload's comment above / client.ts's interceptor for why
+  // no manual Content-Type handling is needed (or safe to add) here.
   uploadImage: (projectId: string, blogId: string, file: File) => {
     const formData = new FormData();
     formData.append('image', file);
@@ -169,7 +186,7 @@ export const dashboardApi = {
 
 export const auditApi = {
   latest: (projectId: string) =>
-    apiClient.get<{ audit: Audit }>(`/projects/${projectId}/audit/latest`).then(r => r.data.audit),
+    apiClient.get<{ audit: Audit }>(`/projects/${projectId}/audit`).then(r => r.data.audit),
  
   codeChanges: async (projectId: string, params?: { type?: string; status?: string }) => {
     const allChanges: CodeChange[] = [];
@@ -205,17 +222,57 @@ export const auditApi = {
     apiClient
       .get<{ tldrs: TLDR[]; total: number }>(`/projects/${projectId}/audit/tldrs`)
       .then(r => r.data.tldrs),
+
+  codeChangeTypeCounts: (projectId: string) =>
+    apiClient
+      .get<CodeChangeTypeCounts>(`/projects/${projectId}/audit/code-changes/type-counts`)
+      .then(r => r.data),
+
+  applyCodeChange: (projectId: string, changeId: string) =>
+    apiClient
+      .post<{ codeChange: CodeChange }>(`/projects/${projectId}/audit/code-changes/${changeId}/apply`)
+      .then(r => r.data.codeChange),
+
+  disableCodeChange: (projectId: string, changeId: string) =>
+    apiClient
+      .post<{ codeChange: CodeChange }>(`/projects/${projectId}/audit/code-changes/${changeId}/disable`)
+      .then(r => r.data.codeChange),
 };
 // ── Keywords ──────────────────────────────────────────────────────────────
 
 export const keywordsApi = {
-  list: (projectId: string) =>
-    apiClient.get<{ keywords: Keyword[] }>(`/projects/${projectId}/keywords`).then(r => r.data.keywords),
+  list: async (projectId: string) => {
+    const allKeywords: Keyword[] = [];
+    let page = 1;
+    let total = Infinity;
+
+    while (allKeywords.length < total) {
+      const res = await apiClient.get<{
+        keywords: Keyword[];
+        total:    number;
+        page:     number;
+        limit:    number;
+      }>(`/projects/${projectId}/keywords`, { params: { page, limit: 100 } });
+
+      allKeywords.push(...res.data.keywords);
+      total = res.data.total;
+      page++;
+
+      if (res.data.keywords.length === 0) break; // safety exit
+    }
+
+    return allKeywords;
+  },
 
   generate: (projectId: string, keywordId: string) =>
   apiClient.post<{ status: string; keywordId: string }>(
     `/projects/${projectId}/keywords/${keywordId}/generate`
   ).then(r => r.data),
+
+  add: (projectId: string, keyword: string) =>
+    apiClient
+      .post<{ keyword: Keyword }>(`/projects/${projectId}/keywords`, { keyword })
+      .then(r => r.data.keyword),
 };
 
 // ── GEO ───────────────────────────────────────────────────────────────────
@@ -291,9 +348,15 @@ export const knowledgeApi = {
       .then(r => r.data.files),
 
   // multipart/form-data — field name must be exactly 'file' (multer config
-  // on the backend). Don't set a Content-Type header here: axios detects
-  // the FormData body and lets the browser set 'multipart/form-data' with
-  // the correct boundary itself; setting it manually breaks the upload.
+  // on the backend). Don't set a Content-Type header here yourself — the
+  // shared apiClient (lib/api/client.ts) has a request interceptor that
+  // strips its default 'application/json' Content-Type specifically for
+  // FormData bodies, so axios's adapter can set the correct
+  // 'multipart/form-data; boundary=...' itself. (This used to be broken:
+  // the instance-level default Content-Type was NOT auto-removed by axios
+  // just because the body was FormData, so every upload here was sent as
+  // JSON with a multipart body and silently failed server-side — see the
+  // client.ts interceptor's comment for the full explanation.)
   upload: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);

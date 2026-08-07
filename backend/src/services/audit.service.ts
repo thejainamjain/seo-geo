@@ -47,20 +47,46 @@ async function findLatestCompletedAudit(projectId: string) {
     .lean();
 }
 
+interface LatestAuditResult {
+  _id:          unknown;
+  projectId:    unknown;
+  status:       'pending' | 'running' | 'completed' | 'failed';
+  crawledUrls?: string[];
+  summary?: {
+    totalPages?:         number;
+    totalFixes?:         number;
+    totalSchemas?:       number;
+    totalInternalLinks?: number;
+    totalFaqs?:          number;
+    checkTotals?:        Record<string, number>;
+    score?:              number;
+    scoreReasoning?:     string;
+  };
+  performedAt:   Date;
+  completedAt?:  Date;
+  previousScore: number | null;
+}
+
 export const auditService = {
-  async getLatestAudit(userId: string, projectId: string) {
+  async getLatestAudit(userId: string, projectId: string): Promise<LatestAuditResult> {
     logger.debug('auditService.getLatestAudit', { userId, projectId });
 
     await assertProjectAccess(userId, projectId);
 
-    const audit = await Audit.findOne({ projectId, status: 'completed' })
-      .sort({ performedAt: -1 })
-      .lean();
+    const [audit, previousAudit] = await Promise.all([
+      Audit.findOne({ projectId, status: 'completed' }).sort({ performedAt: -1 }).lean(),
+      // Second-most-recent completed audit — used for a genuine before/
+      // after score comparison (Website Audit page's "A- → A+" card).
+      // Not fabricated: if this project has only ever had one completed
+      // audit, this is null, and the frontend shows a single grade
+      // rather than inventing a "before" that never happened.
+      Audit.find({ projectId, status: 'completed' }).sort({ performedAt: -1 }).skip(1).limit(1).lean(),
+    ]);
 
     if (!audit) throw new NotFoundError('Audit');
 
     logger.info('Latest audit fetched', { projectId, auditId: String(audit._id) });
-    return audit;
+    return { ...audit, previousScore: previousAudit[0]?.summary?.score ?? null };
   },
 
   async listCodeChanges(userId: string, projectId: string, query: {
@@ -102,11 +128,17 @@ export const auditService = {
 
   /**
    * Per-type, per-status counts across ALL of the latest audit's
-   * CodeChanges — not just the current page. Backs the Technical SEO &
-   * GEO page's sidebar filter list (image reference: "Add link title
-   * 2124", "Active 2165", "Disabled 2", etc.) — those numbers need to
-   * reflect the true total, which listCodeChanges (paginated, 20/page
-   * default) can't provide without fetching every page client-side.
+   * CodeChanges. Backs the Technical SEO & GEO page's sidebar filter
+   * list (image reference: "Add link title 2124", "Active 2165",
+   * "Disabled 2", etc.).
+   *
+   * NOTE ON WHY THIS EXISTS: the frontend's auditApi.codeChanges() already
+   * loops through every page internally (100/request) to build a
+   * complete list, so client-side counting from that wouldn't actually
+   * be wrong. But every CodeChange document carries full oldHtml/newHtml
+   * payloads — fetching potentially thousands of them (2165+ in the
+   * reference screenshots) just to display a sidebar count is real,
+   * unnecessary payload. This aggregation returns just the counts.
    */
   async getCodeChangeTypeCounts(userId: string, projectId: string) {
     logger.debug('auditService.getCodeChangeTypeCounts', { userId, projectId });

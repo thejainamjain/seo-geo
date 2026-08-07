@@ -647,7 +647,9 @@ export async function analyzeSerpResults(
 
 /**
  * Generates a full blog post for a keyword.
- * Used by: blog-generation.job.ts (when LLM is wired in)
+ * Used by: content-generation.job.ts (the live, actually-wired job —
+ * deprecated/blog-generation.job.ts used this too before being
+ * superseded; see deprecated/README.md)
  */
 export async function generateBlogPost(
   keyword:         string,

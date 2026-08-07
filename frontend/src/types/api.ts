@@ -147,9 +147,14 @@ export interface Audit {
     totalSchemas:       number;
     totalInternalLinks: number;
     totalFaqs:          number;
+    checkTotals?:       Record<string, number>;
     score?:             number;
     scoreReasoning?:    string;
   };
+  /** Score of the previous completed audit, if one exists — null if this
+   *  is the project's first-ever completed audit (see
+   *  audit.service.ts's getLatestAudit for why this isn't fabricated). */
+  previousScore: number | null;
   performedAt:  string;
   completedAt?: string;
 }
@@ -190,6 +195,14 @@ export interface GeoRun {
   periodIndex:          number;
   runAt:                string;
   completedAt?:         string;
+}
+
+export interface CodeChangeTypeCounts {
+  auditReady:    boolean;
+  total:         number;
+  activeTotal:   number;
+  disabledTotal: number;
+  byType: Record<string, { pending: number; applied: number; disabled: number; failed: number }>;
 }
 
 // ── Analytics ────────────────────────────────────────────────────────────

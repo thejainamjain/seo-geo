@@ -1,4 +1,15 @@
 /**
+ * DEPRECATED — moved from workers/jobs/ to deprecated/ on this date.
+ * Never imported by any live worker; superseded by
+ * workers/jobs/content-generation.job.ts. See deprecated/README.md for
+ * the full verification (how this was confirmed dead, not just unused-
+ * looking) and the key behavioral difference (this created 'draft'
+ * blogs requiring manual review; the replacement creates 'ready' blogs
+ * directly, which is the current, correct, confirmed-desired behavior).
+ * Left in place for historical reference only — do not import from here.
+ */
+
+/**
  * workers/jobs/blog-generation.job.ts  (v2 — full implementation)
  *
  * WHAT: Generates ONE complete blog post for ONE keyword using Gemini.

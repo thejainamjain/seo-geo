@@ -49,6 +49,7 @@ import { resolveHeroImage } from '@/lib/hero-image-resolver';
 import { loadKnowledgeChunks } from '@/lib/knowledge-loader';
 import { findRelevantKnowledge, findRelevantLearnings, formatChunksForPrompt } from '@/lib/vector-search';
 import { formatBusinessContext } from '@/lib/business-context-formatter';
+import { sanitizeSlug } from '@/lib/slug';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -57,17 +58,7 @@ export interface ContentGenerationJobData {
   keywordId: string;
 }
 
-// ── Slug utilities (same as blog-generation.job.ts) ────────────────────────
-
-function sanitizeSlug(raw: string): string {
-  return raw
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80);
-}
+// ── Slug utilities (deprecated/blog-generation.job.ts had the same logic before being superseded) ──
 
 function keywordToSlug(keyword: string): string {
   return keyword
@@ -79,9 +70,9 @@ function keywordToSlug(keyword: string): string {
     .slice(0, 80);
 }
 
-// ── Business context formatter (same as blog-generation.job.ts) ────────────
+// ── Business context formatter (deprecated/blog-generation.job.ts had the same logic) ──
 
-// ── SERP brief formatter (same as blog-generation.job.ts) ─────────────────
+// ── SERP brief formatter (deprecated/blog-generation.job.ts had the same logic) ──
 
 function formatSerpBrief(briefJson: string | undefined): string {
   if (!briefJson) return '';
@@ -435,10 +426,9 @@ async function handlePublish(opts: HandlePublishOptions): Promise<void> {
   const context = `content-generation-publish:${projectId}:${blogId}`;
 
   // Resolve hero image via the single shared resolver (lib/hero-image-
-  // resolver.ts) — this is the path a freshly-generated auto-published
-  // blog actually takes (blog-generation.job.ts always creates blogs
-  // with heroImageUrl: null), so without this resolution step, every
-  // auto-published blog shipped with no image at all.
+  // resolver.ts) — this job (the live one — see deprecated/README.md)
+  // always creates blogs with heroImageUrl: null above, so without this
+  // resolution step, every auto-published blog shipped with no image at all.
   const heroImageUrl = await resolveHeroImage({
     projectId,
     blogId,

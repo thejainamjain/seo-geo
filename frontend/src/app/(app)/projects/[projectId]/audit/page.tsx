@@ -1,415 +1,179 @@
 'use client';
 
-// TODO(website-audit-split): This page is currently a hybrid design
-// (tabs: Active/Applied/FAQs/TLDRs) that doesn't cleanly match EITHER of
-// the two reference-product pages it's meant to become:
-//   - "Website Audit" — an A-/A+ letter-grade score card + a pass/fail
-//     "Technical SEO Factors" table (10 named checks, before/after status)
-//   - "Technical SEO & GEO" — a flat "Active code changes" list grouped
-//     by URL with per-URL fix counts (closer to what ChangeTable below
-//     already renders, minus the FAQ/TLDR tabs)
-// Splitting this into two real pages/routes is still pending — see
-// components/layout/sidebar.tsx's NAV_ITEMS comment for the current state
-// (both nav concepts point at this one file today).
-import { use, useState } from 'react';
-import { useCodeChanges, useLatestAudit, useFAQs, useTLDRs } from '@/lib/hooks';
-import { Badge } from '@/components/ui/badge';
+import { use } from 'react';
+import { useLatestAudit, useCodeChangeTypeCounts } from '@/lib/hooks';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import type { CodeChange, FAQ, TLDR } from '@/types/api';
+import { Badge } from '@/components/ui/badge';
+import { CheckCircle2, XCircle, FileSearch } from 'lucide-react';
+import { scoreToGrade } from '@/lib/utils/grade';
+import { REAL_DIFF_TYPES } from '@/components/technical-seo/type-labels';
 
-const TYPE_LABELS: Record<string, string> = {
-  title:             'Optimize title',
-  description:       'Optimize description',
-  open_graph:        'Add Open Graph tags',
-  canonical:         'Add canonical tag',
-  alt_text:          'Add image alt text',
-  link_title:        'Add link title',
-  link_target:       'Add link target',
-  internal_link:     'Add internal links',
-  schema:            'Add schema markup',
-  broken_link:       'Fix broken link',
-  redirect_chain:    'Fix redirect chain',
-  thin_content:      'Expand thin content',
-  page_speed:        'Improve page speed',
-  non_self_canonical:'Fix canonical mismatch',
-  missing_h1:        'Add H1 tag',
-  schema_invalid:    'Fix invalid schema',
-  page_size:         'Reduce page size',
-};
+/**
+ * app/(app)/projects/[projectId]/audit/page.tsx — "Website Audit"
+ *
+ * Matches the reference product's A-/A+ score card + "Technical SEO
+ * Factors" pass/fail table. Was previously a hybrid page mixing this
+ * concept with the Technical SEO & GEO page's code-change browser — that
+ * content moved to app/(app)/projects/[projectId]/technical-seo/page.tsx.
+ *
+ * FACTOR LIST — mapped from the 9 rows visible in the reference
+ * screenshot, in the same order, to real CodeChange types:
+ *   1. Title relevant + keywords          -> title
+ *   2. Description relevant + keywords    -> description
+ *   3. Open Graph tags present            -> open_graph
+ *   4. One canonical tag                  -> canonical
+ *   5. External links have target attr   -> link_target
+ *   6. Links have descriptive titles      -> link_title
+ *   7. Images have descriptive alt text   -> alt_text
+ *   8. Links have valid, non-broken hrefs -> broken_link
+ *   9. >=3 internal links per page        -> internal_link
+ * A 10th row was visible but cut off in the screenshot we were given —
+ * ASSUMPTION FLAGGED: mapped to missing_h1 ("Page should have an H1
+ * tag") since that's the one remaining implemented check with no home
+ * elsewhere on this page, but the exact wording shown in the reference
+ * for that row hasn't actually been seen and should be verified against
+ * a screenshot of the un-cropped table before treating this as final.
+ */
+const FACTORS: Array<{ type: string; label: string }> = [
+  { type: 'title',         label: 'Title should be relevant and contain keywords' },
+  { type: 'description',   label: 'Description should be relevant and contain keywords' },
+  { type: 'open_graph',    label: 'Open Graph tags should be present for better social media sharing.' },
+  { type: 'canonical',     label: 'Page should have one canonical tag.' },
+  { type: 'link_target',   label: 'External links should have a target attribute.' },
+  { type: 'link_title',    label: 'Links should have descriptive title attributes.' },
+  { type: 'alt_text',      label: 'Images should have descriptive alt text.' },
+  { type: 'broken_link',   label: 'Links should have valid hrefs without broken or empty URLs.' },
+  { type: 'internal_link', label: 'Page should have at least 3 internal links for better site navigation.' },
+  { type: 'missing_h1',    label: 'Page should have exactly one H1 tag.' }, // ⚠ unverified wording — see comment above
+];
 
-// ── Type filter ───────────────────────────────────────────────────────────
+export default function WebsiteAuditPage({ params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = use(params);
+  const { data: audit, isLoading: auditLoading } = useLatestAudit(projectId);
+  const { data: counts, isLoading: countsLoading } = useCodeChangeTypeCounts(projectId);
 
-function TypeFilter({
-  types, selected, onChange,
-}: {
-  types: string[]; selected: string | null; onChange: (t: string | null) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-1.5 mb-4">
-      <button
-        onClick={() => onChange(null)}
-        className={`px-2.5 py-1 rounded text-xs transition-colors ${
-          selected === null
-            ? 'bg-foreground text-background'
-            : 'bg-muted text-muted-foreground hover:text-foreground'
-        }`}
-      >
-        All
-      </button>
-      {types.map(t => (
-        <button
-          key={t}
-          onClick={() => onChange(t === selected ? null : t)}
-          className={`px-2.5 py-1 rounded text-xs transition-colors ${
-            selected === t
-              ? 'bg-foreground text-background'
-              : 'bg-muted text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          {TYPE_LABELS[t] ?? t}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── Diff modal ────────────────────────────────────────────────────────────
-
-function DiffModal({ change, onClose }: { change: CodeChange; onClose: () => void }) {
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{TYPE_LABELS[change.type] ?? change.type}</DialogTitle>
-        </DialogHeader>
-        <p className="text-xs text-muted-foreground truncate mb-4">{change.url}</p>
-
-        {/* Extra info from htmlAttributes */}
-        {change.htmlAttributes && Object.keys(change.htmlAttributes).length > 0 && (
-          <div className="flex flex-wrap gap-3 mb-4">
-            {change.htmlAttributes['wordCount'] && (
-              <span className="text-xs text-muted-foreground">
-                Word count: <strong>{change.htmlAttributes['wordCount']}</strong>
-              </span>
-            )}
-            {change.htmlAttributes['responseTimeMs'] && (
-              <span className="text-xs text-muted-foreground">
-                Load time: <strong>{change.htmlAttributes['responseTimeMs']}ms</strong>
-              </span>
-            )}
-            {change.htmlAttributes['pageSizeKb'] && (
-              <span className="text-xs text-muted-foreground">
-                Page size: <strong>{change.htmlAttributes['pageSizeKb']}KB</strong>
-              </span>
-            )}
-            {change.htmlAttributes['hops'] && (
-              <span className="text-xs text-muted-foreground">
-                Redirect hops: <strong>{change.htmlAttributes['hops']}</strong>
-              </span>
-            )}
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Before</p>
-            <pre className="text-xs bg-muted/50 border border-border rounded p-3 overflow-auto max-h-48 whitespace-pre-wrap break-all">
-              {change.oldHtml || '(empty)'}
-            </pre>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-green-500 mb-2 uppercase tracking-wide">After</p>
-            <pre className="text-xs bg-green-500/5 border border-green-500/20 rounded p-3 overflow-auto max-h-48 whitespace-pre-wrap break-all">
-              {change.newHtml || '(pending LLM generation)'}
-            </pre>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Code change table ─────────────────────────────────────────────────────
-
-function ChangeTable({ changes, onSelect }: { changes: CodeChange[]; onSelect: (c: CodeChange) => void }) {
-  const byUrl = changes.reduce<Record<string, CodeChange[]>>((acc, c) => {
-    if (!acc[c.url]) acc[c.url] = [];
-    acc[c.url]!.push(c);
-    return acc;
-  }, {});
-
-  return (
-    <div className="space-y-1">
-      {Object.entries(byUrl).map(([url, urlChanges]) => (
-        <div key={url}>
-          <button
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent rounded-lg transition-colors text-left"
-            onClick={() => onSelect(urlChanges[0]!)}
-          >
-            <span className="text-sm text-blue-400 hover:underline truncate">{url}</span>
-            <span className="text-xs text-muted-foreground shrink-0 ml-2">
-              {urlChanges.length} fix{urlChanges.length !== 1 ? 'es' : ''}
-            </span>
-          </button>
-          <div className="ml-4 border-l border-border pl-4 mb-2">
-            {urlChanges.map(change => (
-              <button
-                key={change._id}
-                onClick={() => onSelect(change)}
-                className="w-full flex items-center justify-between py-2 px-2 hover:bg-accent rounded text-left transition-colors"
-              >
-                <span className="text-xs text-muted-foreground">
-                  {TYPE_LABELS[change.type] ?? change.type}
-                  {/* Inline extra detail where useful */}
-                  {change.htmlAttributes?.['wordCount'] && (
-                    <span className="ml-1.5 text-muted-foreground/60">
-                      · {change.htmlAttributes['wordCount']} words
-                    </span>
-                  )}
-                  {change.htmlAttributes?.['responseTimeMs'] && (
-                    <span className="ml-1.5 text-muted-foreground/60">
-                      · {change.htmlAttributes['responseTimeMs']}ms
-                    </span>
-                  )}
-                  {change.htmlAttributes?.['pageSizeKb'] && (
-                    <span className="ml-1.5 text-muted-foreground/60">
-                      · {change.htmlAttributes['pageSizeKb']}KB
-                    </span>
-                  )}
-                </span>
-                <Badge variant="outline" className="text-xs capitalize">
-                  {change.status}
-                </Badge>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── FAQ list ──────────────────────────────────────────────────────────────
-
-function FAQList({ faqs }: { faqs: FAQ[] }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  if (faqs.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-8 text-center">
-        No FAQs generated yet. Complete the pipeline to generate FAQs.
-      </p>
-    );
-  }
-
-  const withQuestions = faqs.filter(f => f.questions && f.questions.length > 0);
-
-  if (withQuestions.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-8 text-center">
-        FAQs are pending LLM generation.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      {withQuestions.map(faq => (
-        <div key={faq._id}>
-          <button
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-accent rounded-lg transition-colors text-left"
-            onClick={() => setExpanded(expanded === faq._id ? null : faq._id)}
-          >
-            <span className="text-sm text-blue-400 truncate">{faq.sourceUrl}</span>
-            <div className="flex items-center gap-2 shrink-0 ml-2">
-              <span className="text-xs text-muted-foreground">
-                {faq.questions?.length} question{faq.questions?.length !== 1 ? 's' : ''}
-              </span>
-              <Badge variant="outline" className="text-xs capitalize">{faq.status}</Badge>
-            </div>
-          </button>
-          {expanded === faq._id && faq.questions && (
-            <div className="ml-4 border-l border-border pl-4 mb-2 space-y-3 py-2">
-              {faq.questions.map((q, i) => (
-                <div key={i} className="space-y-1">
-                  <p className="text-xs font-medium">{q.question}</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{q.answer}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── TLDR list ─────────────────────────────────────────────────────────────
-
-function TLDRList({ tldrs }: { tldrs: TLDR[] }) {
-  if (tldrs.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-8 text-center">
-        No TL;DRs generated yet. Complete the pipeline to generate summaries.
-      </p>
-    );
-  }
-
-  const withText = tldrs.filter(t => t.tldrText);
-
-  if (withText.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-8 text-center">
-        TL;DRs are pending LLM generation.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      {withText.map(tldr => (
-        <div key={tldr._id} className="px-4 py-3 border border-border rounded-lg space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-blue-400 truncate">{tldr.sourceUrl}</span>
-            <Badge variant="outline" className="text-xs capitalize shrink-0 ml-2">{tldr.status}</Badge>
-          </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">{tldr.tldrText}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Page ──────────────────────────────────────────────────────────────────
-
-export default function AuditPage({ params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId }   = use(params);
-  const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [selected, setSelected]     = useState<CodeChange | null>(null);
-
-  const { data: audit }              = useLatestAudit(projectId);
-  const { data: changes, isLoading } = useCodeChanges(
-    projectId,
-    typeFilter ? { type: typeFilter } : undefined,
-  );
-  const { data: faqs,  isLoading: faqLoading  } = useFAQs(projectId);
-  const { data: tldrs, isLoading: tldrLoading } = useTLDRs(projectId);
-
-  const allTypes = [...new Set(changes?.map(c => c.type) ?? [])].sort();
-  const pending  = changes?.filter(c => c.status === 'pending') ?? [];
-  const applied  = changes?.filter(c => c.status === 'applied') ?? [];
+  const isLoading = auditLoading || countsLoading;
 
   return (
     <div className="p-8">
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold">Technical SEO</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Code changes detected and generated for every page on your site
-          </p>
+      <div className="flex items-center gap-3 mb-6">
+        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+          <FileSearch className="h-4 w-4 text-primary" />
         </div>
-        {audit?.summary?.score && (
-          <div className="text-right shrink-0">
-            <p className="text-3xl font-semibold">{audit.summary.score}</p>
-            <p className="text-xs text-muted-foreground">SEO score / 100</p>
-            {audit.summary.scoreReasoning && (
-              <p className="text-xs text-muted-foreground mt-1 max-w-48">{audit.summary.scoreReasoning}</p>
-            )}
-          </div>
-        )}
+        <div>
+          <h1 className="text-xl font-semibold">Website Audit</h1>
+          <p className="text-sm text-muted-foreground">Technical SEO analysis</p>
+        </div>
       </div>
 
-      {/* Summary cards */}
-      {audit?.summary && (
-        <div className="grid grid-cols-4 gap-4 mb-8">
-          {[
-            { label: 'Pages crawled',  value: audit.summary.totalPages },
-            { label: 'SEO fixes',      value: audit.summary.totalFixes },
-            { label: 'Schemas added',  value: audit.summary.totalSchemas },
-            { label: 'FAQs generated', value: audit.summary.totalFaqs },
-          ].map(({ label, value }) => (
-            <div key={label} className="border border-border rounded-lg p-4">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
-              <p className="text-2xl font-semibold mt-1">{value}</p>
-            </div>
-          ))}
-        </div>
-      )}
+      {isLoading && <Skeleton className="h-96 w-full" />}
 
-      {!audit && !isLoading && (
-        <p className="text-sm text-muted-foreground mb-8">
-          No audit data yet. Run the pipeline to crawl your site and detect issues.
+      {!isLoading && !audit && (
+        <p className="text-sm text-muted-foreground py-16 text-center">
+          No completed audit yet. Run the pipeline to generate one.
         </p>
       )}
 
-      <Tabs defaultValue="pending">
-        <TabsList className="mb-4">
-          <TabsTrigger value="pending">
-            Active {pending.length > 0 ? `(${pending.length})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="applied">
-            Applied {applied.length > 0 ? `(${applied.length})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="faqs">
-            FAQs {faqs && faqs.filter(f => f.questions?.length).length > 0
-              ? `(${faqs.filter(f => f.questions?.length).length})`
-              : ''}
-          </TabsTrigger>
-          <TabsTrigger value="tldrs">
-            TL;DRs {tldrs && tldrs.filter(t => t.tldrText).length > 0
-              ? `(${tldrs.filter(t => t.tldrText).length})`
-              : ''}
-          </TabsTrigger>
-        </TabsList>
-
-        {isLoading && <Skeleton className="h-64 w-full" />}
-
-        {!isLoading && (
-          <>
-            <TabsContent value="pending">
-              <TypeFilter types={allTypes} selected={typeFilter} onChange={setTypeFilter} />
-              {pending.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">
-                  {typeFilter ? 'No pending fixes for this type.' : 'No pending fixes. Run the pipeline to detect issues.'}
+      {!isLoading && audit && (
+        <>
+          {/* Score card */}
+          <div className="border border-border rounded-lg p-8 mb-8 flex flex-col items-center text-center">
+            <div className="flex items-center gap-4 mb-4">
+              {audit.previousScore !== null && (
+                <>
+                  <div>
+                    <p className="text-4xl font-bold text-muted-foreground">{scoreToGrade(audit.previousScore)}</p>
+                    <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wide">Before</p>
+                  </div>
+                  <span className="text-2xl text-muted-foreground">→</span>
+                </>
+              )}
+              <div>
+                <p className="text-4xl font-bold text-green-500">
+                  {audit.summary?.score !== undefined ? scoreToGrade(audit.summary.score) : '—'}
                 </p>
-              ) : (
-                <ChangeTable changes={pending} onSelect={setSelected} />
-              )}
-            </TabsContent>
+                {audit.previousScore !== null && (
+                  <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wide">After</p>
+                )}
+              </div>
+            </div>
 
-            <TabsContent value="applied">
-              {applied.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">No applied fixes yet.</p>
-              ) : (
-                <ChangeTable changes={applied} onSelect={setSelected} />
-              )}
-            </TabsContent>
+            {(counts?.activeTotal ?? 0) === 0 && (counts?.total ?? 0) > 0 && (
+              <Badge variant="outline" className="mb-3 border-green-500/30 text-green-500">
+                Fully Optimized
+              </Badge>
+            )}
 
-            <TabsContent value="faqs">
-              {faqLoading
-                ? <Skeleton className="h-64 w-full" />
-                : <FAQList faqs={faqs ?? []} />
-              }
-            </TabsContent>
+            <p className="text-sm text-muted-foreground max-w-md">
+              {audit.summary?.scoreReasoning ??
+                'Enterprise-grade SEO optimization improving search visibility, crawlability, and ranking potential across all critical factors.'}
+            </p>
+          </div>
 
-            <TabsContent value="tldrs">
-              {tldrLoading
-                ? <Skeleton className="h-64 w-full" />
-                : <TLDRList tldrs={tldrs ?? []} />
-              }
-            </TabsContent>
-          </>
-        )}
-      </Tabs>
+          {/* Technical SEO Factors table */}
+          <div className="border border-border rounded-lg">
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="font-semibold">Technical SEO Factors</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {FACTORS.length} critical factors evaluated and optimized
+              </p>
+            </div>
 
-      {selected && <DiffModal change={selected} onClose={() => setSelected(null)} />}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground uppercase tracking-wide text-left border-b border-border">
+                  <th className="px-6 py-2 font-medium">Factor</th>
+                  <th className="px-6 py-2 font-medium">Before</th>
+                  <th className="px-6 py-2 font-medium">After</th>
+                </tr>
+              </thead>
+              <tbody>
+                {FACTORS.map(({ type, label }) => {
+                  const c = counts?.byType[type];
+                  const totalIssues = c ? c.pending + c.applied + c.disabled + c.failed : 0;
+                  const stillPending = c?.pending ?? 0;
+                  const hasRealFix = REAL_DIFF_TYPES.has(type);
+
+                  return (
+                    <tr key={type} className="border-b border-border last:border-0">
+                      <td className="px-6 py-3">{label}</td>
+                      <td className="px-6 py-3">
+                        {totalIssues === 0 ? (
+                          <span className="inline-flex items-center gap-1.5 text-green-500">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Pass
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-red-500">
+                            <XCircle className="h-3.5 w-3.5" /> {totalIssues}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-3">
+                        {totalIssues === 0 ? (
+                          <span className="inline-flex items-center gap-1.5 text-green-500">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Pass
+                          </span>
+                        ) : stillPending === 0 ? (
+                          <span className="inline-flex items-center gap-1.5 text-green-500">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Fixed
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">{stillPending} pending{hasRealFix ? '' : ' (recommendation only)'}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-muted-foreground mt-3">
+            Want to see or apply individual fixes? Head to{' '}
+            <a href={`../technical-seo`} className="text-blue-400 hover:underline">Technical SEO & GEO</a>.
+          </p>
+        </>
+      )}
     </div>
   );
 }

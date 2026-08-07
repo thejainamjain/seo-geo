@@ -34,15 +34,21 @@ export const MAX_BLOG_HISTORY = 50;
 // JWT expiry
 export const JWT_EXPIRES_IN = "7d";
 
-// BullMQ queue names
-export const QUEUES = {
-  AUDIT: "audit",
-  BLOG_GENERATION: "blog_generation",
-  GEO_ANALYTICS: "geo_analytics",
-  CMS_PUBLISH: "cms_publish",
-  KNOWLEDGE_FILE_PROCESS: "knowledge_file_process",
-  BLOG_LEARNING: "blog_learning",
-} as const;
+// DEPRECATED — this entire QUEUES object is unused anywhere in the
+// codebase (verified by grep) — an older queue-naming scheme, fully
+// superseded by QUEUE_NAMES in constants/seo-pipeline.constants.ts (the
+// queue name strings here don't even match any real BullMQ queue in use —
+// e.g. 'blog_generation' here vs the real 'seo-blog-generation' /
+// 'seo-content-generation' etc.). Commented out rather than deleted;
+// see deprecated/README.md.
+// export const QUEUES = {
+//   AUDIT: "audit",
+//   BLOG_GENERATION: "blog_generation",
+//   GEO_ANALYTICS: "geo_analytics",
+//   CMS_PUBLISH: "cms_publish",
+//   KNOWLEDGE_FILE_PROCESS: "knowledge_file_process",
+//   BLOG_LEARNING: "blog_learning",
+// } as const;
 
 // Gemini models
 export const GEMINI_MODELS = {

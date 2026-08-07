@@ -5,6 +5,7 @@ import { CmsConfig } from '../models/CmsConfig';
 import { uploadToCloudinary } from '../lib/cloudinary';
 import { stripLegacyHeroImagePlaceholder } from '../lib/blog-content';
 import { resolveHeroImage } from '../lib/hero-image-resolver';
+import { sanitizeSlug } from '../lib/slug';
 import { logger } from '../open-tele';
 
 const IMAGE_MAX_BYTES  = 5 * 1024 * 1024; // 5MB — generous for web-optimised images
@@ -129,6 +130,20 @@ export const blogService = {
     description?:  string;
     status?:       string;
     heroImageUrl?: string | null;
+    slug?:         string;
+    /**
+     * Whether this update should also push a history snapshot (default
+     * true — preserves old behavior for any other existing caller).
+     * The blog editor's debounced autosave (frontend) passes false for
+     * its frequent (~1.2s) silent content saves, and true only
+     * periodically / on meaningful boundaries (navigating away, an
+     * explicit status change) — see that page's header comment for why:
+     * pushing a full history entry on every autosave tick would still be
+     * bounded (capped at 50 via $slice below) but would turn "last 50
+     * deliberate saves" into "last 50 autosave ticks", which is a real,
+     * worse-for-the-user behavior change, not just a cosmetic one.
+     */
+    snapshot?: boolean;
   }) {
     logger.debug('blogService.updateBlog', { userId, projectId, blogId });
 
@@ -145,6 +160,48 @@ export const blogService = {
     if (input.title)       blog.title       = input.title;
     if (input.description) blog.description = input.description;
     if (input.status)      blog.status      = input.status as IBlog['status'];
+
+    if (input.slug !== undefined && input.slug !== blog.slug) {
+      // BLOCKED after publish — not a UI limitation, a real data-safety
+      // one. lib/cms/wordpress.ts's publishToWordPress (also used for
+      // post-publish re-syncs, see lib/blog-cms-publisher.ts's
+      // updateBlogOnCms) finds which live CMS post to update by looking
+      // up the CURRENT slug (findPostBySlug) — there is no stored CMS
+      // post ID used for that lookup. If the slug changed since the post
+      // went live, that lookup would find nothing at the new slug and
+      // fall through to CREATING A SECOND, DUPLICATE live post, leaving
+      // the original (at the old slug) untouched and orphaned. This is
+      // true for every CMS integration that follows this same
+      // find-by-slug pattern, not just one platform. Fixing this
+      // properly would mean reworking the CMS layer to look posts up by
+      // a stored reference ID instead of by slug — a real, separate
+      // project, not a quick patch here. Blocking is the safe choice
+      // until that exists; it also matches real industry practice
+      // (Medium and Ghost lock the slug after publish outright, for
+      // similar reasons).
+      if (blog.status === 'published') {
+        throw new ValidationError(
+          'The URL slug cannot be changed after a post is published — this could create a duplicate ' +
+          'post on your CMS instead of updating the live one. Unpublish first if you really need to change it.',
+        );
+      }
+
+      const sanitized = sanitizeSlug(input.slug);
+      if (!sanitized) {
+        throw new ValidationError('Slug cannot be empty after removing invalid characters');
+      }
+
+      const collision = await Blog.findOne({
+        projectId, slug: sanitized, _id: { $ne: blogId },
+      }).select('_id').lean();
+      if (collision) {
+        throw new ValidationError('This URL slug is already used by another post in this project');
+      }
+
+      logger.info('Blog slug changed', { projectId, blogId, previous: blog.slug, next: sanitized });
+      blog.slug = sanitized;
+    }
+
     if (input.heroImageUrl !== undefined) {
       const previous = blog.heroImageUrl;
       // null clears it (Mongoose unsets an optional field on `undefined`,
@@ -155,14 +212,22 @@ export const blogService = {
       });
     }
     if (input.content) {
-      blog.content = input.content;
+      blog.content = input.content; // always persisted immediately, regardless of snapshot
+    }
+
+    // Snapshot gating is now purely on input.snapshot, not on
+    // input.content being present — a title-only or description-only
+    // autosave tick can still produce a real, complete history entry.
+    // blog.title/description/status already reflect this call's changes
+    // (assigned above), so this always captures the true current state.
+    if (input.snapshot ?? true) {
       await Blog.findByIdAndUpdate(blogId, {
         $push: {
           history: {
             $each: [{
-              content:     input.content,
-              description: input.description ?? blog.description,
-              status:      (input.status ?? blog.status) as IBlog['status'],
+              content:     blog.content,
+              description: blog.description,
+              status:      blog.status,
               writer:      'user',
               createdAt:   new Date(),
             }],
@@ -173,6 +238,7 @@ export const blogService = {
     }
 
     await blog.save();
+
 
     logger.info('Blog updated', { projectId, blogId });
     return blog;

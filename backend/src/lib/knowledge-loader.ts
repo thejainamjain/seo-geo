@@ -5,7 +5,9 @@
  *       into a single string suitable for LLM prompt injection.
  *
  * CONSUMERS:
- *   - blog-generation.job.ts  → knowledgeChunks param of generateBlogPost()
+ *   - content-generation.job.ts → knowledgeChunks param of generateBlogPost()
+ *     (deprecated/blog-generation.job.ts also used this before being
+ *     superseded — see deprecated/README.md)
  *   - (future) rewrite-engine.job.ts → same pattern
  *
  * WHY THIS EXISTS:

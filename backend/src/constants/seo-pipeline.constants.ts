@@ -56,7 +56,9 @@ export const CMS_PLATFORMS = {
 
 export const QUEUE_NAMES = {
   SEO_PIPELINE:        'seo-pipeline',
-  BLOG_GENERATION:     'seo-blog-generation',
+  // DEPRECATED — only consumer was blogGenerationQueue in
+  // seo-pipeline.worker.ts, now commented out. See deprecated/README.md.
+  // BLOG_GENERATION:     'seo-blog-generation',
   GEO_ANALYTICS:       'seo-geo-analytics',
   GSC_MONITOR:         'seo-gsc-monitor',
   KEYWORD_RANKING_SYNC: 'seo-keyword-ranking-sync', // property-wide GSC query-dimension pull -> KeywordRanking snapshots
@@ -114,7 +116,8 @@ export const JOB_PRIORITY = {
   SERP_RESEARCH:        3,
   GEO_ANALYTICS:        4,
   GSC_MONITOR:          4,
-  BLOG_GENERATION:      5,
+  // DEPRECATED — see deprecated/README.md.
+  // BLOG_GENERATION:      5,
   CONTENT_GENERATION:   3,  // on-demand — treat same priority as pipeline steps
 } as const satisfies Record<string, number>
 
@@ -130,7 +133,8 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
   COMPETITOR_DISCOVERY: { attempts: 3,  backoffDelay: 15_000 },
   KEYWORD_RESEARCH:     { attempts: 4,  backoffDelay: 15_000 },
   SERP_RESEARCH:        { attempts: 4,  backoffDelay: 15_000 },
-  BLOG_GENERATION:      { attempts: 4,  backoffDelay: 30_000 },
+  // DEPRECATED — see deprecated/README.md.
+  // BLOG_GENERATION:      { attempts: 4,  backoffDelay: 30_000 },
   GEO_ANALYTICS:        { attempts: 3,  backoffDelay: 15_000 },
   GSC_MONITOR:          { attempts: 3,  backoffDelay: 15_000 },
   KEYWORD_RANKING_SYNC: { attempts: 3,  backoffDelay: 15_000 },

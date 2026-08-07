@@ -250,7 +250,10 @@ export function useUpdateBlogContent(projectId: string) {
       payload,
     }: {
       blogId:  string;
-      payload: { title?: string; description?: string; content?: string; heroImageUrl?: string | null };
+      payload: {
+      title?: string; description?: string; content?: string;
+      heroImageUrl?: string | null; slug?: string; snapshot?: boolean;
+    };
     }) => blogsApi.updateContent(projectId, blogId, payload),
     onSuccess: (_, { blogId }) => {
       void queryClient.invalidateQueries({ queryKey: ['blogs', projectId, blogId] });
@@ -287,6 +290,38 @@ export function useCodeChanges(projectId: string, params?: { type?: string; stat
   });
 }
 
+export function useCodeChangeTypeCounts(projectId: string) {
+  return useQuery({
+    queryKey: ['codeChangeTypeCounts', projectId],
+    queryFn:  () => auditApi.codeChangeTypeCounts(projectId),
+    enabled:  !!projectId,
+  });
+}
+
+export function useApplyCodeChange(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (changeId: string) => auditApi.applyCodeChange(projectId, changeId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['codeChanges', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['codeChangeTypeCounts', projectId] });
+    },
+  });
+}
+
+export function useDisableCodeChange(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (changeId: string) => auditApi.disableCodeChange(projectId, changeId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['codeChanges', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['codeChangeTypeCounts', projectId] });
+    },
+  });
+}
+
 export function useFAQs(projectId: string) {
   return useQuery({
     queryKey: ['faqs', projectId],
@@ -318,6 +353,17 @@ export function useGenerateContent(projectId: string) {
 
   return useMutation({
     mutationFn: (keywordId: string) => keywordsApi.generate(projectId, keywordId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['keywords', projectId] });
+    },
+  });
+}
+
+export function useAddKeyword(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (keyword: string) => keywordsApi.add(projectId, keyword),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['keywords', projectId] });
     },

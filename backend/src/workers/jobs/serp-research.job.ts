@@ -10,13 +10,16 @@
  *         Project (for domain)
  * WRITES: Keyword.brief         — JSON-stringified SerpAnalysisLlmResponse
  *         Keyword.relevanceReason — overwritten with SERP-informed reasoning
- *         (status stays 'upcoming' — blog-generation.job.ts changes it to 'draft')
+ *         (status stays 'upcoming' — content-generation.job.ts changes it to
+ *         'ready' once the blog is generated; workers/jobs/blog-generation.job.ts,
+ *         which would change it to 'draft', is dead code — never registered
+ *         on any worker, confirmed by checking actual imports)
  *
  * WHAT "brief" STORES:
  *   A JSON string of SerpAnalysisLlmResponse.serpRelevance — an array of
  *   objects describing each top SERP result: title, topic, pageType, intent,
  *   whether it's a competitor, and relevance to the business ICP.
- *   blog-generation.job.ts reads this brief to write a better post than
+ *   content-generation.job.ts reads this brief to write a better post than
  *   what already ranks.
  *
  * PROCESSING STRATEGY:

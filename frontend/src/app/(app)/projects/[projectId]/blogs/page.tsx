@@ -71,7 +71,7 @@ function BlogsTable({
               </TableCell>
 
               <TableCell className="text-sm text-muted-foreground">
-                {kw ? `${formatNumber(kw.searchVolume)}/mo` : '—'}
+                {kw?.searchVolume !== undefined ? `${formatNumber(kw.searchVolume)}/mo` : '—'}
               </TableCell>
 
               <TableCell>

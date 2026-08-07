@@ -112,7 +112,9 @@ function KeywordsTable({
               </td>
               <td className="py-3">{kw.keyword}</td>
               <td className="py-3 text-right text-muted-foreground">
-                {kw.searchVolume < 500 ? '<500' : formatNumber(kw.searchVolume)}/mo
+                {kw.searchVolume === undefined
+                  ? '—'
+                  : kw.searchVolume < 500 ? '<500/mo' : `${formatNumber(kw.searchVolume)}/mo`}
               </td>
               <td className="py-3 text-muted-foreground">
                 {blog?.title ?? <span className="italic">TBD</span>}

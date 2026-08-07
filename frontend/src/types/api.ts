@@ -167,7 +167,7 @@ export interface Keyword {
   _id:            string;
   projectId:      string;
   keyword:        string;
-  searchVolume:   number;
+  searchVolume?:  number; // optional — DataForSEO lookup can fail and leave this unset (see keywordService.addKeyword's fail-open comment)
   difficulty:     number;
   cpc?:           number;        // cost per click from DataForSEO
   alignmentScore: number;

@@ -28,21 +28,40 @@ import { ArrowLeft, ExternalLink, AlertTriangle, Crown, Lock } from 'lucide-reac
  * this kind of editor (Notion, Google Docs, Webflow) and safer than a
  * button someone can forget to click before navigating away.
  *
- * TWO KINDS OF SAVE, not one — this is the fix for an issue flagged
- * earlier: pushing a full history entry (services/blog.service.ts's
- * `history` array) on every ~1.2s autosave tick would turn "last 50
- * deliberate saves" into "last 50 autosave ticks", a real behavior
- * regression even though it's bounded and doesn't lose data.
+ * PENDING CHANGES ARE ACCUMULATED, NOT REPLACED — fixes a real bug an
+ * earlier version of this file shipped with: editing the title, then
+ * quickly editing the description before the debounce fired, cleared the
+ * title's pending save and replaced it with a description-only one — the
+ * title edit was silently never sent to the backend, while the UI still
+ * showed it as typed and `dirty` flipped back to false as if everything
+ * had saved. Fixed via `pendingRef`, which every `scheduleSave()` call
+ * merges into (not overwrites), so whatever fires after the debounce
+ * settles reflects every field touched since the last successful save.
+ *
+ * ONLY ONE SAVE IN FLIGHT AT A TIME — `savingRef`/`needsResaveRef` queue
+ * further edits that arrive while a save is still in flight rather than
+ * firing a second, concurrent mutate call that could race it (an
+ * older/smaller payload landing after a newer/larger one). The queued
+ * flush runs immediately once the in-flight one settles. A failed save's
+ * fields are merged back into `pendingRef` (newer edits to the same
+ * field take precedence) so they're retried on the next flush instead of
+ * silently discarded.
+ *
+ * TWO KINDS OF SAVE, not one — pushing a full history entry (services/
+ * blog.service.ts's `history` array) on every ~1.2s autosave tick would
+ * turn "last 50 deliberate saves" into "last 50 autosave ticks", a real
+ * behavior regression even though it's bounded and doesn't lose data.
  *   - FAST autosave (every DEBOUNCE_MS of typing pause): persists
  *     `blog.content` immediately so a refresh/crash can't lose typing.
  *     Passes `snapshot: false` — no history entry pushed.
- *   - PERIODIC snapshot: the same debounced save additionally passes
+ *   - PERIODIC snapshot: the same flush additionally passes
  *     `snapshot: true` if at least SNAPSHOT_INTERVAL_MS has passed since
  *     the last one AND there's been real editing activity since then —
  *     ties snapshot cadence to actual edits rather than a wall-clock
- *     timer that would fire even while idle. Also snapshotted: the final
- *     flush on unmount/navigating away (a natural "done editing" boundary
- *     — same idea as how Google Docs names a version at natural breaks).
+ *     timer that would fire even while idle. Also always snapshotted:
+ *     the final flush on unmount/navigating away (a natural "done
+ *     editing" boundary — same idea as how Google Docs names a version
+ *     at natural breaks).
  *
  * AVOIDING THE CLASSIC AUTOSAVE RACE CONDITION: local state is only ever
  * initialized FROM the server once (the `initialized` ref) — never
@@ -126,40 +145,83 @@ export default function BlogEditorPage({
     }
   }, [blog]);
 
-  // Debounced autosave — see header comment for the fast-vs-snapshot split
-  const saveTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSnapshotAt = useRef<number>(Date.now());
-  const hasPendingEdit = useRef(false);
+  // ── Debounced autosave ─────────────────────────────────────────────────
+  // See header comment for the fast-vs-snapshot split. pendingRef
+  // ACCUMULATES every unsaved field change (merged, not replaced) so that
+  // editing title then quickly editing description — both within one
+  // debounce window — saves BOTH, not just whichever was edited last.
+  const saveTimer       = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSnapshotAt  = useRef<number>(Date.now());
+  const hasPendingEdit  = useRef(false);
+  const pendingRef      = useRef<{
+    title?: string; description?: string; content?: string; heroImageUrl?: string | null;
+  }>({});
+  const savingRef       = useRef(false);   // true while a save request is in flight
+  const needsResaveRef  = useRef(false);   // true if edits arrived while one was in flight
 
-  const scheduleSave = useCallback((next: {
+  const flushSave = useCallback(() => {
+    if (Object.keys(pendingRef.current).length === 0) return;
+
+    // A save is already in flight — don't fire a second, concurrent one
+    // (which could race and let an older/smaller payload land after a
+    // newer/larger one). Mark that another flush is needed once the
+    // current one settles instead.
+    if (savingRef.current) {
+      needsResaveRef.current = true;
+      return;
+    }
+
+    const toSave = pendingRef.current;
+    pendingRef.current = {};
+    savingRef.current = true;
+
+    const dueForSnapshot = hasPendingEdit.current
+      && (Date.now() - lastSnapshotAt.current) >= SNAPSHOT_INTERVAL_MS;
+
+    updateContent.mutate(
+      { blogId, payload: { ...toSave, snapshot: dueForSnapshot } },
+      {
+        onSuccess: () => {
+          setLastSavedAt(new Date());
+          if (dueForSnapshot) {
+            lastSnapshotAt.current = Date.now();
+            hasPendingEdit.current = false;
+          }
+        },
+        onError: () => {
+          // Don't silently drop a failed save — merge the failed fields
+          // back in (newer edits to the same fields, if any arrived
+          // while this was in flight, take precedence) so the next
+          // flush retries them.
+          pendingRef.current = { ...toSave, ...pendingRef.current };
+        },
+        onSettled: () => {
+          savingRef.current = false;
+          if (Object.keys(pendingRef.current).length === 0) setDirty(false);
+          if (needsResaveRef.current) {
+            needsResaveRef.current = false;
+            flushSave();
+          }
+        },
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blogId]);
+
+  const scheduleSave = useCallback((patch: {
     title?: string; description?: string; content?: string; heroImageUrl?: string | null;
   }) => {
+    pendingRef.current = { ...pendingRef.current, ...patch };
     setDirty(true);
     hasPendingEdit.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const dueForSnapshot = hasPendingEdit.current
-        && (Date.now() - lastSnapshotAt.current) >= SNAPSHOT_INTERVAL_MS;
-
-      updateContent.mutate(
-        { blogId, payload: { ...next, snapshot: dueForSnapshot } },
-        {
-          onSuccess: () => {
-            setDirty(false);
-            setLastSavedAt(new Date());
-            if (dueForSnapshot) {
-              lastSnapshotAt.current = Date.now();
-              hasPendingEdit.current = false;
-            }
-          },
-        },
-      );
-    }, DEBOUNCE_MS);
-  }, [blogId, updateContent]);
+    saveTimer.current = setTimeout(flushSave, DEBOUNCE_MS);
+  }, [flushSave]);
 
   // Slug edits are deliberate, low-frequency actions (not keystroke
-  // events like typing) — always worth a snapshot, and validated
-  // separately so a bad slug doesn't silently eat a content edit's save.
+  // events like typing) — always worth a snapshot, and sent immediately
+  // (not merged into pendingRef) so a bad slug's validation error can't
+  // get bundled up with, and block, an otherwise-fine content save.
   function saveSlug(nextSlug: string) {
     setSlugError(null);
     updateContent.mutate(
@@ -171,7 +233,7 @@ export default function BlogEditorPage({
     );
   }
 
-  // Warn on tab-close/navigation-away if a debounced save hasn't fired yet
+  // Warn on tab-close/navigation-away if a save hasn't fully settled yet
   useEffect(() => {
     function handler(e: BeforeUnloadEvent) {
       if (dirty) { e.preventDefault(); e.returnValue = ''; }
@@ -180,44 +242,29 @@ export default function BlogEditorPage({
     return () => window.removeEventListener('beforeunload', handler);
   }, [dirty]);
 
-  // Ref mirror of the latest field values — the unmount-flush cleanup
-  // below needs to read CURRENT data, not whatever was captured in its
-  // closure at mount time (which would be empty strings, since this
-  // effect only runs once). This is what the exhaustive-deps lint rule
-  // would flag on the mutate call below if it referenced state directly;
-  // reading through a ref instead is the correct fix, not suppressing it.
-  const latestRef = useRef({ title, description, content, heroImageUrl });
-  useEffect(() => {
-    latestRef.current = { title, description, content, heroImageUrl };
-  }, [title, description, content, heroImageUrl]);
+  // Ref mirror of the latest flushSave — the unmount cleanup below needs
+  // to call the CURRENT flushSave (which itself closes over the current
+  // updateContent.mutate), not one captured at mount time. Putting
+  // flushSave directly in that effect's deps would re-fire its cleanup on
+  // every render instead of only on true unmount (flushSave is a new
+  // function reference each render, same reasoning as the mutation
+  // object itself not being referentially stable).
+  const flushSaveRef = useRef(flushSave);
+  useEffect(() => { flushSaveRef.current = flushSave; });
 
-  // Ref mirror of the latest mutate function too — putting the mutation
-  // object itself in the effect's deps below would re-run its
-  // cleanup/setup on every render (useMutation's return value isn't
-  // referentially stable across renders), which would fire the "flush on
-  // unmount" logic on every render, not just true unmount. Reading
-  // through a ref lets the effect below use an empty deps array (true
-  // mount/unmount only) while still calling the current mutate function.
-  const mutateRef = useRef(updateContent.mutate);
-  useEffect(() => { mutateRef.current = updateContent.mutate; });
-
-  // Flush any pending debounce on unmount — a natural "done editing"
-  // boundary, so this flush is always a snapshot (best-effort: this is a
+  // Flush any pending edits on unmount — a natural "done editing"
+  // boundary, so force it to count as a snapshot regardless of the
+  // normal snapshot-interval gating (best-effort: this is a
   // fire-and-forget call during cleanup, same inherent limitation any
   // unmount/beforeunload flush has — not specific to this design).
   // Empty deps array is intentional and safe here: blogId is a route
   // param that's stable for this component's entire lifetime (routing to
   // a different blog is a full remount in Next.js, not a prop change).
   useEffect(() => () => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      if (hasPendingEdit.current) {
-        mutateRef.current({
-          blogId,
-          payload: { ...latestRef.current, snapshot: true },
-        });
-      }
-    }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    hasPendingEdit.current = true; // force the final flush to snapshot
+    lastSnapshotAt.current = 0;    // ensure the snapshot-interval check passes
+    flushSaveRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

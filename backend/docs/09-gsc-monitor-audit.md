@@ -1,0 +1,51 @@
+# GSC Monitor: Backend Audit
+
+**File:** `workers/jobs/gsc-monitor.job.ts`
+**Status: ✅ Solid, real integration. Noise/dedup gap resolved.**
+
+## What it does
+Real Google Search Console REST API integration (no SDK dependency, plain
+`fetch` with Bearer token) — pulls 28-day clicks/impressions/CTR/position
+per published blog URL, plus top queries per page, and generates
+`BlogLearning` insights for three patterns: high-impression-low-CTR (title
+problem), low-average-position (content/ranking problem), and
+query-expansion opportunities (ranking for queries beyond the target
+keyword).
+
+## What stood out (good)
+- This is a genuine, correctly-implemented OAuth token refresh flow (checks
+  expiry with a 5-minute buffer, refreshes via the real Google OAuth token
+  endpoint, persists the new token) — unlike the GEO analytics job, this one
+  is doing exactly what it claims to do with real external data.
+- Threshold-based insight detection is simple and explainable (not another
+  LLM call) — appropriate here since these are just business-rule
+  comparisons against real GSC numbers, not something that benefits from an
+  LLM.
+- Keyword resolution prefers the actual `Keyword.keyword` string over a
+  slug-derived approximation, with a documented fallback for older blogs
+  missing `keywordId` — thoughtful backward-compatibility handling.
+- Per-blog and per-project failure isolation both present (missing token →
+  skip project cleanly; one blog's GSC fetch failing → skip that blog only).
+
+## ✅ RESOLVED — dedup on repeated weekly insights
+`detectInsights` runs fresh every week and every match became a new
+`BlogLearning` document via `insertMany` — no check for "did we already flag
+this exact insight type for this blog recently." For a chronically
+underperforming post, this accumulated near-duplicate `BlogLearning` records
+indefinitely (e.g. the same "high impression, low CTR" insight recorded
+weekly for months) — and since these feed the `BlogOptimization` LLM
+pipeline, not just a dashboard, duplicates meant wasted LLM context, not
+just visual noise.
+
+Decision (checked in): added a 30-day cooldown — skip creating a new
+`BlogLearning` for a given blog+type pair if one was already created within
+the last 30 days (`INSIGHT_DEDUP_WINDOW_DAYS` in `gsc-monitor.job.ts`). 30
+days rather than the job's own weekly cadence because these are
+content-strategy insights meant to inform a rewrite, not time-critical
+alerts — a monthly refresh is enough to notice if a chronic issue is still
+unresolved. This does NOT change the deliberate "multiple learnings per
+blog over time is correct" time-series design (a ranking drop this month is
+still a distinct, real data point from one two months ago) — it only
+suppresses re-flagging the *same* type within the cooldown window. Added a
+compound index (`blogId, type, createdAt`) on `BlogLearning` to support the
+new query efficiently.

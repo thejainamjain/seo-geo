@@ -32,7 +32,7 @@ import { LLM_RATE_LIMIT } from '../constants/seo-pipeline.constants';
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const GEMINI_MODEL = 'gemini-2.0-flash';
-const GROQ_MODEL   = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b';
 
 // Groq's compound system — does real, server-side live web search (via
 // Tavily) before answering, with actual executed_tools.search_results
@@ -258,19 +258,37 @@ async function callGroqDirect(
     userPromptLen:   userPrompt.length,
   });
 
-  try {
+  const run = async (jsonMode: boolean): Promise<string> => {
     const groq = getGroq();
-    const completion = await groq.chat.completions.create({
+    const params = {
       model:    GROQ_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user',   content: userPrompt   },
       ],
-      temperature:     0.3,
-      response_format: { type: 'json_object' },
-    });
+      temperature:           0.3,
+      max_completion_tokens: 8192,   // reasoning tokens count against this
+      reasoning_effort:      'low',  // gpt-oss: think less, answer sooner
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    };
+    const completion = (await groq.chat.completions.create(params as any)) as Groq.Chat.ChatCompletion;
+    return completion.choices[0]?.message?.content ?? '';
+  };
 
-    const text = completion.choices[0]?.message?.content ?? '';
+  try {
+    let text: string;
+    try {
+      text = await run(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('json_validate_failed')) throw err;
+
+      // Strict JSON mode failed — retry once without it; extractJson()
+      // will pull the JSON out of whatever comes back.
+      logger.warn('Groq json_validate_failed — retrying without json_object mode', { context });
+      await waitForRateLimit('groq');
+      text = await run(false);
+    }
 
     if (!text || text.trim().length === 0) {
       throw new Error(`Groq returned empty response. Context: ${context}`);
@@ -278,7 +296,7 @@ async function callGroqDirect(
 
     logger.info('Groq call completed', {
       context,
-      model:     GROQ_MODEL,
+      model:      GROQ_MODEL,
       durationMs: Date.now() - startedAt,
       outputLen:  text.length,
     });

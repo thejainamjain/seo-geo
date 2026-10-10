@@ -462,6 +462,25 @@ export interface Optimization {
   cmsResyncPending?: boolean;
   status:     OptimizationStatus;
   createdAt:  string;
+  triggeringLearnings?: TriggeringLearning[]; 
+}
+
+export interface TriggeringLearning {
+  type: string;
+  insight: string;
+  evidence: string;
+  category: string;
+  confidence: number;
+  keyword?: string;
+  gscSnapshot?: {
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    avgPosition: number;
+    periodStart: string;
+    periodEnd: string;
+    topQueries: string[];
+  };
 }
 
 // ── Google Search Console ─────────────────────────────────────────────────

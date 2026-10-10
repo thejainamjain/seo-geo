@@ -21,7 +21,7 @@
  * would be scope creep.
  */
 
-import { Blog, BlogOptimization, Project, OrganizationMember } from '../models';
+import { Blog, BlogOptimization, BlogLearning, Project, OrganizationMember } from '../models';
 import { CmsConfig } from '../models/CmsConfig';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { logger } from '../open-tele';
@@ -38,6 +38,32 @@ async function assertProjectAccess(userId: string, projectId: string) {
   if (!membership) throw new ForbiddenError();
 
   return project;
+}
+/**
+ * Manually attaches the BlogLearning docs that drove each optimization's
+ * content proposal. Not done via .populate() — contentOptimization is
+ * stored as Schema.Types.Mixed, so Mongoose has no ref info to resolve
+ * a nested path like 'contentOptimization.learningIds' reliably.
+ */
+async function attachTriggeringLearnings<T extends { contentOptimization?: { learningIds?: unknown[] } }>(
+  optimizations: T[],
+): Promise<Array<T & { triggeringLearnings: unknown[] }>> {
+  const allIds = optimizations.flatMap(o => o.contentOptimization?.learningIds ?? []);
+  if (allIds.length === 0) {
+    return optimizations.map(o => ({ ...o, triggeringLearnings: [] }));
+  }
+
+  const learnings = await BlogLearning.find({ _id: { $in: allIds } })
+    .select('type insight evidence category confidence gscSnapshot keyword')
+    .lean();
+  const byId = new Map(learnings.map(l => [String(l._id), l]));
+
+  return optimizations.map(o => ({
+    ...o,
+    triggeringLearnings: (o.contentOptimization?.learningIds ?? [])
+      .map(id => byId.get(String(id)))
+      .filter((l): l is NonNullable<typeof l> => l !== undefined),
+  }));
 }
 
 export const optimizationService = {
@@ -73,7 +99,9 @@ export const optimizationService = {
       BlogOptimization.countDocuments(filter),
     ]);
 
-    return { optimizations, total, page: query.page, limit: query.limit };
+    const withLearnings = await attachTriggeringLearnings(optimizations);
+
+    return { optimizations: withLearnings, total, page: query.page, limit: query.limit };
   },
 
   async getOptimization(userId: string, projectId: string, optimizationId: string) {
@@ -86,7 +114,8 @@ export const optimizationService = {
       .lean();
     if (!optimization) throw new NotFoundError('BlogOptimization');
 
-    return optimization;
+    const [withLearnings] = await attachTriggeringLearnings([optimization]);
+    return withLearnings;
   },
 
   /**

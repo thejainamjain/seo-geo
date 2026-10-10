@@ -118,7 +118,7 @@ export const auditService = {
 
     const skip  = (query.page - 1) * query.limit;
     const [codeChanges, total] = await Promise.all([
-      CodeChange.find(filter).sort({ createdAt: -1 }).skip(skip).limit(query.limit).lean(),
+      CodeChange.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(query.limit).lean(),
       CodeChange.countDocuments(filter),
     ]);
 

@@ -21,6 +21,7 @@ import {
   Unplug,
 } from 'lucide-react';
 import type { CmsConnectPayload } from '@/types/api';
+import { gscApi } from '@/lib/api';
 
 // ── Platform registry ─────────────────────────────────────────────────────────
 
@@ -797,7 +798,7 @@ export default function IntegrationsPage({ params }: { params: Promise<{ project
                     It only requests read access to your GSC property — nothing else.
                   </p>
                   <Button variant="outline" size="sm" asChild>
-                    <a href={`/api/v1/gsc/connect?projectId=${projectId}`}>
+                    <a href={gscApi.getConnectUrl(projectId)}>
                       <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
                       Connect Google Search Console
                     </a>

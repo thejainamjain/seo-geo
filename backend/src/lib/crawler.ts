@@ -852,77 +852,288 @@ export async function buildRedirectChainFromPlaywrightResponse(
 
 // ── Single page crawl (for competitor / SERP jobs) ────────────────────────
 
+// Tuning for crawlSinglePage(). One attempt has ONE overall deadline that
+// covers every redirect hop AND reading the body — previously a redirect
+// probe (15s) and a second full fetch (15s) could stack up to 30s per domain.
+export const SINGLE_PAGE_TIMEOUT_MS   = 10_000;     // whole attempt, all hops + body
+export const SINGLE_PAGE_MAX_ATTEMPTS = 2;          // 1 retry, temporary failures only
+export const SINGLE_PAGE_MAX_BYTES    = 3_000_000;  // stop reading a body past this
+const RETRY_BACKOFF_MS    = 1_000;
+const MAX_RETRY_AFTER_MS  = 5_000;                  // Retry-After longer than this → give up
+
 /**
- * Crawls a single URL and returns PageData.
+ * Why a single-page crawl failed. The kind decides whether a retry is
+ * worthwhile:
+ *   temporary (worth ONE retry):  timeout, network, server_error, rate_limited
+ *   permanent (never retried):    blocked (401/403/406/451/462…), not_found,
+ *                                 non_html, too_many_redirects, unknown
+ */
+export type CrawlFailureKind =
+  | 'blocked'
+  | 'not_found'
+  | 'rate_limited'
+  | 'server_error'
+  | 'timeout'
+  | 'network'
+  | 'non_html'
+  | 'too_many_redirects'
+  | 'unknown';
+
+export interface CrawlFailure {
+  kind:        CrawlFailureKind;
+  statusCode?: number;
+  message:     string;
+  attempts:    number;
+}
+
+export type SinglePageCrawlResult =
+  | { page: PageData; jsRendered: boolean; failure?: undefined }
+  | { page: null;     jsRendered: false;   failure: CrawlFailure };
+
+export function isRetryableFailure(kind: CrawlFailureKind): boolean {
+  return kind === 'timeout' || kind === 'network' || kind === 'server_error' || kind === 'rate_limited';
+}
+
+function classifyHttpStatus(status: number): CrawlFailureKind {
+  if (status === 404 || status === 410) return 'not_found';
+  if (status === 408)                   return 'timeout';
+  if (status === 429)                   return 'rate_limited';
+  if (status >= 500)                    return 'server_error';
+  // 401/403/406/451 and non-standard 4xx (e.g. 462) — the site is refusing us.
+  return 'blocked';
+}
+
+/** Human-readable explanation, safe to show in the UI (verificationReasoning). */
+export function describeCrawlFailure(f: CrawlFailure): string {
+  const code = f.statusCode ? ` (HTTP ${f.statusCode})` : '';
+  switch (f.kind) {
+    case 'blocked':            return `This site blocks automated access${code}, so it could not be checked automatically.`;
+    case 'not_found':          return `This address returned "not found"${code}, so it could not be checked automatically.`;
+    case 'rate_limited':       return `This site rate-limited our request${code}, so it could not be checked automatically.`;
+    case 'server_error':       return `This site returned a server error${code}, so it could not be checked automatically.`;
+    case 'timeout':            return 'This site took too long to respond, so it could not be checked automatically.';
+    case 'network':            return 'Could not connect to this domain, so it could not be checked automatically.';
+    case 'non_html':           return 'This address did not return a web page, so it could not be checked automatically.';
+    case 'too_many_redirects': return 'This address redirected too many times, so it could not be checked automatically.';
+    default:                   return 'This site could not be checked automatically.';
+  }
+}
+
+type FetchResponse = Awaited<ReturnType<typeof fetch>>;
+
+type FetchOutcome =
+  | {
+      ok:             true;
+      finalUrl:       string;
+      status:         number;
+      chain:          RedirectHop[];
+      html:           string;
+      responseTimeMs: number;
+      pageSizeBytes:  number;
+    }
+  | {
+      ok:            false;
+      kind:          CrawlFailureKind;
+      statusCode?:   number;
+      message:       string;
+      retryAfterMs?: number;
+    };
+
+function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(header);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+/** Reads at most maxBytes of a response body (decoded as UTF-8). */
+async function readBodyCapped(
+  res:      FetchResponse,
+  maxBytes: number,
+): Promise<{ text: string; bytes: number }> {
+  if (!res.body) {
+    const text = await res.text();
+    return { text, bytes: Buffer.byteLength(text, 'utf-8') };
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    chunks.push(Buffer.from(value));
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      break;
+    }
+  }
+
+  return { text: Buffer.concat(chunks).toString('utf-8'), bytes: total };
+}
+
+function classifyThrown(err: unknown): FetchOutcome {
+  const name    = err instanceof Error ? err.name : '';
+  const message = err instanceof Error ? err.message : String(err);
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return { ok: false, kind: 'timeout', message: 'Request timed out' };
+  }
+  return { ok: false, kind: 'network', message };
+}
+
+/**
+ * ONE attempt at fetching a page: follows redirects manually (so every hop and
+ * its real status code is recorded) and reads the final body in the SAME
+ * request chain — no separate "probe" request followed by a second download.
+ * One shared `signal` bounds the whole attempt.
+ */
+async function fetchPageOnce(startUrl: string, signal: AbortSignal): Promise<FetchOutcome> {
+  const startedAt = Date.now();
+  const chain: RedirectHop[] = [];
+  let currentUrl = startUrl;
+
+  try {
+    for (let hop = 0; hop <= MAX_REDIRECT_HOPS + 1; hop++) {
+      const res = await fetch(currentUrl, {
+        redirect: 'manual',
+        headers:  { 'User-Agent': CRAWLER_UA, Accept: 'text/html,application/xhtml+xml' },
+        signal,
+      });
+
+      // Redirect → record the hop and follow it.
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        await res.body?.cancel().catch(() => {});
+        if (!location) {
+          return { ok: false, kind: 'unknown', statusCode: res.status, message: `HTTP ${res.status} redirect without a Location header` };
+        }
+        chain.push({ url: currentUrl, statusCode: res.status });
+        try {
+          currentUrl = new URL(location, currentUrl).toString();
+        } catch {
+          return { ok: false, kind: 'unknown', statusCode: res.status, message: 'Redirect pointed to an invalid URL' };
+        }
+        continue;
+      }
+
+      // Error status → classify; never download an error page's body.
+      if (res.status >= 400) {
+        const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+        await res.body?.cancel().catch(() => {});
+        return {
+          ok:           false,
+          kind:         classifyHttpStatus(res.status),
+          statusCode:   res.status,
+          message:      `HTTP ${res.status}`,
+          retryAfterMs,
+        };
+      }
+
+      // Success → must be an HTML document.
+      const contentType = res.headers.get('content-type') ?? '';
+      if (contentType && !/html/i.test(contentType)) {
+        await res.body?.cancel().catch(() => {});
+        return { ok: false, kind: 'non_html', statusCode: res.status, message: `Unexpected content-type: ${contentType}` };
+      }
+
+      const { text, bytes } = await readBodyCapped(res, SINGLE_PAGE_MAX_BYTES);
+      return {
+        ok:             true,
+        finalUrl:       currentUrl,
+        status:         res.status,
+        chain,
+        html:           text,
+        responseTimeMs: Date.now() - startedAt,
+        // Real bytes read, not a Content-Length header (often absent → was 0).
+        pageSizeBytes:  bytes,
+      };
+    }
+
+    return { ok: false, kind: 'too_many_redirects', message: 'Too many redirects' };
+  } catch (err) {
+    return classifyThrown(err);
+  }
+}
+
+/**
+ * Crawls a single URL and returns the parsed page — or a classified failure.
  * No link-following, no Redis storage, no CodeChange detection.
- * Used by competitor-discovery and serp-research jobs.
+ * Used by competitor-discovery.
  *
- * Strategy: Cheerio first (fast), Playwright fallback if JS-rendered.
+ * Strategy: Cheerio only. If the page turns out to be JS-rendered, the
+ * (thin) Cheerio result is still returned with jsRendered: true so callers can
+ * tell the content is incomplete.
+ *
+ * Retries: at most ONE retry, and only for temporary failures (timeout,
+ * network error, 5xx, 429 with a short Retry-After). Permanent refusals
+ * (403, 404, 410, 462, non-HTML, redirect loops) are never retried.
  */
 export async function crawlSinglePage(
   url:    string,
   domain: string,
-): Promise<PageData | null> {
-  // 1. Follow redirect chain first
-  let redirect: Awaited<ReturnType<typeof followRedirectChain>>;
-  try {
-    redirect = await followRedirectChain(url);
-  } catch (err) {
-    logger.warn('Single page crawl — redirect chain failed', {
+): Promise<SinglePageCrawlResult> {
+  let failure: CrawlFailure | undefined;
+
+  for (let attempt = 1; attempt <= SINGLE_PAGE_MAX_ATTEMPTS; attempt++) {
+    const outcome = await fetchPageOnce(url, AbortSignal.timeout(SINGLE_PAGE_TIMEOUT_MS));
+
+    if (outcome.ok) {
+      const { load } = await import('cheerio');
+      const $ = load(outcome.html);
+      const { rawBodyText, ...extracted } = extractFromCheerio($, outcome.finalUrl, domain);
+
+      const jsRendered = isJsRendered(rawBodyText, $);
+      if (jsRendered) {
+        logger.debug('Single page crawl — JS-rendered, returning Cheerio partial', { url });
+      }
+
+      const page: PageData = {
+        ...extracted,
+        finalUrl:             outcome.finalUrl,
+        statusCode:           outcome.status,
+        renderedBy:           'cheerio',
+        redirectChain:        outcome.chain,
+        hasRedirectChain:     outcome.chain.length > 0,
+        responseTimeMs:       outcome.responseTimeMs,
+        pageSizeBytes:        outcome.pageSizeBytes,
+        depth:                getUrlDepth(outcome.finalUrl),
+        inlinkCount:          0,
+        fromSitemap:          false,
+        brokenLinks:          [],
+        internalLinksChecked: 0,
+      };
+      return { page, jsRendered };
+    }
+
+    failure = {
+      kind:       outcome.kind,
+      statusCode: outcome.statusCode,
+      message:    outcome.message,
+      attempts:   attempt,
+    };
+
+    const retryAfterOk = outcome.retryAfterMs === undefined || outcome.retryAfterMs <= MAX_RETRY_AFTER_MS;
+    const willRetry =
+      isRetryableFailure(outcome.kind) && retryAfterOk && attempt < SINGLE_PAGE_MAX_ATTEMPTS;
+
+    logger.warn('Single page crawl failed', {
       url,
-      error: err instanceof Error ? err.message : String(err),
+      kind:       outcome.kind,
+      statusCode: outcome.statusCode,
+      message:    outcome.message,
+      attempt,
+      willRetry,
     });
-    return null;
+
+    if (!willRetry) break;
+
+    await new Promise(resolve =>
+      setTimeout(resolve, Math.max(RETRY_BACKOFF_MS, outcome.retryAfterMs ?? 0)),
+    );
   }
 
-  const { finalUrl, finalStatus, chain, responseTimeMs, pageSizeBytes } = redirect;
-
-  if (finalStatus >= 400 || finalStatus === 0) {
-    logger.warn('Single page crawl — page returned error status', { url, finalStatus });
-    return null;
-  }
-
-  // 2. Fetch HTML
-  let html = '';
-  try {
-    const res = await fetch(finalUrl, {
-      headers: { 'User-Agent': CRAWLER_UA },
-      signal:  AbortSignal.timeout(15_000),
-    });
-    html = await res.text();
-  } catch (err) {
-    logger.warn('Single page crawl — fetch failed', {
-      url,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  }
-
-  // 3. Parse with Cheerio
-  const { load } = await import('cheerio');
-  const $ = load(html);
-  const { rawBodyText, ...extracted } = extractFromCheerio($, finalUrl, domain);
-
-  const depth = getUrlDepth(finalUrl);
-  const hasRedirectChain = chain.length > 0;
-
-  if (isJsRendered(rawBodyText, $)) {
-    logger.debug('Single page crawl — JS-rendered, returning Cheerio partial', { url });
-  }
-
-  return {
-    ...extracted,
-    finalUrl,
-    statusCode:      finalStatus,
-    renderedBy:      'cheerio',
-    redirectChain:   chain,
-    hasRedirectChain,
-    responseTimeMs,
-    pageSizeBytes,
-    depth,
-    inlinkCount:          0,
-    fromSitemap:          false,
-    brokenLinks:          [],
-    internalLinksChecked: 0,
-  };
+  return { page: null, jsRendered: false, failure: failure! };
 }

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useLogin } from '@/lib/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,11 +10,14 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
 
-  const login = useLogin();
+  // Where to go after signing in (set by proxy.ts / the 401 handler).
+  // useLogin validates it so only same-site paths are ever followed.
+  const next  = useSearchParams().get('next');
+  const login = useLogin(next);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,5 +81,14 @@ export default function LoginPage() {
         </CardFooter>
       </form>
     </Card>
+  );
+}
+
+// useSearchParams() must sit under a Suspense boundary in the App Router.
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

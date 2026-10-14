@@ -14,7 +14,8 @@ import { z } from 'zod';
 import { gscOAuthService } from '../services/gsc-oauth.service';
 import { gscService } from '../services/gsc.service';
 import { verifyToken, signOAuthState, verifyOAuthState } from '../utils/jwt';
-import { ValidationError } from '../utils/errors';
+import { extractAuthToken } from '../utils/auth-cookie';
+import { ValidationError, UnauthorizedError } from '../utils/errors';
 import config from '../utils/config';
 import { logger } from '../open-tele';
 
@@ -27,7 +28,6 @@ interface OAuthState {
 
 const StartQuerySchema = z.object({
   projectId: z.string().min(1),
-  token:     z.string().min(1),
 });
 
 function settingsUrl(projectId: string, query: string): string {
@@ -36,20 +36,22 @@ function settingsUrl(projectId: string, query: string): string {
 
 export const gscOAuthHandler = {
   /**
-   * GET /gsc/connect?projectId=&token=
+   * GET /gsc/connect?projectId=
    *
-   * `token` is the same JWT normally sent as a Bearer header — it has to
-   * travel as a query param here because this is a plain browser
-   * navigation (an <a href>), not an XHR request the axios interceptor
-   * can attach an Authorization header to.
+   * This is a plain browser navigation (an <a href>), so the browser sends
+   * the httpOnly auth cookie automatically. The JWT no longer travels in the
+   * URL (where it could leak into logs, history and referrer headers).
    */
   async start(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const parsed = StartQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        throw new ValidationError('projectId and token query params are required');
+        throw new ValidationError('projectId query param is required');
       }
-      const { projectId, token } = parsed.data;
+      const { projectId } = parsed.data;
+
+      const token = extractAuthToken(req);
+      if (!token) throw new UnauthorizedError('Not authenticated');
 
       const { userId } = verifyToken(token);
 

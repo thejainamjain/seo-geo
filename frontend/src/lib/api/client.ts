@@ -6,14 +6,13 @@ export const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000/api/v1',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30_000,
+  // The login JWT is an httpOnly cookie set by the API. The browser attaches
+  // it automatically as long as credentials are included; no token is ever
+  // stored in or read from JS.
+  withCredentials: true,
 });
 
 apiClient.interceptors.request.use((config) => {
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-  }
-
   // BUG FIX: this instance sets a default 'Content-Type: application/json'
   // header above. Axios does NOT strip an already-explicit Content-Type
   // just because config.data is a FormData instance — that "let the
@@ -35,6 +34,34 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Several queries can 401 at the same moment; only handle it once.
+let handlingUnauthorized = false;
+
+// Auth endpoints whose 401 means "wrong credentials", not "session expired" —
+// the login/register form must show the error instead of reloading the page.
+const AUTH_FORM_URLS = ['/auth/login', '/auth/register'];
+
+async function handleUnauthorized(): Promise<void> {
+  if (handlingUnauthorized) return;
+  handlingUnauthorized = true;
+
+  // Clear the (now invalid) cookie first. Otherwise the proxy would see a
+  // cookie on /login, bounce the user back into the app, and loop.
+  try {
+    await fetch(`${apiClient.defaults.baseURL}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch {
+    /* best effort — still send them to /login */
+  }
+
+  const { pathname, search } = window.location;
+  const onAuthPage = pathname === '/login' || pathname === '/register';
+  const next = onAuthPage ? '' : `?next=${encodeURIComponent(pathname + search)}`;
+  window.location.href = `/login${next}`;
+}
+
 apiClient.interceptors.response.use(
   (res) => res,
   (error: AxiosError) => {
@@ -48,9 +75,11 @@ apiClient.interceptors.response.use(
       message: error.message,
     });
 
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+    const url = error.config?.url ?? '';
+    const isAuthForm = AUTH_FORM_URLS.some(u => url.startsWith(u));
+
+    if (error.response?.status === 401 && !isAuthForm && typeof window !== 'undefined') {
+      void handleUnauthorized();
     }
     return Promise.reject(error);
   },

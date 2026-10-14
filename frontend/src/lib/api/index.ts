@@ -2,6 +2,7 @@
 import { apiClient } from './client';
 import type {
   AuthResponse,
+  User,
   Project,
   ProjectImage,
   PipelineStatus,
@@ -40,6 +41,12 @@ export const authApi = {
 
   register: (name: string, email: string, password: string) =>
     apiClient.post<AuthResponse>('/auth/register', { name, email, password }).then(r => r.data),
+
+  me: () =>
+    apiClient.get<{ user: User }>('/auth/me').then(r => r.data.user),
+
+  logout: () =>
+    apiClient.post('/auth/logout').then(() => undefined),
 };
 
 // ── Projects ──────────────────────────────────────────────────────────────
@@ -424,12 +431,12 @@ export const gscApi = {
    * stored.
    */
   getConnectUrl: (projectId: string): string => {
+    // The browser sends the httpOnly auth cookie on this navigation itself,
+    // so no token goes in the URL.
     const baseURL = apiClient.defaults.baseURL ?? '';
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
     const url = new URL(`${baseURL}/gsc/connect`);
     url.searchParams.set('projectId', projectId);
-    if (token) url.searchParams.set('token', token);
     return url.toString();
   },
 

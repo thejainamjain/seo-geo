@@ -1,49 +1,57 @@
 // lib/hooks/index.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuthStore } from '@/lib/stores/auth.store';
 import { useRouter } from 'next/navigation';
+import { getSafeNext } from '@/lib/utils/safe-redirect';
 import type { BlogStatus, PipelineStep, CmsConnectPayload, CmsUpdatePayload, OptimizationStatus, FreeAuditPayload } from '@/types/api';
 import { authApi, projectsApi, pipelineApi, blogsApi, auditApi, keywordsApi, geoApi, analyticsApi, cmsApi, knowledgeApi, optimizationsApi, gscApi, toolsApi, dashboardApi } from '@/lib/api';
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
-export function useLogin() {
-  const setAuth  = useAuthStore(s => s.setAuth);
-  const router   = useRouter();
+/** The signed-in user, from the httpOnly session cookie. Doubles as the auth check. */
+export function useCurrentUser() {
+  return useQuery({
+    queryKey:  ['me'],
+    queryFn:   authApi.me,
+    retry:     false,
+    staleTime: 5 * 60_000,
+  });
+}
 
+// Login/register/logout use a full-page navigation (not router.push) so the
+// router cache, which may hold pre-login redirects, and all in-memory state
+// are guaranteed fresh once the cookie changes.
+
+export function useLogin(nextPath?: string | null) {
   return useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       authApi.login(email, password),
-    onSuccess: (data) => {
-      setAuth(data.token, data.user);
-      router.push('/projects');
+    onSuccess: () => {
+      window.location.assign(getSafeNext(nextPath));
     },
   });
 }
 
 export function useRegister() {
-  const setAuth = useAuthStore(s => s.setAuth);
-  const router  = useRouter();
-
   return useMutation({
     mutationFn: ({ name, email, password }: { name: string; email: string; password: string }) =>
       authApi.register(name, email, password),
-    onSuccess: (data) => {
-      setAuth(data.token, data.user);
-      router.push('/projects');
+    onSuccess: () => {
+      window.location.assign('/projects');
     },
   });
 }
 
 export function useLogout() {
-  const clear       = useAuthStore(s => s.clear);
-  const router      = useRouter();
-  const queryClient = useQueryClient();   // ← add this
+  const queryClient = useQueryClient();
 
-  return () => {
-    clear();
-    queryClient.clear();                  // ← wipes ALL cached query data
-    router.push('/login');
+  return async () => {
+    try {
+      await authApi.logout();          // server clears the httpOnly cookie
+    } catch {
+      /* still leave — the cookie expires on its own */
+    }
+    queryClient.clear();               // wipes ALL cached query data
+    window.location.assign('/login');
   };
 }
 

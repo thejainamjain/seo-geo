@@ -77,7 +77,8 @@ import { BusinessContext } from '@/models/BusinessContext';
 import type { CompetitorEntry } from '@/models/BusinessContext';
 import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
-import { crawlSinglePage } from '@/lib/crawler';
+import { crawlSinglePage, describeCrawlFailure } from '@/lib/crawler';
+import type { PageData, CrawlFailure } from '@/lib/crawler';
 import { verifyCompetitor } from '@/lib/llm';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -268,9 +269,11 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
     alreadyVerified: existingEntries.filter(e => e.verified).length,
   });
 
-  // Track pages we crawl along the way so step 11 (insights) doesn't
-  // re-crawl the same domain twice.
-  const crawledPages = new Map<string, Awaited<ReturnType<typeof crawlSinglePage>>>();
+  // Track pages we crawl along the way so step 13 (insights) doesn't
+  // re-crawl the same domain twice — and remember crawls that FAILED, so
+  // step 13 doesn't hit a blocked/slow site a second time in the same run.
+  const crawledPages = new Map<string, PageData>();
+  const failedCrawls = new Map<string, CrawlFailure>();
 
   // 9. Merge in SERP results. A SERP domain ranking for the core keyword
   //    IS its own verification — no LLM check needed for these. If a SERP
@@ -312,14 +315,16 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   for (const entry of stillUnverified) {
     const url = `https://${entry.domain}`;
     try {
-      const page = await crawlSinglePage(url, entry.domain);
-      if (!page) {
+      const crawl = await crawlSinglePage(url, entry.domain);
+      if (!crawl.page) {
+        failedCrawls.set(entry.domain, crawl.failure);
         merged.set(entry.domain, {
           ...entry,
-          verificationReasoning: 'Could not reach this domain to verify it automatically.',
+          verificationReasoning: describeCrawlFailure(crawl.failure),
         });
         continue;
       }
+      const page = crawl.page;
       crawledPages.set(entry.domain, page);
 
       const verdict = await verifyCompetitor(
@@ -427,16 +432,33 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
     for (const entry of finalEntries) {
       const competitorDomain = entry.domain;
       try {
-        let page = crawledPages.get(competitorDomain);
+        // Already failed earlier in THIS run (step 10) — don't hit it again.
+        const earlierFailure = failedCrawls.get(competitorDomain);
+        if (earlierFailure) {
+          logger.debug('Skipping competitor insight crawl — failed earlier in this run', {
+            projectId,
+            competitorDomain,
+            kind: earlierFailure.kind,
+          });
+          continue;
+        }
+
+        let page: PageData | null = crawledPages.get(competitorDomain) ?? null;
         if (!page) {
           const url = `https://${competitorDomain}`;
-          page = await crawlSinglePage(url, competitorDomain);
+          const crawl = await crawlSinglePage(url, competitorDomain);
+          page = crawl.page;
+          if (!crawl.page) failedCrawls.set(competitorDomain, crawl.failure);
           // Polite delay only when we actually crawl (not for cache hits)
           await new Promise(resolve => setTimeout(resolve, 1_000));
         }
 
         if (!page) {
-          logger.debug('Competitor page returned null', { projectId, competitorDomain });
+          logger.debug('Competitor page could not be crawled', {
+            projectId,
+            competitorDomain,
+            kind: failedCrawls.get(competitorDomain)?.kind,
+          });
           continue;
         }
 

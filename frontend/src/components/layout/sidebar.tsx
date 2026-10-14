@@ -16,9 +16,8 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAuthStore } from '@/lib/stores/auth.store';
 import { useProjects } from '@/lib/hooks';
-import { useLogout } from '@/lib/hooks';
+import { useLogout, useCurrentUser } from '@/lib/hooks';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
@@ -64,7 +63,7 @@ export function Sidebar() {
   const params    = useParams();
   const projectId = params?.projectId as string | undefined;
   const logout    = useLogout();
-  const user      = useAuthStore(s => s.user);
+  const { data: user } = useCurrentUser();
 
   const { data: projects, isLoading } = useProjects();
   const currentProject = projects?.find(p => p._id === projectId);

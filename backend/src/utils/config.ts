@@ -38,6 +38,16 @@ const config = {
     expiresIn: process.env.JWT_EXPIRES_IN ?? "7d",
   },
 
+  // Login cookie. The name is fixed ("auth-token") because the frontend's
+  // proxy.ts reads the same name. COOKIE_DOMAIN is optional: leave unset in
+  // local dev; in production set it to the shared parent domain
+  // (e.g. ".example.com") if the frontend and API live on different
+  // subdomains.
+  authCookie: {
+    name: "auth-token",
+    domain: process.env.COOKIE_DOMAIN || undefined,
+  },
+
   encryption: {
     key: () => require_env("ENCRYPTION_KEY"),
   },

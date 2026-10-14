@@ -9,9 +9,9 @@ export interface User {
   name:  string;
 }
 
+// The login JWT is an httpOnly cookie — it is never part of the JSON body.
 export interface AuthResponse {
-  token: string;
-  user:  User;
+  user: User;
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authHandler } from '@/handlers/auth.handler';
 import { validate } from '@/middleware/validate';
+import { requireAuth } from '@/middleware/auth';
 
 const router = Router();
 
@@ -22,5 +23,7 @@ const LoginSchema = z.object({
 
 router.post('/register', validate(RegisterSchema), authHandler.register);
 router.post('/login',    validate(LoginSchema),    authHandler.login);
+router.post('/logout',                              authHandler.logout);
+router.get('/me',        requireAuth,              authHandler.me);
 
 export default router;

@@ -120,4 +120,21 @@ export const authService = {
       },
     };
   },
+
+  /** Current user for GET /auth/me. Throws 401 if the user no longer exists. */
+  async getMe(userId: string): Promise<AuthResult['user']> {
+    const user = await User.findById(userId);
+    if (!user) throw new UnauthorizedError('User no longer exists');
+
+    const membership = await OrganizationMember.findOne({ userId: user._id });
+    if (!membership) throw new UnauthorizedError('No organization found for user');
+
+    return {
+      id:             user._id.toString(),
+      name:           user.name,
+      email:          user.email,
+      accountType:    user.accountType,
+      organizationId: membership.organizationId.toString(),
+    };
+  },
 };

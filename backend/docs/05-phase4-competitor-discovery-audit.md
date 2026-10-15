@@ -80,7 +80,7 @@ lightweight crawl of each competitor's homepage for extra LLM context
 (`competitorInsights`).
 
 ## Why SERP-based competitor discovery is the right call
-The file's own comment is correct and matches how the real RankAI product
+The file's own comment is correct and matches how the real SearchPilot product
 appears to work: asking an LLM to *name* competitors risks hallucinated
 companies that don't actually rank for anything. Using real-time SERP
 results as ground truth avoids that. Good design choice, not a gap.

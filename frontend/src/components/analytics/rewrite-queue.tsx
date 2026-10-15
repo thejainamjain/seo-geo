@@ -39,7 +39,7 @@ export function RewriteQueue({ projectId }: { projectId: string }) {
         <div>
           <h2 className="text-lg font-semibold">Rewrite Queue</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Content pages RankAI will rewrite to further optimize
+            Content pages SearchPilot will rewrite to further optimize
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

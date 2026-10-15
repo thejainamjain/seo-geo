@@ -5,7 +5,7 @@
  * Examples: add missing alt text, add canonical tag, fix broken link,
  * add schema markup, optimize title tag, add Open Graph tags.
  *
- * WHY SEPARATE COLLECTION: Thousands can exist per project (RankAI showed
+ * WHY SEPARATE COLLECTION: Thousands can exist per project (SearchPilot showed
  * 2,167 for a single site). Heavily queried and filtered by:
  *   - status (pending / applied / disabled / failed)
  *   - type (title / alt_text / schema / canonical / etc.)
@@ -30,7 +30,7 @@ export interface ICodeChange extends Document {
 
   /**
    * Category of fix — used for filtering in the UI sidebar.
-   * Values match what RankAI shows:
+   * Values match what SearchPilot shows:
    * "title" | "description" | "alt_text" | "canonical" | "schema" |
    * "open_graph" | "internal_link" | "link_title" | "broken_link"
    */

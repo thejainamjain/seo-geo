@@ -131,7 +131,7 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
       <div className="mb-8">
         <h1 className="text-2xl font-semibold">All Posts</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Every post RankAI has generated, scheduled, or published for this project
+          Every post SearchPilot has generated, scheduled, or published for this project
         </p>
       </div>
 

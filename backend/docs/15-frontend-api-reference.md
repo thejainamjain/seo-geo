@@ -487,13 +487,13 @@ would previously return partially-generated records (empty `newHtml`,
 looking broken in the UI). Now: `auditReady: false` + an empty
 `codeChanges` array means "still generating, show a loading/working
 state"; `auditReady: true` means everything for this audit run is fully
-populated and safe to render all at once, matching how RankAI's own UI
+populated and safe to render all at once, matching how SearchPilot's own UI
 only ever shows fully-formed fix cards. Poll this endpoint (or `GET
 /audit` for its `404`/`200` state) until `auditReady` flips to `true`
 rather than rendering incrementally.
 
 Each `codeChange` has real `oldHtml`/`newHtml` markup — display them
-directly, matching RankAI's "NEW"/"PREVIOUS" pattern. When nothing existed
+directly, matching SearchPilot's "NEW"/"PREVIOUS" pattern. When nothing existed
 before the fix, `oldHtml` is now a friendly placeholder string (e.g. `"No
 Open Graph tags found"`, `"No canonical tag found"`, `"No schema markup
 found"`, `"No meta description found"`) rather than an empty string — no

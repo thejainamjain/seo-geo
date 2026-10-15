@@ -124,7 +124,7 @@ function detectCodeChanges(
       projectId, auditId, url: page.url,
       type:    'description',
       status:  'pending',
-      // Friendly placeholder, not a blank-content tag — matches RankAI's
+      // Friendly placeholder, not a blank-content tag — matches SearchPilot's
       // "No og tag found" pattern for anything the fix is replacing.
       oldHtml: page.description
         ? `<meta name="description" content="${page.description}">`

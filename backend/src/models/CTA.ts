@@ -68,7 +68,7 @@ export const CTA = mongoose.model<ICTA>("CTA", CTASchema);
  * would duplicate a potentially large HTML string thousands of times.
  *
  * ALSO TRACKS: Form submissions (name + email) so agencies can see
- * leads generated through RankAI-injected CTAs.
+ * leads generated through SearchPilot-injected CTAs.
  */
 
 export interface IProjectCtaForm extends Document {

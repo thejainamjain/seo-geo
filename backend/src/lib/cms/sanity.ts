@@ -10,10 +10,10 @@
  * the document type name). Chosen instead of a product-specific name so
  * this integration works against any Sanity project that has a standard
  * blog schema already, rather than requiring a schema package specific to
- * this product. Previously this was hardcoded to `RankAIBlogPosts` — a
- * leftover from referencing RankAI's actual implementation while building
+ * this product. Previously this was hardcoded to `SearchPilotBlogPosts` — a
+ * leftover from referencing SearchPilot's actual implementation while building
  * this clone (see docs/11-cms-integrations-audit.md) — which only worked
- * if the user's Sanity project happened to have a RankAI-specific schema
+ * if the user's Sanity project happened to have a SearchPilot-specific schema
  * installed, which no other user's project would.
  *
  * FLOW:

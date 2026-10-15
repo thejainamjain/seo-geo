@@ -36,7 +36,7 @@
  * KEYWORD SELECTION:
  *   After scoring, keep top 260 keywords sorted by:
  *     alignmentScore desc → searchVolume desc → difficulty asc
- *   This matches RankAI's content calendar approach (5/week × 52 weeks).
+ *   This matches SearchPilot's content calendar approach (5/week × 52 weeks).
  *
  * WEEK SCHEDULING:
  *   5 keywords per week. weekNumber = Math.ceil((index + 1) / 5).

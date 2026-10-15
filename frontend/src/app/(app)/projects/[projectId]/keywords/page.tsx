@@ -147,7 +147,7 @@ function AddKeywordDialog({ projectId, onClose }: { projectId: string; onClose: 
           <DialogTitle>Add Keyword</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground mb-3">
-          RankAI checks real search volume and relevance to your business before adding it —
+          SearchPilot checks real search volume and relevance to your business before adding it —
           this may take a few seconds.
         </p>
         <Input
@@ -209,7 +209,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
           <div>
             <h1 className="text-xl font-semibold">Keywords & Content Strategy</h1>
             <p className="text-sm text-muted-foreground">
-              RankAI identifies high-impact keywords to drive your content strategy
+              SearchPilot identifies high-impact keywords to drive your content strategy
             </p>
           </div>
         </div>
@@ -229,7 +229,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             </div>
             <p className="text-2xl font-semibold">{(keywords ?? []).length}</p>
             <p className="text-sm">Keywords</p>
-            <p className="text-xs text-muted-foreground mt-1">Every month, RankAI researches for more</p>
+            <p className="text-xs text-muted-foreground mt-1">Every month, SearchPilot researches for more</p>
           </div>
           <div className="border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -237,7 +237,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             </div>
             <p className="text-2xl font-semibold">{(blogs ?? []).length}</p>
             <p className="text-sm">Pages Created</p>
-            <p className="text-xs text-muted-foreground mt-1">RankAI researches and writes 2 pages every week</p>
+            <p className="text-xs text-muted-foreground mt-1">SearchPilot researches and writes 2 pages every week</p>
           </div>
           <div className="border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -245,7 +245,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             </div>
             <p className="text-2xl font-semibold">{readyBlogCount}</p>
             <p className="text-sm">Pages Scheduled</p>
-            <p className="text-xs text-muted-foreground mt-1">RankAI publishes up to one post daily (Mon–Sat)</p>
+            <p className="text-xs text-muted-foreground mt-1">SearchPilot publishes up to one post daily (Mon–Sat)</p>
           </div>
         </div>
       )}
@@ -257,7 +257,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             <div>
               <p className="text-sm font-medium">Your CMS config is not set up completely</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                RankAI cannot schedule automatic publish to your site. Complete your CMS integration in
+                SearchPilot cannot schedule automatic publish to your site. Complete your CMS integration in
                 settings to enable auto-publish.
               </p>
             </div>

@@ -1,7 +1,7 @@
 /**
  * lib/cms/framer.ts
  *
- * Framer CMS publisher via RankAI Framer plugin.
+ * Framer CMS publisher via SearchPilot Framer plugin.
  * The plugin exposes a webhook endpoint on the Framer project that
  * accepts blog post data and creates a CMS item.
  *
@@ -11,7 +11,7 @@
  * AUTH: projectId is the shared secret — set during plugin configuration.
  *
  * NOTE: Framer does not have a public REST API for CMS items.
- *   We publish via the RankAI Framer plugin (installed by user).
+ *   We publish via the SearchPilot Framer plugin (installed by user).
  *   The plugin webhook URL follows a predictable pattern based on projectId.
  */
 
@@ -20,9 +20,9 @@ import type { FramerCredentials, BlogPublishPayload, PublishResult } from './typ
 
 const FETCH_TIMEOUT_MS = 30_000;
 
-// Framer plugin webhook — provisioned when user installs RankAI plugin
+// Framer plugin webhook — provisioned when user installs SearchPilot plugin
 function buildWebhookUrl(projectId: string): string {
-  return `https://framer-plugin.rankai.ai/api/publish/${projectId}`;
+  return `https://framer-plugin.SearchPilot.ai/api/publish/${projectId}`;
 }
 
 export async function publishToFramer(

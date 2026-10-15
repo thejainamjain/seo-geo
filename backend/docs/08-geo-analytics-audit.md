@@ -61,7 +61,7 @@ Full writeup in `docs/10-llm-provider-flip.md`.
 Per the file's own description: how often the project's domain gets cited
 by AI engines when users ask AI assistants questions related to the
 project's keywords — the core "AEO/GEO" value prop that differentiates this
-product (and RankAI) from plain SEO tools.
+product (and SearchPilot) from plain SEO tools.
 
 ## What it actually does
 For each published keyword, it builds a natural-language user question and
@@ -86,7 +86,7 @@ training data**, not from a live web search. This means:
    brand awareness than to answer-engine citation performance — a
    completely different (and much slower-moving) signal than what
    "AEO/GEO score" implies to a user looking at a dashboard.
-3. Real GEO/AEO measurement tools (and what "AEO" means in the RankAI
+3. Real GEO/AEO measurement tools (and what "AEO" means in the SearchPilot
    product this is modeled on) work by querying **search-grounded**
    AI systems — ChatGPT with browsing, Perplexity, or Gemini/Vertex AI
    *with the Google Search grounding tool enabled* — specifically because

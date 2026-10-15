@@ -19,7 +19,7 @@
  *   The ENCRYPTION_KEY env var is the only key — never log or expose it.
  *
  * PUBLISH SCHEDULE:
- *   RankAI publishes Mon–Sat at 5 PM PST. Sunday is blocked.
+ *   SearchPilot publishes Mon–Sat at 5 PM PST. Sunday is blocked.
  *   allowedPublishDays enforces this — 0=Sunday, 1=Mon, ..., 6=Sat.
  *   Default is [1,2,3,4,5,6] (Mon–Sat, Sunday excluded).
  *   User cannot add 0 (Sunday) — enforced in handler layer.
@@ -64,7 +64,7 @@ export interface ICmsConfig extends Document {
    *
    * DEFAULT: [1,2,3,4,5,6] — Mon through Sat. Sunday (0) is NEVER included.
    * RULE: Sunday publishing is blocked. Handler must reject any attempt to add 0.
-   * This matches RankAI's schedule: Mon–Sat at 5 PM PST.
+   * This matches SearchPilot's schedule: Mon–Sat at 5 PM PST.
    */
   allowedPublishDays: number[];
 

@@ -119,10 +119,10 @@ does this correctly.
 
 ## ✅ RESOLVED — frontend was only rendering type+status, not the before/after data already being sent
 
-Prompted by a real client screenshot comparison against RankAI's own UI:
+Prompted by a real client screenshot comparison against SearchPilot's own UI:
 our Technical SEO page was only showing a fix's category label ("Add
 canonical tag") and a "Pending" badge — not the actual before/after
-markup RankAI displays (`NEW: <meta ...>` / `PREVIOUS: ...`). Traced this
+markup SearchPilot displays (`NEW: <meta ...>` / `PREVIOUS: ...`). Traced this
 all the way through before assuming it was a backend gap: **it wasn't** —
 `CodeChange.oldHtml`/`.newHtml` were already populated with real markup for
 every fix type, and `listCodeChanges()` already returned them completely
@@ -136,7 +136,7 @@ now fixed:
    `oldHtml` was a bare `''` for open_graph, canonical, and schema when
    nothing existed before the fix (and an ugly `<meta name="description"
    content="">` for description) — now real placeholder strings like
-   `"No canonical tag found"`, matching RankAI's own pattern, so the
+   `"No canonical tag found"`, matching SearchPilot's own pattern, so the
    frontend can render the field as-is with no special-case fallback logic.
 
 2. **A genuine timing/data-integrity gap**: `site-crawl.job.ts` creates

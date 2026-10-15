@@ -12,7 +12,7 @@
  *   - Query "all links FROM this page"
  *   - Track the internal linking graph over time
  *
- * IMPLEMENTATION NOTE: RankAI builds this with a simple keyword-match
+ * IMPLEMENTATION NOTE: SearchPilot builds this with a simple keyword-match
  * function against published blog slugs (~50 lines, no external service).
  * Start there before adding ML-based relevance scoring.
  *

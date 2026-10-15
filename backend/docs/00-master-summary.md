@@ -1,4 +1,4 @@
-# Master Audit Summary — RankAI Clone Backend
+# Master Audit Summary — SearchPilot Clone Backend
 
 **Scope covered:** Full core pipeline — site crawl, business profile,
 technical audit, competitor discovery, keyword research, orchestration/
@@ -102,7 +102,7 @@ automatically retries any that failed the first time.
 
 ## ✅ Resolved — narrow/low-urgency items, third pass
 
-10. `sanity.ts`'s RankAI-branded schema type (`RankAIBlogPosts`) renamed
+10. `sanity.ts`'s SearchPilot-branded schema type (`SearchPilotBlogPosts`) renamed
     to `post` — matches Sanity's own official blog starter convention, so
     it now works against any Sanity project with a standard blog schema.
 11. Keyword status reset on forced pipeline resume (`docs/06-...`) — moved
@@ -121,7 +121,7 @@ automatically retries any that failed the first time.
 
 ## 🔴 Still open — real, needs a decision
 
-14. **`framer.ts` calls out to RankAI's actual live infrastructure**
+14. **`framer.ts` calls out to SearchPilot's actual live infrastructure**
     (`docs/11-cms-integrations-audit.md`) — not a comment, a live `fetch()`
     call in the runtime publish path. This is the one finding across all
     three passes that's a product decision, not a code fix: either this
@@ -226,7 +226,7 @@ automatically retries any that failed the first time.
     structure, nothing to fix there.)
 
 **Explicitly not touched, flagged instead of guessed at:**
-- **Framer/RankAI domain** (#14) — out of scope per your direction this
+- **Framer/SearchPilot domain** (#14) — out of scope per your direction this
   round.
 - **Approve/reject access restriction** (`docs/13-...`) — the existing code
   comment explicitly argues against building this in isolation ("no
@@ -257,7 +257,7 @@ automatically retries any that failed the first time.
 
 ## Suggested next step
 The one finding left with real product/trust implications is #14
-(Framer/RankAI domain) — that needs your call on whether/how this product's
+(Framer/SearchPilot domain) — that needs your call on whether/how this product's
 own Framer plugin gets built, not more code archaeology. Everything else
 remaining is narrow edge cases, documented accepted simplifications, or
 implemented-but-needs-a-live-test items.

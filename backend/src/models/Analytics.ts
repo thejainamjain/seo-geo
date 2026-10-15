@@ -205,7 +205,7 @@ export const EnterpriseAuditRun = mongoose.model<IEnterpriseAuditRun>(
  * authenticated app. Never references a User or Project — the visitor
  * may not even have an account yet.
  *
- * UI: rankai.ai/audit?domain=example.com — public landing page.
+ * UI: SearchPilot.ai/audit?domain=example.com — public landing page.
  */
 
 export interface IAuditLead extends Document {

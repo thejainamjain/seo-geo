@@ -426,7 +426,7 @@ function SanityForm({ domain, onConnect, isPending, error }: FormProps & { domai
           'In the API tab, go to CORS origins > Add CORS origin > add your app domain > Save',
         ]} />
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground mb-3">
-          Blog content will be posted to the RankAIBlogPosts schema type.
+          Blog content will be posted to the SearchPilotBlogPosts schema type.
         </div>
         <FormField label="Sanity API Access Token" id="sanity-token" placeholder="Sanity API Access Token"
           type="password" value={apiToken} onChange={setApiToken} />

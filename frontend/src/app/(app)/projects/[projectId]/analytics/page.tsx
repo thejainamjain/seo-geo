@@ -205,7 +205,7 @@ function KeywordPerformanceTable({ projectId }: { projectId: string }) {
   return (
     <div className="border border-border rounded-lg p-6">
       <h2 className="text-base font-semibold">Keyword Performance</h2>
-      <p className="text-xs text-muted-foreground mt-0.5 mb-4">Performance of keywords driven by RankAI engine</p>
+      <p className="text-xs text-muted-foreground mt-0.5 mb-4">Performance of keywords driven by SearchPilot engine</p>
 
       {isLoading && <Skeleton className="h-48 w-full" />}
 
@@ -257,8 +257,8 @@ export default function AnalyticsPage({ params }: { params: Promise<{ projectId:
         <Badge variant="outline" className="text-xs">Live</Badge>
       </div>
       <p className="text-sm text-muted-foreground -mt-4 mb-6">
-        Search performance across Google and AI search, driven by RankAI&apos;s work. Based on these
-        results, RankAI continuously takes action to optimize and improve performance.
+        Search performance across Google and AI search, driven by SearchPilot&apos;s work. Based on these
+        results, SearchPilot continuously takes action to optimize and improve performance.
       </p>
 
       <SummaryCards projectId={projectId} />

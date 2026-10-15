@@ -516,7 +516,7 @@ const STEP_META: Record<StepNumber, { title: string; subtitle: string }> = {
   3: { title: 'Setup Analytics',         subtitle: 'Connect Google Search Console' },
   4: { title: 'Site Integration',        subtitle: 'Connect your CMS so we can publish articles' },
   5: { title: 'Blog Post Settings',      subtitle: 'Images, knowledge base, and custom writer instructions' },
-  6: { title: 'Auto Publish',            subtitle: 'Select how you\u2019d like RankAI to manage your content publishing' },
+  6: { title: 'Auto Publish',            subtitle: 'Select how you\u2019d like SearchPilot to manage your content publishing' },
 };
 
 // ── Loading screen ─────────────────────────────────────────────────────────

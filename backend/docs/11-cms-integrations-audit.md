@@ -3,34 +3,34 @@
 **Files:** `lib/cms/{wordpress,webflow,framer,wix,shopify,sanity,gohighlevel,custom-api}.ts`,
 plus `lib/cms/types.ts`, `lib/cms/index.ts` (shared dispatcher), and
 `lib/cms/shared.ts` (new — shared `injectSchema` helper)
-**Status: 🔴 One critical finding still open (Framer/RankAI domain — needs
+**Status: 🔴 One critical finding still open (Framer/SearchPilot domain — needs
 a product decision, not a code fix). Everything else — idempotency, schema
 markup, Sanity branding, Wix content format — resolved (Wix and GoHighLevel
 still want a live test to confirm, honestly flagged where confidence is
 lower than "verified").**
 
-## 🔴 CRITICAL — `framer.ts` calls out to RankAI's actual live infrastructure
+## 🔴 CRITICAL — `framer.ts` calls out to SearchPilot's actual live infrastructure
 
 ```ts
 // lib/cms/framer.ts, line 25
 function buildWebhookUrl(projectId: string): string {
-  return `https://framer-plugin.rankai.ai/api/publish/${projectId}`;
+  return `https://framer-plugin.SearchPilot.ai/api/publish/${projectId}`;
 }
 ```
 
 This is not a documentation reference (like the many "this matches how
-RankAI does X" design-rationale comments scattered through the codebase,
+SearchPilot does X" design-rationale comments scattered through the codebase,
 which are fine) — this is a **live `fetch()` call in the actual runtime
 publish path**. Any customer of this product who connects Framer as their
-CMS would have their blog content POSTed to `framer-plugin.rankai.ai` —
-RankAI's own domain, not this product's.
+CMS would have their blog content POSTed to `framer-plugin.SearchPilot.ai` —
+SearchPilot's own domain, not this product's.
 
 Two possible outcomes, both bad:
 1. The endpoint doesn't recognize this product's `projectId` values and
    the call fails — Framer publishing is simply broken for every user.
 2. Worse case: if that endpoint responds to unrecognized project IDs in
    any generic way, this product would be **sending customer blog content
-   to a third party's (RankAI's) servers** without their knowledge — a
+   to a third party's (SearchPilot's) servers** without their knowledge — a
    real data-handling concern, not just a functionality bug.
 
 **This must be fixed before Framer is offered as a CMS option to any real
@@ -43,23 +43,23 @@ resolve alone — flagging rather than guessing:
 - If a plugin exists under a different domain, this needs to point there
   instead.
 
-## ✅ RESOLVED — `sanity.ts` baked "RankAI" into the schema contract with users' own Sanity projects
+## ✅ RESOLVED — `sanity.ts` baked "SearchPilot" into the schema contract with users' own Sanity projects
 
 ```ts
 // lib/cms/sanity.ts (before)
-const documentId = `rankAiBlogPost-${payload.slug}`;
+const documentId = `SearchPilotBlogPost-${payload.slug}`;
 // ...
-_type: 'RankAIBlogPosts',
+_type: 'SearchPilotBlogPosts',
 ```
 
 Unlike the Framer issue, this didn't call out to any external server —
 but it meant **for Sanity publishing to work at all, the connecting
 customer's own Sanity project needed a custom schema type literally
-named `RankAIBlogPosts`**, which only made sense if this product shipped
+named `SearchPilotBlogPosts`**, which only made sense if this product shipped
 its own identically-named schema package — otherwise every Sanity publish
 would fail with a schema-type-not-found error.
 
-The old CORS/fetch-URL comments (pointing at `rankai.ai/api/v1/...`) were
+The old CORS/fetch-URL comments (pointing at `SearchPilot.ai/api/v1/...`) were
 never live code — just misleading documentation-style comments in the
 file, written as if they were setup instructions. Not checked against
 user-facing docs/frontend in this pass, but flagging: if that exact
@@ -230,7 +230,7 @@ Wix API key/app is used, which is worth checking is granted.
 - `shopify.ts`: publishes under "the first Blog found" on the store with
   no way to choose a different one — already self-documented as a known
   simplification in the file's own comments, not a silent gap.
-- `custom-api.ts`: comment says "user exports from RankAI" — just
+- `custom-api.ts`: comment says "user exports from SearchPilot" — just
   phrasing, not a functional issue, but part of the same pattern as the
   Sanity comments above; worth a pass to update copy once branding is
   finalized.

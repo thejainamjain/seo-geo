@@ -18,7 +18,7 @@
  * PAGE ORDER FOR UI:
  *   Audit.crawledUrls is stored in tier order by site-crawl.job.ts.
  *   Users see homepage first, then core pages, then content, then legal.
- *   This matches what RankAI and Ahrefs show in their page lists.
+ *   This matches what SearchPilot and Ahrefs show in their page lists.
  *
  * REDIS SLIDING TTL:
  *   Every time pages are read from Redis, TTL is refreshed to 24hrs.

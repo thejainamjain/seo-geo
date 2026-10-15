@@ -5,7 +5,7 @@
  * User provides an endpoint URL + auth header.
  * We POST the blog data as JSON to that endpoint.
  *
- * This is the "other" CMS option — user exports from RankAI and
+ * This is the "other" CMS option — user exports from SearchPilot and
  * has their own endpoint that accepts the payload.
  *
  * PAYLOAD SHAPE: Standard — same as what our public articles API returns.

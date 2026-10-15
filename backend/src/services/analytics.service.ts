@@ -69,7 +69,7 @@ export const analyticsService = {
     }
 
     // "Schemas" card = count of type:'schema' CodeChange docs for this
-    // audit — these are the fixes RankAI GENERATED to add schema markup
+    // audit — these are the fixes SearchPilot GENERATED to add schema markup
     // to pages that didn't have it (see site-crawl.job.ts's
     // detectCodeChanges: a 'schema' CodeChange is only created when
     // `!page.hasSchema`). This is NOT the same as

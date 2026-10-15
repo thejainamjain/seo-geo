@@ -399,7 +399,7 @@ export default function BlogEditorPage({
             <p className="text-xs font-medium">Editing Guidelines</p>
           </div>
           <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">Only edit content in this RankAI editor.</strong> Any changes
+            <strong className="text-foreground">Only edit content in this SearchPilot editor.</strong> Any changes
             made directly on your CMS will not be reflected here and may cause sync issues.
           </p>
         </div>

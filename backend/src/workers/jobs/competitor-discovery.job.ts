@@ -24,7 +24,7 @@
  *   don't actually rank for the same keywords.
  *   SerpAPI gives us ground truth — real domains that Google ranks
  *   for the business's core keyword RIGHT NOW.
- *   This is exactly what RankAI does (visible in their UI screenshots).
+ *   This is exactly what SearchPilot does (visible in their UI screenshots).
  *
  * WHY VERIFY EXISTING ENTRIES (not just trust or discard them):
  *   A user-typed or AI-drafted domain has no external ground truth behind

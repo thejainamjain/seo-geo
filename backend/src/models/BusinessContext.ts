@@ -40,6 +40,22 @@ export interface CompetitorEntry {
   verified:                boolean;
   verificationReasoning?:  string;
   addedAt:                 Date;
+
+  // What the SERP said about this domain (kept so a blocked or JS-only site
+  // still gives the LLM something to work with).
+  serpTitle?:              string;
+  serpSnippet?:            string;
+
+  // Region/scale judgment on SERP-found entries. 'not_comparable' entries are
+  // demoted to verified:false (never deleted) and are not crawled or used for
+  // keyword research.
+  relevance?:              'competitor' | 'not_comparable' | 'unsure';
+
+  // Outcome of the last homepage crawl. Lets later runs skip domains that
+  // permanently refuse us (403/404/…) instead of hitting them every run.
+  crawlStatus?:            'ok' | 'failed';
+  crawlFailureKind?:       string;   // a CrawlFailureKind from lib/crawler
+  crawlCheckedAt?:         Date;
 }
 
 export interface IBusinessContext extends Document {
@@ -88,6 +104,10 @@ export interface IBusinessContext extends Document {
       textSnippet: string;
       hasSchema:   boolean;
       wordCount:   number;
+      // 'crawl' = read from the competitor's homepage; 'serp_snippet' = only
+      // the SERP title/snippet was available (site blocked or unreachable),
+      // so hasSchema/wordCount are placeholders, not measurements.
+      source?:     'crawl' | 'serp_snippet';
     }>;
   };
 

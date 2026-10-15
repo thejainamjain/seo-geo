@@ -69,6 +69,13 @@ export interface OrganicResult {
   snippet:  string;
 }
 
+/** A competitor domain together with what the SERP said about it. */
+export interface CompetitorCandidate {
+  domain:  string;
+  title:   string;
+  snippet: string;
+}
+
 export interface SerpSearchResult {
   keyword:         string;
   totalResults:    number;
@@ -252,11 +259,47 @@ export async function searchOrganic(
 }
 
 /**
+ * Same filtering as filterCompetitorDomains(), but works on full SERP results
+ * so each surviving domain keeps its title and snippet. When a domain appears
+ * several times, the best-ranked (first) result is kept.
+ *
+ * Used by: competitor-discovery.job.ts
+ */
+export function filterCompetitorResults(
+  results:   OrganicResult[],
+  ownDomain: string,
+  limit    = 10,
+): CompetitorCandidate[] {
+  const normalizedOwn = ownDomain.toLowerCase().replace(/^www\./, '');
+  const seen = new Set<string>();
+  const out: CompetitorCandidate[] = [];
+
+  for (const r of results) {
+    const domain = r.domain.toLowerCase().replace(/^www\./, '');
+    if (!domain || domain === normalizedOwn) continue;
+    if ([...GENERIC_DOMAINS].some(g => domain === g || domain.endsWith(`.${g}`))) continue;
+    if (seen.has(domain)) continue;
+    seen.add(domain);
+    out.push({ domain, title: r.title ?? '', snippet: r.snippet ?? '' });
+  }
+
+  logger.debug('Competitor results filtered', {
+    inputCount:  results.length,
+    afterFilter: out.length,
+    ownDomain:   normalizedOwn,
+    result:      out.slice(0, limit).map(c => c.domain),
+  });
+
+  return out.slice(0, limit);
+}
+
+/**
  * Filters a list of domains to remove the project's own domain
  * and generic non-competitor domains (Wikipedia, YouTube, etc.).
  *
  * Returns up to `limit` clean competitor domains.
- * Used by: competitor-discovery.job.ts
+ * (Kept for callers that only have domains; the competitor job now uses
+ * filterCompetitorResults so it also keeps titles and snippets.)
  */
 export function filterCompetitorDomains(
   domains:       string[],

@@ -21,7 +21,8 @@
  * ERROR HANDLING:
  *   - Redis cache missing → throws with clear message → BullMQ retries
  *   - LLM returns invalid JSON → extractJson throws → BullMQ retries
- *   - LLM returns valid JSON but missing fields → mapped gracefully (undefined ok)
+ *   - LLM returns valid JSON but the profile is too empty to be useful →
+ *     assertUsableProfile throws → BullMQ retries (never saves an empty profile)
  *   - DB write fails → throws → BullMQ retries
  */
 
@@ -57,6 +58,35 @@ function normalizeToString(val: unknown): string | undefined {
   }
   if (typeof val === 'object') return JSON.stringify(val);
   return String(val);
+}
+
+// ── Usability gate ─────────────────────────────────────────────────────────
+
+// A profile must carry real content before it is saved. Without this, a
+// response that is valid JSON but empty or wrongly shaped maps to all-undefined
+// fields and is saved anyway (marked as AI-drafted) with no retry.
+const MIN_FILLED_PROFILE_FIELDS = 8;   // of the 20 string fields in the profile
+
+function assertUsableProfile(llm: CustomerProfileLlmResponse, projectId: string): number {
+  const filled = (v: unknown): boolean => typeof v === 'string' && v.trim().length > 0;
+
+  const fields: unknown[] = [
+    llm.CompanyName, llm.Website, llm.TargetRegionsOrLanguages,
+    ...Object.values(llm.ProductOrService ?? {}),
+    ...Object.values(llm.TargetCustomers ?? {}),
+    ...Object.values(llm.CompetitorsAndDifferentiation ?? {}),
+    ...Object.values(llm.SocialProofAndTrust ?? {}),
+  ];
+  const filledCount = fields.filter(filled).length;
+  const hasCore     = filled(llm.ProductOrService?.WhatTheBusinessSells);
+
+  if (!hasCore || filledCount < MIN_FILLED_PROFILE_FIELDS) {
+    throw new Error(
+      `LLM returned an unusable business profile (filled fields: ${filledCount}/20, ` +
+      `WhatTheBusinessSells present: ${hasCore}). Context: business-profile:${projectId}`,
+    );
+  }
+  return filledCount;
 }
 
 // ── LLM response → BusinessContext field mapper ────────────────────────────
@@ -221,6 +251,10 @@ export async function runBusinessProfileJob(job: Job<PipelineJobData>): Promise<
     hasCompetition:   !!llmResponse.CompetitorsAndDifferentiation,
     hasSocialProof:   !!llmResponse.SocialProofAndTrust,
   });
+
+  // 3b. Refuse to save an empty/near-empty profile — throws → BullMQ retries
+  const filledFieldCount = assertUsableProfile(llmResponse, projectId);
+  logger.debug('Business profile passed usability check', { projectId, filledFieldCount });
 
   // 4. Map LLM response to BusinessContext schema
   const mapped = mapLlmResponseToBusinessContext(llmResponse, projectId);

@@ -22,7 +22,13 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { PROMPTS } from '../constants/llm.constants';
+import {
+  PROMPTS,
+  CUSTOMER_PROFILE_JSON_SCHEMA,
+  COMPETITOR_RELEVANCE_SYSTEM,
+  COMPETITOR_RELEVANCE_USER,
+  COMPETITOR_RELEVANCE_JSON_SCHEMA,
+} from '../constants/llm.constants';
 import { logger } from '../open-tele';
 import config from '@/utils/config';
 import { getRedis } from '../loaders/redis';
@@ -143,12 +149,26 @@ function extractJson<T>(raw: string, context: string): T {
   }
 
   // Step 3: find matching closing character using depth counter
+  //         Braces inside string values (e.g. "use {city} here") must NOT
+  //         count, so track whether we're inside a JSON string.
   let depth = 0;
   let endIndex = -1;
+  let inString = false;
+  let escaped  = false;
   for (let i = startIndex; i < cleaned.length; i++) {
-    if (cleaned[i] === openChar)  depth++;
-    if (cleaned[i] === closeChar) depth--;
-    if (depth === 0) { endIndex = i; break; }
+    const ch = cleaned[i];
+    if (inString) {
+      if (escaped)           escaped = false;
+      else if (ch === '\\')  escaped = true;
+      else if (ch === '"')   inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === openChar) depth++;
+    else if (ch === closeChar) {
+      depth--;
+      if (depth === 0) { endIndex = i; break; }
+    }
   }
 
   if (endIndex === -1) {
@@ -166,6 +186,22 @@ function extractJson<T>(raw: string, context: string): T {
       `Raw snippet: ${jsonStr.slice(0, 300)}`
     );
   }
+}
+
+/**
+ * Parses an LLM response that should be pure JSON. Schema-enforced Groq calls
+ * return exactly the JSON document, so a plain JSON.parse is tried first and
+ * is exact. Only if that fails do we fall back to extractJson(), which digs
+ * the JSON out of surrounding text/fences.
+ */
+function parseJsonResponse<T>(raw: string, context: string): T {
+  try {
+    const parsed = JSON.parse(raw.trim());
+    if (parsed !== null && typeof parsed === 'object') return parsed as T;
+  } catch {
+    /* not pure JSON — fall through to extraction */
+  }
+  return extractJson<T>(raw, context);
 }
 
 // ── Core Gemini call (fallback provider) ──────────────────────────────────
@@ -243,10 +279,29 @@ async function callGeminiDirect(
  * Direct Groq call — no fallback logic inside. callLLM() decides whether
  * to fall back to Gemini; this function just calls Groq and throws on failure.
  */
+/**
+ * Per-call options. Defaults reproduce the previous behaviour exactly
+ * (json_object mode, 8192 completion tokens, low reasoning effort).
+ */
+export interface LlmCallOptions {
+  /**
+   * When set, Groq enforces this JSON Schema with constrained decoding
+   * (response_format json_schema, strict: true) — the response is guaranteed
+   * to have exactly these keys and types, unless generation is cut off by the
+   * token limit. Supported on openai/gpt-oss-20b and openai/gpt-oss-120b.
+   */
+  jsonSchema?:          { name: string; schema: Record<string, unknown> };
+  maxCompletionTokens?: number;
+  reasoningEffort?:     'low' | 'medium' | 'high';
+}
+
+type GroqJsonMode = 'schema' | 'json_object' | 'none';
+
 async function callGroqDirect(
   systemPrompt: string,
   userPrompt:   string,
   context:      string,
+  options:      LlmCallOptions = {},
 ): Promise<string> {
   const startedAt = Date.now();
   await waitForRateLimit('groq');
@@ -256,10 +311,26 @@ async function callGroqDirect(
     model:           GROQ_MODEL,
     systemPromptLen: systemPrompt.length,
     userPromptLen:   userPrompt.length,
+    schemaEnforced:  !!options.jsonSchema,
   });
 
-  const run = async (jsonMode: boolean): Promise<string> => {
+  const run = async (mode: GroqJsonMode): Promise<string> => {
     const groq = getGroq();
+
+    let responseFormat: Record<string, unknown> | undefined;
+    if (mode === 'schema' && options.jsonSchema) {
+      responseFormat = {
+        type: 'json_schema',
+        json_schema: {
+          name:   options.jsonSchema.name,
+          strict: true,
+          schema: options.jsonSchema.schema,
+        },
+      };
+    } else if (mode === 'json_object') {
+      responseFormat = { type: 'json_object' };
+    }
+
     const params = {
       model:    GROQ_MODEL,
       messages: [
@@ -267,27 +338,43 @@ async function callGroqDirect(
         { role: 'user',   content: userPrompt   },
       ],
       temperature:           0.3,
-      max_completion_tokens: 8192,   // reasoning tokens count against this
-      reasoning_effort:      'low',  // gpt-oss: think less, answer sooner
-      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      max_completion_tokens: options.maxCompletionTokens ?? 8192,   // reasoning tokens count against this
+      reasoning_effort:      options.reasoningEffort ?? 'low',      // gpt-oss: think less, answer sooner
+      ...(responseFormat ? { response_format: responseFormat } : {}),
     };
     const completion = (await groq.chat.completions.create(params as any)) as Groq.Chat.ChatCompletion;
     return completion.choices[0]?.message?.content ?? '';
   };
 
-  try {
-    let text: string;
-    try {
-      text = await run(true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('json_validate_failed')) throw err;
+  // Strictest mode first; relax only when Groq says the JSON could not be
+  // produced/validated, or (schema mode only) rejects the schema request
+  // itself. Rate limits and server errors are NOT retried here — they throw.
+  const chain: GroqJsonMode[] = options.jsonSchema
+    ? ['schema', 'json_object', 'none']
+    : ['json_object', 'none'];
 
-      // Strict JSON mode failed — retry once without it; extractJson()
-      // will pull the JSON out of whatever comes back.
-      logger.warn('Groq json_validate_failed — retrying without json_object mode', { context });
-      await waitForRateLimit('groq');
-      text = await run(false);
+  try {
+    let text = '';
+    for (let i = 0; i < chain.length; i++) {
+      try {
+        text = await run(chain[i]);
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const schemaRejected =
+          chain[i] === 'schema' &&
+          /\b400\b|invalid_request|response_format|json_schema/i.test(msg) &&
+          !/\b429\b|rate limit/i.test(msg);
+        const canRelax =
+          i < chain.length - 1 && (msg.includes('json_validate_failed') || schemaRejected);
+        if (!canRelax) throw err;
+
+        logger.warn(`Groq ${chain[i]} mode failed — retrying with ${chain[i + 1]} mode`, {
+          context,
+          error: msg.slice(0, 300),
+        });
+        await waitForRateLimit('groq');
+      }
     }
 
     if (!text || text.trim().length === 0) {
@@ -333,9 +420,10 @@ export async function callLLM(
   systemPrompt: string,
   userPrompt:   string,
   context:      string, // for logging — e.g. "business-profile:projectId"
+  options:      LlmCallOptions = {},
 ): Promise<string> {
   try {
-    return await callGroqDirect(systemPrompt, userPrompt, context);
+    return await callGroqDirect(systemPrompt, userPrompt, context, options);
   } catch (err) {
     const message     = err instanceof Error ? err.message : String(err);
     const isRateLimit = message.includes('429') || message.toLowerCase().includes('rate limit');
@@ -583,12 +671,14 @@ export async function generateCustomerProfile(
   crawledContent: string,
   projectId:      string,
 ): Promise<CustomerProfileLlmResponse> {
+  const context = `customer-profile:${projectId}`;
   const raw = await callLLM(
     PROMPTS.CUSTOMER_PROFILE_SYSTEM,
     PROMPTS.CUSTOMER_PROFILE_USER(siteUrl, crawledContent),
-    `customer-profile:${projectId}`,
+    context,
+    { jsonSchema: { name: 'customer_profile', schema: CUSTOMER_PROFILE_JSON_SCHEMA } },
   );
-  return extractJson<CustomerProfileLlmResponse>(raw, `customer-profile:${projectId}`);
+  return parseJsonResponse<CustomerProfileLlmResponse>(raw, context);
 }
 
 /**
@@ -866,4 +956,35 @@ export async function rewriteBlogPost(
   );
 
   return extractJson<BlogRewriteLlmResponse>(raw, context);
+}
+
+// ── Competitor relevance (region + scale) ──────────────────────────────────
+
+export interface CompetitorRelevanceResponse {
+  verdicts?: Array<{ domain?: string; verdict?: string; reason?: string }>;
+}
+
+/**
+ * ONE batched call that judges whether SERP-found domains are realistic
+ * competitors for the business, from titles and snippets only (no crawling).
+ * Light task: low reasoning effort, small completion budget.
+ */
+export async function judgeCompetitorCandidates(
+  businessDescription: string,
+  targetRegions:       string[],
+  candidates:          Array<{ domain: string; title: string; snippet: string }>,
+  projectId:           string,
+): Promise<CompetitorRelevanceResponse> {
+  const context = `competitor-relevance:${projectId}`;
+  const raw = await callLLM(
+    COMPETITOR_RELEVANCE_SYSTEM,
+    COMPETITOR_RELEVANCE_USER(businessDescription, targetRegions, candidates),
+    context,
+    {
+      jsonSchema:          { name: 'competitor_relevance', schema: COMPETITOR_RELEVANCE_JSON_SCHEMA },
+      maxCompletionTokens: 4096,
+      reasoningEffort:     'low',
+    },
+  );
+  return parseJsonResponse<CompetitorRelevanceResponse>(raw, context);
 }

@@ -100,6 +100,7 @@ Schema:
   CRITICAL: Every single value in the JSON must be a plain string. No arrays. No objects. No nested structures anywhere.
   Use newlines within strings to separate multiple items (e.g. "item1\nitem2\nitem3").
   For pricing: write as plain text like "Free plan: basic features. Pro: $29/mo with advanced features."
+  If a value cannot be determined from the content, use an empty string. Never use null and never omit a key.
 
   Schema:
   {
@@ -293,3 +294,118 @@ Schema:
   BLOG_REWRITE_USER: (currentContent: string) =>
     `Current blog content to rewrite:\n\n${currentContent}`,
 }
+
+// ── JSON schemas (enforced by Groq constrained decoding) ───────────────────
+// Strict mode requires every property to be listed in `required` and
+// additionalProperties:false at every level. Every profile value is a plain
+// string (the prompt says so), so the schema is built from key lists — an
+// unknown value is "" rather than a missing key or null.
+function strictStringObject(keys: string[]): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: Object.fromEntries(keys.map(k => [k, { type: 'string' }])),
+    required: keys,
+    additionalProperties: false,
+  };
+}
+
+export const CUSTOMER_PROFILE_JSON_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    CompanyName:              { type: 'string' },
+    Website:                  { type: 'string' },
+    TargetRegionsOrLanguages: { type: 'string' },
+    ProductOrService: strictStringObject([
+      'WhatTheBusinessSells',
+      'KeyFeaturesAndBenefits',
+      'ProductTiersAndInclusions',
+      'FreeTrialOrDemoAvailability',
+      'TotalLifetimeValuePerClient',
+    ]),
+    TargetCustomers: strictStringObject([
+      'CustomerSegments',
+      'CustomerPainPoints',
+      'KeywordsTheyTalkAbout',
+      'TopUseCasesYouWantToRankFor',
+    ]),
+    CompetitorsAndDifferentiation: strictStringObject([
+      'MainCompetitors',
+      'Differentiation',
+      'UniqueStrengths',
+      'Proof',
+      'TradeOffsYouAccept',
+    ]),
+    SocialProofAndTrust: strictStringObject([
+      'CaseStudies',
+      'OrganicDiscussions',
+      'SocialMediaPresence',
+    ]),
+  },
+  required: [
+    'CompanyName',
+    'Website',
+    'TargetRegionsOrLanguages',
+    'ProductOrService',
+    'TargetCustomers',
+    'CompetitorsAndDifferentiation',
+    'SocialProofAndTrust',
+  ],
+  additionalProperties: false,
+};
+
+// ── Competitor relevance (region + scale) ──────────────────────────────────
+
+export const COMPETITOR_RELEVANCE_SYSTEM = `You decide whether websites that appeared in search results are realistic competitors of one specific business.
+
+Judge each candidate on three things:
+1. Offering: does it sell the same kind of product or service to the same kind of customer?
+2. Geography: does it serve the business's target regions? A site clearly aimed at a different country or market is not a competitor there.
+3. Scale: is it comparable in reach to the business? A national or global marketplace, retail chain or large brand is not a realistic competitor for a small local business.
+
+Verdicts:
+- "competitor": plausibly competes for the same customers.
+- "not_comparable": clearly a different kind of business, a different market, or a scale that makes it no realistic competitor. Use this only when the title and snippet make that reasonably clear.
+- "unsure": the title and snippet are not enough to tell. Prefer this over guessing.
+
+Judge only from the business description and each candidate's title and snippet. Do not rely on the domain name alone and do not invent facts about a site. Keep each reason to one short sentence.`;
+
+export function COMPETITOR_RELEVANCE_USER(
+  businessDescription: string,
+  targetRegions:       string[],
+  candidates:          Array<{ domain: string; title: string; snippet: string }>,
+): string {
+  const list = candidates
+    .map((c, i) => `${i + 1}. domain: ${c.domain}\n   title: ${c.title || '(none)'}\n   snippet: ${c.snippet || '(none)'}`)
+    .join('\n');
+
+  return `BUSINESS:
+${businessDescription}
+
+TARGET REGIONS: ${targetRegions.length > 0 ? targetRegions.join(', ') : 'not specified'}
+
+CANDIDATE WEBSITES (from search results):
+${list}
+
+Return one verdict for EVERY candidate, using its domain exactly as written.`;
+}
+
+export const COMPETITOR_RELEVANCE_JSON_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          domain:  { type: 'string' },
+          verdict: { type: 'string', enum: ['competitor', 'not_comparable', 'unsure'] },
+          reason:  { type: 'string' },
+        },
+        required: ['domain', 'verdict', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['verdicts'],
+  additionalProperties: false,
+};

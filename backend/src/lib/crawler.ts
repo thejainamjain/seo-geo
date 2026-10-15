@@ -68,12 +68,17 @@
 import robotsParser from 'robots-parser';
 import { CheerioCrawler, PlaywrightCrawler, RequestQueue } from 'crawlee';
 import type { CheerioAPI } from 'cheerio';
-import type { Page, Request as PWRequest, Response as PWResponse } from 'playwright';
+import type { Browser, Page, Request as PWRequest, Response as PWResponse } from 'playwright';
 import { logger } from '@/open-tele';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-export const CRAWLER_UA          = 'SEOGeoBot/1.0 (+https://yourdomain.com/bot)';
+// Set CRAWLER_BOT_URL to a page that describes your crawler (what it is, how
+// to contact you) and it is advertised in the User-Agent, as crawler etiquette
+// expects. Left unset, the UA carries no URL — never a placeholder one.
+const BOT_INFO_URL = process.env.CRAWLER_BOT_URL?.trim();
+export const CRAWLER_UA          = BOT_INFO_URL ? `SEOGeoBot/1.0 (+${BOT_INFO_URL})` : 'SEOGeoBot/1.0';
+export const CRAWLER_PRODUCT_TOKEN = 'SEOGeoBot';   // what robots.txt "User-agent:" lines match against
 export const MIN_BODY_LENGTH     = 200;        // Below → JS-rendered, needs Playwright
 export const REQUEST_DELAY_MS    = 500;        // Polite crawl delay
 export const MAX_REDIRECT_HOPS   = 3;          // More than this = CodeChange 'redirect_chain'
@@ -866,7 +871,8 @@ const MAX_RETRY_AFTER_MS  = 5_000;                  // Retry-After longer than t
  * worthwhile:
  *   temporary (worth ONE retry):  timeout, network, server_error, rate_limited
  *   permanent (never retried):    blocked (401/403/406/451/462…), not_found,
- *                                 non_html, too_many_redirects, unknown
+ *                                 non_html, too_many_redirects, robots_disallowed,
+ *                                 invalid_target, unknown
  */
 export type CrawlFailureKind =
   | 'blocked'
@@ -877,6 +883,8 @@ export type CrawlFailureKind =
   | 'network'
   | 'non_html'
   | 'too_many_redirects'
+  | 'robots_disallowed'
+  | 'invalid_target'
   | 'unknown';
 
 export interface CrawlFailure {
@@ -915,7 +923,177 @@ export function describeCrawlFailure(f: CrawlFailure): string {
     case 'network':            return 'Could not connect to this domain, so it could not be checked automatically.';
     case 'non_html':           return 'This address did not return a web page, so it could not be checked automatically.';
     case 'too_many_redirects': return 'This address redirected too many times, so it could not be checked automatically.';
+    case 'robots_disallowed':  return "This site's robots.txt asks crawlers to stay out, so it was not checked.";
+    case 'invalid_target':     return 'This address is not a public website, so it was not checked.';
     default:                   return 'This site could not be checked automatically.';
+  }
+}
+
+// ── Safety: only crawl public internet hosts ──────────────────────────────
+
+/**
+ * Rejects hosts that must never be fetched on a user's behalf (SSRF): localhost,
+ * private / link-local / loopback IPv4 ranges (incl. cloud metadata
+ * 169.254.169.254), IPv6 literals, and internal-only names. Competitor domains
+ * come from user input and SERP results, so this runs on the start URL, on
+ * every redirect hop, and on every browser sub-request.
+ *
+ * NOTE: this checks the hostname text only — it does not resolve DNS, so a
+ * public-looking name that resolves to a private address is not caught here.
+ */
+export function isPublicHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  if (!h || !h.includes('.')) return false;              // "localhost", "intranet", IPv6 "::1" …
+  if (h.includes(':') || h.startsWith('[')) return false; // IPv6 literal
+  if (/\.(localhost|local|internal|localdomain|lan|home\.arpa)$/.test(h)) return false;
+
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    if (a === 0 || a === 10 || a === 127) return false;
+    if (a === 169 && b === 254)           return false;   // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31)  return false;
+    if (a === 192 && b === 168)           return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;   // carrier-grade NAT
+    if (a >= 224)                         return false;   // multicast / reserved
+  }
+  return true;
+}
+
+// ── robots.txt for single-page crawls ──────────────────────────────────────
+
+const ROBOTS_TTL_MS      = 60 * 60 * 1000;
+const ROBOTS_TIMEOUT_MS  = 5_000;
+const ROBOTS_MAX_BYTES   = 500_000;
+const ROBOTS_CACHE_LIMIT = 500;
+
+const robotsCache = new Map<string, { isAllowed: (url: string) => boolean; expiresAt: number }>();
+
+/**
+ * Honours an explicit "Disallow" for our crawler. Like Google/Bing:
+ *   - robots.txt missing (4xx)            → everything allowed
+ *   - robots.txt present                  → rules apply
+ *   - robots.txt unreachable / 5xx / slow → we still proceed (lenient): if the
+ *     site is really down, the page fetch itself will fail and be classified.
+ * Cached per origin for an hour so one run never fetches it twice.
+ */
+async function isAllowedByRobots(url: string): Promise<boolean> {
+  let origin: string;
+  try { origin = new URL(url).origin; } catch { return true; }
+
+  const cached = robotsCache.get(origin);
+  if (cached && cached.expiresAt > Date.now()) return cached.isAllowed(url);
+
+  let isAllowed: (u: string) => boolean = () => true;
+  try {
+    const res = await fetch(`${origin}/robots.txt`, {
+      headers: { 'User-Agent': CRAWLER_UA },
+      signal:  AbortSignal.timeout(ROBOTS_TIMEOUT_MS),
+    });
+
+    let finalHost = '';
+    try { finalHost = new URL(res.url).hostname; } catch { /* keep empty */ }
+
+    if (res.ok && isPublicHostname(finalHost)) {
+      const text   = (await res.text()).slice(0, ROBOTS_MAX_BYTES);
+      const robots = robotsParser(`${origin}/robots.txt`, text);
+      isAllowed = (u: string) => robots.isAllowed(u, CRAWLER_PRODUCT_TOKEN) ?? true;
+    } else {
+      await res.body?.cancel().catch(() => {});
+    }
+  } catch (err) {
+    logger.debug('robots.txt unavailable — proceeding', {
+      origin,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  if (robotsCache.size >= ROBOTS_CACHE_LIMIT) robotsCache.clear();
+  robotsCache.set(origin, { isAllowed, expiresAt: Date.now() + ROBOTS_TTL_MS });
+  return isAllowed(url);
+}
+
+// ── Headless-browser rendering (JS-only pages) ─────────────────────────────
+
+const RENDER_TIMEOUT_MS    = 15_000;
+const RENDER_IDLE_CLOSE_MS = 20_000;
+
+let browserPromise: Promise<Browser> | null = null;
+let activeRenders = 0;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function getRenderBrowser(): Promise<Browser> {
+  if (!browserPromise) {
+    browserPromise = import('playwright')
+      .then(pw => pw.chromium.launch({
+        headless: true,
+        // same flags the site-crawl job launches Chromium with
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      }))
+      .catch(err => { browserPromise = null; throw err; });
+  }
+  return browserPromise;
+}
+
+/** Closes the shared render browser. Also closes itself after ~20s idle. */
+export async function closeRenderBrowser(): Promise<void> {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  const pending = browserPromise;
+  browserPromise = null;
+  if (pending) {
+    try { await (await pending).close(); } catch { /* already gone */ }
+  }
+}
+
+/**
+ * Loads a page in headless Chromium and returns its rendered HTML, or null if
+ * anything goes wrong (browser missing, timeout, blocked, error status) — the
+ * caller then keeps its plain-HTTP result. Images/media/fonts are not loaded,
+ * and requests to non-public hosts are aborted.
+ */
+async function renderWithBrowser(
+  url: string,
+): Promise<{ html: string; finalUrl: string; status: number } | null> {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  activeRenders++;
+
+  try {
+    const browser = await getRenderBrowser();
+    const context = await browser.newContext({ userAgent: CRAWLER_UA });
+    try {
+      const page = await context.newPage();
+      await page.route('**/*', route => {
+        const req = route.request();
+        const type = req.resourceType();
+        if (type === 'image' || type === 'media' || type === 'font') return route.abort();
+        let host = '';
+        try { host = new URL(req.url()).hostname; } catch { /* leave empty */ }
+        if (!isPublicHostname(host)) return route.abort();
+        return route.continue();
+      });
+
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: RENDER_TIMEOUT_MS });
+      const status = response?.status() ?? 200;
+      if (status >= 400) return null;                       // error / challenge page — not useful
+
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => { /* chatty sites never idle */ });
+      return { html: await page.content(), finalUrl: page.url(), status };
+    } finally {
+      await context.close().catch(() => {});
+    }
+  } catch (err) {
+    logger.warn('Browser render failed — keeping the plain-HTTP result', {
+      url,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  } finally {
+    activeRenders--;
+    if (activeRenders === 0) {
+      idleTimer = setTimeout(() => { void closeRenderBrowser(); }, RENDER_IDLE_CLOSE_MS);
+      idleTimer.unref?.();
+    }
   }
 }
 
@@ -997,6 +1175,12 @@ async function fetchPageOnce(startUrl: string, signal: AbortSignal): Promise<Fet
 
   try {
     for (let hop = 0; hop <= MAX_REDIRECT_HOPS + 1; hop++) {
+      let hopHost = '';
+      try { hopHost = new URL(currentUrl).hostname; } catch { /* leave empty */ }
+      if (!isPublicHostname(hopHost)) {
+        return { ok: false, kind: 'invalid_target', message: 'Blocked: address is not a public website' };
+      }
+
       const res = await fetch(currentUrl, {
         redirect: 'manual',
         headers:  { 'User-Agent': CRAWLER_UA, Accept: 'text/html,application/xhtml+xml' },
@@ -1058,23 +1242,45 @@ async function fetchPageOnce(startUrl: string, signal: AbortSignal): Promise<Fet
   }
 }
 
+export interface SinglePageCrawlOptions {
+  /** Use a headless browser when the page is JS-rendered. Default true. */
+  allowRender?: boolean;
+}
+
 /**
  * Crawls a single URL and returns the parsed page — or a classified failure.
  * No link-following, no Redis storage, no CodeChange detection.
  * Used by competitor-discovery.
  *
- * Strategy: Cheerio only. If the page turns out to be JS-rendered, the
- * (thin) Cheerio result is still returned with jsRendered: true so callers can
- * tell the content is incomplete.
+ * Before any request: the host must be a public internet address, and the
+ * site's robots.txt must not disallow our crawler.
+ *
+ * Strategy: plain HTTP + Cheerio first. If the page is JS-rendered (a blank
+ * shell), it is rendered once in headless Chromium and the richer result is
+ * used when the browser got more content (renderedBy: 'playwright'). If the
+ * browser is unavailable or fails, the thin Cheerio result is returned with
+ * jsRendered: true so callers can tell the content is incomplete.
  *
  * Retries: at most ONE retry, and only for temporary failures (timeout,
  * network error, 5xx, 429 with a short Retry-After). Permanent refusals
- * (403, 404, 410, 462, non-HTML, redirect loops) are never retried.
+ * (403, 404, 410, 462, robots.txt, non-HTML, redirect loops) are never retried.
  */
 export async function crawlSinglePage(
-  url:    string,
-  domain: string,
+  url:     string,
+  domain:  string,
+  options: SinglePageCrawlOptions = {},
 ): Promise<SinglePageCrawlResult> {
+  const refuse = (kind: CrawlFailureKind, message: string): SinglePageCrawlResult => ({
+    page: null,
+    jsRendered: false,
+    failure: { kind, message, attempts: 0 },
+  });
+
+  let hostname: string;
+  try { hostname = new URL(url).hostname; } catch { return refuse('invalid_target', 'Invalid URL'); }
+  if (!isPublicHostname(hostname))   return refuse('invalid_target', 'Address is not a public website');
+  if (!(await isAllowedByRobots(url))) return refuse('robots_disallowed', 'robots.txt disallows this crawler');
+
   let failure: CrawlFailure | undefined;
 
   for (let attempt = 1; attempt <= SINGLE_PAGE_MAX_ATTEMPTS; attempt++) {
@@ -1084,27 +1290,55 @@ export async function crawlSinglePage(
       const { load } = await import('cheerio');
       const $ = load(outcome.html);
       const { rawBodyText, ...extracted } = extractFromCheerio($, outcome.finalUrl, domain);
+      let jsRendered = isJsRendered(rawBodyText, $);
 
-      const jsRendered = isJsRendered(rawBodyText, $);
-      if (jsRendered) {
-        logger.debug('Single page crawl — JS-rendered, returning Cheerio partial', { url });
-      }
-
-      const page: PageData = {
-        ...extracted,
-        finalUrl:             outcome.finalUrl,
-        statusCode:           outcome.status,
-        renderedBy:           'cheerio',
+      const meta = (
+        finalUrl:   string,
+        statusCode: number,
+        sizeBytes:  number,
+        renderedBy: 'cheerio' | 'playwright',
+      ) => ({
+        finalUrl,
+        statusCode,
+        renderedBy,
         redirectChain:        outcome.chain,
         hasRedirectChain:     outcome.chain.length > 0,
         responseTimeMs:       outcome.responseTimeMs,
-        pageSizeBytes:        outcome.pageSizeBytes,
-        depth:                getUrlDepth(outcome.finalUrl),
+        pageSizeBytes:        sizeBytes,
+        depth:                getUrlDepth(finalUrl),
         inlinkCount:          0,
         fromSitemap:          false,
-        brokenLinks:          [],
+        brokenLinks:          [] as PageData['brokenLinks'],
         internalLinksChecked: 0,
+      });
+
+      let page: PageData = {
+        ...extracted,
+        ...meta(outcome.finalUrl, outcome.status, outcome.pageSizeBytes, 'cheerio'),
       };
+
+      if (jsRendered && options.allowRender !== false) {
+        const rendered = await renderWithBrowser(outcome.finalUrl);
+        if (rendered) {
+          const $r = load(rendered.html);
+          const { rawBodyText: renderedText, ...renderedExtracted } =
+            extractFromCheerio($r, rendered.finalUrl, domain);
+
+          // Only switch if the browser actually found more content.
+          if (renderedText.length > rawBodyText.length) {
+            page = {
+              ...renderedExtracted,
+              ...meta(rendered.finalUrl, rendered.status, Buffer.byteLength(rendered.html, 'utf-8'), 'playwright'),
+            };
+            jsRendered = isJsRendered(renderedText, $r);
+            logger.debug('Single page crawl — browser render used', { url, stillThin: jsRendered });
+          }
+        }
+      }
+
+      if (jsRendered) {
+        logger.debug('Single page crawl — content still thin (JS-rendered)', { url });
+      }
       return { page, jsRendered };
     }
 

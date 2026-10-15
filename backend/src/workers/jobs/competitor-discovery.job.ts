@@ -75,17 +75,35 @@ import { logger }          from '@/open-tele';
 import { Project }         from '@/models/Project';
 import { BusinessContext } from '@/models/BusinessContext';
 import type { CompetitorEntry } from '@/models/BusinessContext';
-import { searchOrganic, filterCompetitorDomains, deriveCountryCodeFromRegions } from '@/lib/serp';
+import { searchOrganic, filterCompetitorResults, deriveCountryCodeFromRegions } from '@/lib/serp';
 import type { PipelineJobData } from '../seo-pipeline.worker';
-import { crawlSinglePage, describeCrawlFailure } from '@/lib/crawler';
-import type { PageData, CrawlFailure } from '@/lib/crawler';
-import { verifyCompetitor } from '@/lib/llm';
+import { crawlSinglePage, describeCrawlFailure, isRetryableFailure } from '@/lib/crawler';
+import type { PageData, CrawlFailure, CrawlFailureKind, SinglePageCrawlResult } from '@/lib/crawler';
+import { verifyCompetitor, judgeCompetitorCandidates } from '@/lib/llm';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const MAX_COMPETITORS   = 10; // cap on SERP-discovered candidates fetched per run
 const MAX_COMPETITORS_TOTAL = 15; // cap on the final merged list (existing + SERP)
 const MAX_KEYWORD_LEN   = 60; // chars — longer queries return noisier SERP results
+
+// A domain that PERMANENTLY refused our last crawl (403/404/non-HTML/…) is not
+// crawled again for this long. Temporary failures (timeouts, 5xx) are always
+// retried on the next run.
+const CRAWL_RECHECK_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The previous run's permanent crawl failure for this entry, if still fresh. */
+function recentPermanentFailure(entry: CompetitorEntry): CrawlFailure | null {
+  if (entry.crawlStatus !== 'failed' || !entry.crawlFailureKind || !entry.crawlCheckedAt) return null;
+
+  const kind = entry.crawlFailureKind as CrawlFailureKind;
+  if (isRetryableFailure(kind)) return null;
+
+  const checkedAt = new Date(entry.crawlCheckedAt).getTime();
+  if (Number.isNaN(checkedAt) || Date.now() - checkedAt > CRAWL_RECHECK_AFTER_MS) return null;
+
+  return { kind, message: 'Known from a previous run', attempts: 0 };
+}
 
 // ── Core keyword extraction ────────────────────────────────────────────────
 
@@ -235,8 +253,10 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   });
 
   // 6. Filter: remove own domain + generic non-competitors + deduplicate
-  const allDomains  = serpResult.organicResults.map(r => r.domain);
-  const serpDomains = filterCompetitorDomains(allDomains, project.domain, MAX_COMPETITORS);
+  const allDomains     = serpResult.organicResults.map(r => r.domain);
+  const serpCandidates = filterCompetitorResults(serpResult.organicResults, project.domain, MAX_COMPETITORS);
+  const serpDomains    = serpCandidates.map(c => c.domain);
+  const serpInfo       = new Map(serpCandidates.map(c => [c.domain, c]));
 
   logger.info('SERP-discovered competitor domains after filtering', {
     projectId,
@@ -275,6 +295,26 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   const crawledPages = new Map<string, PageData>();
   const failedCrawls = new Map<string, CrawlFailure>();
 
+  // Outcome of every crawl made in THIS run — saved onto the entries so the
+  // next run can skip domains that permanently refuse us.
+  const crawlOutcomes = new Map<string, { status: 'ok' | 'failed'; kind?: string; checkedAt: Date }>();
+  const recordCrawl = (domain: string, crawl: SinglePageCrawlResult): void => {
+    crawlOutcomes.set(
+      domain,
+      crawl.page
+        ? { status: 'ok', checkedAt: new Date() }
+        : { status: 'failed', kind: crawl.failure.kind, checkedAt: new Date() },
+    );
+  };
+  const applyOutcome = (entry: CompetitorEntry): CompetitorEntry => {
+    const outcome = crawlOutcomes.get(entry.domain);
+    if (!outcome) return entry;
+    const { crawlFailureKind: _previousKind, ...rest } = entry;
+    return outcome.status === 'ok'
+      ? { ...rest, crawlStatus: 'ok', crawlCheckedAt: outcome.checkedAt }
+      : { ...rest, crawlStatus: 'failed', crawlFailureKind: outcome.kind, crawlCheckedAt: outcome.checkedAt };
+  };
+
   // 9. Merge in SERP results. A SERP domain ranking for the core keyword
   //    IS its own verification — no LLM check needed for these. If a SERP
   //    domain happens to match an existing (previously unverified) entry,
@@ -283,6 +323,11 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   for (const domain of serpDomains) {
     const key = domain.replace(/^www\./, '').toLowerCase();
     const existing = merged.get(key);
+    const candidate = serpInfo.get(key);
+    const serpFields = {
+      serpTitle:   candidate?.title   ?? '',
+      serpSnippet: candidate?.snippet ?? '',
+    };
 
     if (!existing) {
       merged.set(key, {
@@ -290,22 +335,88 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
         source:   'serp',
         verified: true,
         addedAt:  new Date(),
+        ...serpFields,
       });
     } else if (!existing.verified) {
       merged.set(key, {
         ...existing,
         verified:              true,
         verificationReasoning: `Confirmed via live SERP ranking for "${coreKeyword}".`,
+        ...serpFields,
+      });
+    } else {
+      // Already confirmed — only refresh what the SERP currently says.
+      merged.set(key, { ...existing, ...serpFields });
+    }
+  }
+
+  // Seed the failure cache from earlier runs: domains that permanently
+  // refused us recently are not crawled again (here or in step 13).
+  for (const entry of merged.values()) {
+    const prior = recentPermanentFailure(entry);
+    if (prior) failedCrawls.set(entry.domain, prior);
+  }
+
+  // 9b. Judge the SERP-found entries for region / scale fit with ONE batched
+  //     LLM call (titles + snippets only, no crawling). Ranking for a keyword
+  //     doesn't make a national or global giant a realistic competitor for a
+  //     small local business. Only a clear "not_comparable" verdict demotes an
+  //     entry (verified:false + reason): nothing is deleted, entries the user
+  //     typed in are never judged, and a failure here is non-fatal.
+  const judgeable = serpCandidates.filter(c => {
+    const e = merged.get(c.domain);
+    return e !== undefined && e.source !== 'user';
+  });
+
+  if (judgeable.length > 0) {
+    try {
+      const result  = await judgeCompetitorCandidates(
+        businessDescription,
+        bc.company?.targetRegions ?? [],
+        judgeable,
+        projectId,
+      );
+      const allowed = new Set(judgeable.map(c => c.domain));
+      let demoted = 0;
+
+      for (const v of result.verdicts ?? []) {
+        const key   = (v.domain ?? '').toLowerCase().replace(/^www\./, '');
+        const entry = merged.get(key);
+        if (!entry || !allowed.has(key)) continue;
+
+        const reason = (v.reason ?? '').trim();
+        if (v.verdict === 'not_comparable') {
+          merged.set(key, {
+            ...entry,
+            verified:              false,
+            relevance:             'not_comparable',
+            verificationReasoning: reason
+              ? `Unlikely to compete with this business: ${reason}`
+              : 'Unlikely to compete with this business (different scale or market).',
+          });
+          demoted++;
+        } else {
+          merged.set(key, { ...entry, relevance: v.verdict === 'competitor' ? 'competitor' : 'unsure' });
+        }
+      }
+
+      logger.info('Competitor relevance check complete', { projectId, judged: judgeable.length, demoted });
+    } catch (err) {
+      logger.warn('Competitor relevance check failed — keeping SERP candidates as found', {
+        projectId,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
-    // If existing && existing.verified — already confirmed, leave as-is.
   }
 
   // 10. Verify remaining unverified entries (user-entered or AI-drafted,
   //     not confirmed by the SERP pass above) via crawl + LLM judgment.
   //     Non-fatal per entry — a failed check stays verified:false with a
-  //     reason, never silently dropped.
-  const stillUnverified = [...merged.values()].filter(e => !e.verified);
+  //     reason, never silently dropped. Entries just judged "not_comparable"
+  //     are skipped: no point crawling or re-verifying them.
+  const stillUnverified = [...merged.values()].filter(
+    e => !e.verified && e.relevance !== 'not_comparable',
+  );
 
   logger.info('Verifying remaining unverified competitor entries', {
     projectId,
@@ -315,7 +426,18 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   for (const entry of stillUnverified) {
     const url = `https://${entry.domain}`;
     try {
+      const knownFailure = failedCrawls.get(entry.domain);
+      if (knownFailure) {
+        // Refused us permanently in a recent run — don't hit it again yet.
+        merged.set(entry.domain, {
+          ...entry,
+          verificationReasoning: describeCrawlFailure(knownFailure),
+        });
+        continue;
+      }
+
       const crawl = await crawlSinglePage(url, entry.domain);
+      recordCrawl(entry.domain, crawl);
       if (!crawl.page) {
         failedCrawls.set(entry.domain, crawl.failure);
         merged.set(entry.domain, {
@@ -373,7 +495,8 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
   const finalEntries = [
     ...allEntries.filter(e => e.verified),
     ...allEntries.filter(e => !e.verified),
-  ].slice(0, MAX_COMPETITORS_TOTAL);
+  ].slice(0, MAX_COMPETITORS_TOTAL).map(applyOutcome);
+  const outcomesSavedAtStep12 = crawlOutcomes.size;
 
   logger.info('Competitor list merged', {
     projectId,
@@ -427,26 +550,23 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
       textSnippet: string;  // first 500 chars — enough for LLM context
       hasSchema:   boolean;
       wordCount:   number;
+      source:      'crawl' | 'serp_snippet';
     }> = [];
 
     for (const entry of finalEntries) {
       const competitorDomain = entry.domain;
       try {
-        // Already failed earlier in THIS run (step 10) — don't hit it again.
-        const earlierFailure = failedCrawls.get(competitorDomain);
-        if (earlierFailure) {
-          logger.debug('Skipping competitor insight crawl — failed earlier in this run', {
-            projectId,
-            competitorDomain,
-            kind: earlierFailure.kind,
-          });
-          continue;
-        }
+        // Judged not a realistic competitor — don't spend a crawl on it.
+        if (entry.relevance === 'not_comparable') continue;
 
         let page: PageData | null = crawledPages.get(competitorDomain) ?? null;
-        if (!page) {
+
+        // Skip the crawl if this domain already failed in THIS run (step 10)
+        // or permanently refused us in a recent earlier run.
+        if (!page && !failedCrawls.has(competitorDomain)) {
           const url = `https://${competitorDomain}`;
           const crawl = await crawlSinglePage(url, competitorDomain);
+          recordCrawl(competitorDomain, crawl);
           page = crawl.page;
           if (!crawl.page) failedCrawls.set(competitorDomain, crawl.failure);
           // Polite delay only when we actually crawl (not for cache hits)
@@ -454,11 +574,31 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
         }
 
         if (!page) {
+          // Couldn't read the site itself. If the SERP gave us a title and
+          // snippet, use those so this competitor still contributes context.
+          const title   = entry.serpTitle?.trim()   ?? '';
+          const snippet = entry.serpSnippet?.trim() ?? '';
+
           logger.debug('Competitor page could not be crawled', {
             projectId,
             competitorDomain,
-            kind: failedCrawls.get(competitorDomain)?.kind,
+            kind:             failedCrawls.get(competitorDomain)?.kind,
+            usingSerpSnippet: Boolean(title || snippet),
           });
+
+          if (title || snippet) {
+            competitorInsights.push({
+              domain:      competitorDomain,
+              title,
+              description: snippet,
+              h1:          null,
+              h2s:         [],
+              textSnippet: snippet.slice(0, 500),
+              hasSchema:   false,   // placeholder — not measured
+              wordCount:   0,       // placeholder — not measured
+              source:      'serp_snippet',
+            });
+          }
           continue;
         }
 
@@ -471,6 +611,7 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
           textSnippet: page.textContent.slice(0, 500),
           hasSchema:   page.hasSchema,
           wordCount:   page.wordCount,
+          source:      'crawl',
         });
 
       } catch (err) {
@@ -480,6 +621,16 @@ export async function runCompetitorDiscoveryJob(job: Job<PipelineJobData>): Prom
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+
+    // Step 13 may have crawled domains step 10 didn't (SERP-verified ones) —
+    // save those outcomes onto the entries too.
+    if (crawlOutcomes.size !== outcomesSavedAtStep12) {
+      await BusinessContext.findOneAndUpdate(
+        { projectId },
+        { $set: { 'competition.mainCompetitors': finalEntries.map(applyOutcome) } },
+        { runValidators: false },
+      );
     }
 
     if (competitorInsights.length > 0) {

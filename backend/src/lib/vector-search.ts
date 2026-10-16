@@ -42,7 +42,6 @@
 import mongoose from 'mongoose';
 import { ProjectLearningChunk } from '../models';
 import { embedText } from './embeddings';
-import { TaskType } from '@google/generative-ai';
 import { logger } from '../open-tele';
 
 const VECTOR_INDEX_NAME = 'chunk_vector_index';
@@ -52,7 +51,14 @@ const VECTOR_CANDIDATES = 100; // numCandidates for $vectorSearch — over-fetch
 const HYBRID_TOP_N      = 20;  // each of vector/text search contributes up to this many to RRF
 const RRF_K              = 60;  // standard RRF constant — prevents any single outlier rank from dominating
 
-const SIMILARITY_THRESHOLD = 0.75; // cosine — below this, a chunk isn't relevant enough to inject (quality standard from the architecture doc)
+// cosine — below this, a chunk isn't relevant enough to inject. 0.75 was tuned
+// for the previous embedding model; similarity scores are NOT comparable across
+// models, so after switching to mistral-embed check the "Vector search scores"
+// debug log on a few real queries and tune it with VECTOR_SIMILARITY_THRESHOLD.
+function similarityThreshold(): number {
+  const parsed = Number.parseFloat(process.env.VECTOR_SIMILARITY_THRESHOLD ?? '');
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0.75;
+}
 
 export interface RetrievedChunk {
   _id:         string;
@@ -109,8 +115,16 @@ async function runVectorSearch(
       },
     ]);
 
+    const threshold = similarityThreshold();
+    logger.debug('Vector search scores', {
+      projectId,
+      threshold,
+      returned: results.length,
+      topScores: results.slice(0, 5).map(r => Number(r.score?.toFixed?.(3) ?? r.score)),
+    });
+
     return results
-      .filter(r => r.score >= SIMILARITY_THRESHOLD)
+      .filter(r => r.score >= threshold)
       .map(r => ({ _id: String(r._id), score: r.score }));
   } catch (err) {
     logger.warn('Vector search failed — degraded mode (no vector results)', {
@@ -214,7 +228,7 @@ export async function hybridSearch(options: HybridSearchOptions): Promise<Retrie
 
   let queryVector: number[];
   try {
-    queryVector = await embedText(queryText, TaskType.RETRIEVAL_QUERY);
+    queryVector = await embedText(queryText, 'query');
   } catch (err) {
     logger.warn('Query embedding failed — falling back to text-only search', {
       projectId,

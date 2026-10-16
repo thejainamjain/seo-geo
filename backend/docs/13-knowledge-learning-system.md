@@ -88,7 +88,7 @@ breaks, RAG context is just absent).
     {
       "type": "vector",
       "path": "embedding",
-      "numDimensions": 768,
+      "numDimensions": 1024,
       "similarity": "cosine"
     },
     { "type": "filter", "path": "projectId" },

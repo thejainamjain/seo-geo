@@ -43,9 +43,9 @@ import type { Keyword, Blog } from '@/types/api';
  */
 
 function StatusCell({
-  keyword, blog, projectId,
+  keyword, blog, projectId, autoPublishActive,
 }: {
-  keyword: Keyword; blog: Blog | undefined; projectId: string;
+  keyword: Keyword; blog: Blog | undefined; projectId: string; autoPublishActive: boolean;
 }) {
   if (!blog) {
     return <Badge variant="outline" className="text-xs">Upcoming</Badge>;
@@ -70,7 +70,8 @@ function StatusCell({
   return (
     <div className="flex items-center gap-2">
       <Badge variant="secondary" className="text-xs capitalize">
-        {blog.status === 'ready' ? 'Scheduled' : blog.status}
+        {/* 'Scheduled' only when RankAI can actually publish it later (CMS connected + auto-publish on) */}
+        {blog.status === 'ready' ? (autoPublishActive ? 'Scheduled' : 'Ready') : blog.status}
       </Badge>
       <Link
         href={`/projects/${projectId}/blogs/${blog._id}`}
@@ -85,9 +86,9 @@ function StatusCell({
 }
 
 function KeywordsTable({
-  keywords, blogByKeywordId, projectId,
+  keywords, blogByKeywordId, projectId, autoPublishActive,
 }: {
-  keywords: Keyword[]; blogByKeywordId: Map<string, Blog>; projectId: string;
+  keywords: Keyword[]; blogByKeywordId: Map<string, Blog>; projectId: string; autoPublishActive: boolean;
 }) {
   if (keywords.length === 0) return null;
 
@@ -120,7 +121,7 @@ function KeywordsTable({
                 {blog?.title ?? <span className="italic">TBD</span>}
               </td>
               <td className="py-3">
-                <StatusCell keyword={kw} blog={blog} projectId={projectId} />
+                <StatusCell keyword={kw} blog={blog} projectId={projectId} autoPublishActive={autoPublishActive} />
               </td>
             </tr>
           );
@@ -147,7 +148,7 @@ function AddKeywordDialog({ projectId, onClose }: { projectId: string; onClose: 
           <DialogTitle>Add Keyword</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground mb-3">
-          SearchPilot checks real search volume and relevance to your business before adding it —
+          RankAI checks real search volume and relevance to your business before adding it —
           this may take a few seconds.
         </p>
         <Input
@@ -197,7 +198,9 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
   const publishedCount = (blogs ?? []).filter(b => b.status === 'published').length;
   const readyBlogCount = (blogs ?? []).filter(b => b.status === 'ready').length;
 
-  const cmsIncomplete = !cmsLoading && (!cmsConfig?.cmsType || !cmsConfig?.autoPublish);
+  // A 'ready' post is only "scheduled" when a CMS is connected AND auto-publish is on.
+  const autoPublishActive = !!cmsConfig?.cmsType && !!cmsConfig?.autoPublish;
+  const cmsIncomplete     = !cmsLoading && !autoPublishActive;
 
   return (
     <div className="p-8">
@@ -209,7 +212,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
           <div>
             <h1 className="text-xl font-semibold">Keywords & Content Strategy</h1>
             <p className="text-sm text-muted-foreground">
-              SearchPilot identifies high-impact keywords to drive your content strategy
+              RankAI identifies high-impact keywords to drive your content strategy
             </p>
           </div>
         </div>
@@ -229,7 +232,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             </div>
             <p className="text-2xl font-semibold">{(keywords ?? []).length}</p>
             <p className="text-sm">Keywords</p>
-            <p className="text-xs text-muted-foreground mt-1">Every month, SearchPilot researches for more</p>
+            <p className="text-xs text-muted-foreground mt-1">Every month, RankAI researches for more</p>
           </div>
           <div className="border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -237,15 +240,19 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             </div>
             <p className="text-2xl font-semibold">{(blogs ?? []).length}</p>
             <p className="text-sm">Pages Created</p>
-            <p className="text-xs text-muted-foreground mt-1">SearchPilot researches and writes 2 pages every week</p>
+            <p className="text-xs text-muted-foreground mt-1">RankAI researches and writes 2 pages every week</p>
           </div>
           <div className="border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
               <Clock className="h-4 w-4 text-blue-400" />
             </div>
             <p className="text-2xl font-semibold">{readyBlogCount}</p>
-            <p className="text-sm">Pages Scheduled</p>
-            <p className="text-xs text-muted-foreground mt-1">SearchPilot publishes up to one post daily (Mon–Sat)</p>
+            <p className="text-sm">{autoPublishActive ? 'Pages Scheduled' : 'Pages Ready'}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {autoPublishActive
+                ? 'RankAI publishes up to one post daily (Mon–Sat)'
+                : 'Written and waiting. Connect your CMS to publish them automatically'}
+            </p>
           </div>
         </div>
       )}
@@ -257,7 +264,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             <div>
               <p className="text-sm font-medium">Your CMS config is not set up completely</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                SearchPilot cannot schedule automatic publish to your site. Complete your CMS integration in
+                RankAI cannot schedule automatic publish to your site. Complete your CMS integration in
                 settings to enable auto-publish.
               </p>
             </div>
@@ -270,7 +277,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
 
       <Tabs defaultValue="ready">
         <TabsList className="mb-4">
-          <TabsTrigger value="ready">Ready {!isLoading ? `(${ready.length})` : ''}</TabsTrigger>
+          <TabsTrigger value="ready">Due now {!isLoading ? `(${ready.length})` : ''}</TabsTrigger>
           <TabsTrigger value="upcoming">Upcoming {!isLoading ? `(${upcoming.length})` : ''}</TabsTrigger>
         </TabsList>
 
@@ -278,11 +285,11 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
           {isLoading && <Skeleton className="h-96 w-full" />}
           {!isLoading && ready.length === 0 && (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              No keywords ready yet. Complete the pipeline to generate your content calendar.
+              No keywords are due yet. Complete the pipeline to generate your content calendar.
             </p>
           )}
           {!isLoading && ready.length > 0 && (
-            <KeywordsTable keywords={ready} blogByKeywordId={blogByKeywordId} projectId={projectId} />
+            <KeywordsTable keywords={ready} blogByKeywordId={blogByKeywordId} projectId={projectId} autoPublishActive={autoPublishActive} />
           )}
         </TabsContent>
 
@@ -294,7 +301,7 @@ export default function KeywordsPage({ params }: { params: Promise<{ projectId: 
             </p>
           )}
           {!isLoading && upcoming.length > 0 && (
-            <KeywordsTable keywords={upcoming} blogByKeywordId={blogByKeywordId} projectId={projectId} />
+            <KeywordsTable keywords={upcoming} blogByKeywordId={blogByKeywordId} projectId={projectId} autoPublishActive={autoPublishActive} />
           )}
         </TabsContent>
       </Tabs>

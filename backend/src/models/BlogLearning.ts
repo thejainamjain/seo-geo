@@ -14,7 +14,7 @@
  * This is what makes the content loop self-improving over time.
  *
  * FLOW: Blog published → GSC collects data → weekly job runs →
- *       Gemini analyzes GSC snapshot + content → creates BlogLearning docs →
+ *       An LLM analyzes GSC snapshot + content → creates BlogLearning docs →
  *       BlogOptimization job uses these to rewrite the blog
  */
 
@@ -220,7 +220,7 @@ export const BlogOptimization = mongoose.model<IBlogOptimization>(
  *                      separately from brand-knowledge chunks at retrieval
  *                      time (see lib/vector-search.ts).
  *
- * EMBEDDING MODEL: Gemini text-embedding-004 (768 dimensions, free with Gemini key)
+ * EMBEDDING MODEL: Mistral mistral-embed (1024 dimensions) — see lib/embeddings.ts
  */
 
 export interface IProjectLearningChunk extends Document {
@@ -239,7 +239,7 @@ export interface IProjectLearningChunk extends Document {
   embeddingInputText: string;
 
   /**
-   * The vector embedding — 768 dimensions from Gemini text-embedding-004.
+   * The vector embedding — 1024 dimensions from Mistral mistral-embed.
    * Used for Atlas Vector Search similarity queries.
    * NOTE: Do NOT load this field in normal queries — use projection to exclude it.
    *       It's large and only needed by the vector search pipeline.
@@ -322,7 +322,7 @@ ProjectLearningChunkSchema.index({ projectId: 1, sourceType: 1 });
 // (cannot be done in code — Atlas Search indexes aren't part of the
 // mongoose/Node driver API). See docs/13-knowledge-learning-system.md for
 // the exact JSON to paste in. Index names referenced by lib/vector-search.ts:
-//   "chunk_vector_index" — $vectorSearch, field: embedding, dims: 768, cosine
+//   "chunk_vector_index" — $vectorSearch, field: embedding, dims: 1024, cosine
 //   "chunk_text_index"   — $search (BM25), fields: content, keyword
 
 export const ProjectLearningChunk = mongoose.model<IProjectLearningChunk>(

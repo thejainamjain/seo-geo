@@ -50,8 +50,5 @@ export const JWT_EXPIRES_IN = "7d";
 //   BLOG_LEARNING: "blog_learning",
 // } as const;
 
-// Gemini models
-export const GEMINI_MODELS = {
-  PRIMARY: "gemini-2.0-flash",      // Fast, free tier — main generation model
-  EMBEDDING: "text-embedding-004",  // 768 dimensions — for vector search
-} as const;
+// Model names live next to the code that uses them (lib/llm.ts, lib/embeddings.ts)
+// and can be overridden with MISTRAL_MODEL / MISTRAL_BLOG_MODEL / GROQ_MODEL.

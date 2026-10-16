@@ -152,18 +152,16 @@ export const JOB_RETRY_CONFIG: Record<string, { attempts: number; backoffDelay: 
  * which job triggered it. This is the single source of truth; jobs do NOT
  * need (and should not add) their own sleep-between-calls logic on top of
  * it — that used to exist here as LLM_RATE_LIMIT.DELAY_MS and was both
- * redundant AND wrong: it was tuned for Gemini's free-tier 15 RPM even
- * after Groq became the primary provider (28 RPM), silently running the
- * whole pipeline ~2x slower than necessary. Removed — see
- * docs/10-llm-provider-flip.md for the provider-flip history.
+ * redundant AND wrong. Removed — see docs/10-llm-provider-flip.md for the
+ * provider-flip history.
  *
- * GROQ_RPM / GEMINI_RPM below are the actual numbers used by
- * waitForRateLimit() (imported from here instead of being duplicated as
- * inline literals). Free-tier limits, minus a small safety buffer.
+ * GROQ_RPM below is the actual number used by waitForRateLimit() (imported
+ * from here instead of being duplicated as an inline literal): Groq's free-tier
+ * limit minus a small safety buffer. Mistral is limited differently (1 request
+ * per second) by the gate in lib/mistral.ts, not by this table.
  */
 export const LLM_RATE_LIMIT = {
-  GROQ_RPM:   28, // Groq free tier: 30 RPM, buffer of 2
-  GEMINI_RPM: 14, // Gemini free tier: 15 RPM, buffer of 1
+  GROQ_RPM: 28, // Groq free tier: 30 RPM, buffer of 2
 } as const
 
 /**

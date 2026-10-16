@@ -57,8 +57,8 @@ const config = {
       process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318/v1/traces",
   },
 
-  gemini: {
-    apiKey: () => require_env("GEMINI_API_KEY"),
+  mistral: {
+    apiKey: () => require_env("MISTRAL_API_KEY"),
   },
 
   groq: {

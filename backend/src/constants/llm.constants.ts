@@ -1,6 +1,14 @@
 export const PROMPTS = {
-  BLOG_GENERATION_SYSTEM: (customerProfile: string, keyword: string, sourceAnalysis: string, knowledgeChunks: string, contactUrl: string) =>
-    `You are an expert content writer producing SEO-optimized blog posts. Write in HTML.
+  BLOG_GENERATION_SYSTEM: (customerProfile: string, keyword: string, sourceAnalysis: string, knowledgeChunks: string, contactUrl: string) => {
+    // The model has no clock — without this it fills years in from its
+    // training data (titles came out as "(2024)"). Computed per call.
+    const now   = new Date();
+    const year  = now.getFullYear();
+    const today = now.toISOString().slice(0, 10);
+
+    return `You are an expert content writer producing SEO-optimized blog posts. Write the article body in HTML.
+
+  Today's date: ${today}. The current year is ${year}. Use ${year} for anything date-related. Never present an earlier year as the current year.
 
   Business context: ${customerProfile}
   Target keyword: ${keyword}
@@ -8,13 +16,13 @@ export const PROMPTS = {
   Brand knowledge: ${knowledgeChunks}
 
   Rules:
-  - Title format: "[Number] Best [Keyword] in [Location] ([Year])"
+  - Title: write a natural, specific title a real person would want to click, ideally 50-65 characters. Build it around the main topic of the target keyword and mention the location only where it reads naturally. Keywords are often long or ungrammatical, so rephrase them instead of pasting them in word for word. A numbered list title (for example "7 Best ...") is fine when the post really is a list. For "best", "top", comparison or guide-style titles, end the title with (${year}). Never use any other year.
   - Start with <h1>{title}</h1>
   - Then <h2>TL;DR</h2> summary
   - Then <hr> and intro paragraph with CTA link to ${contactUrl}
   - Then main sections with h2/h3 headings, lists, local pricing
   - Include at least 2 citations with rel="nofollow"
-  - Minimum 1500 words
+  - Length: 1,500 to 2,000 words
   - Do NOT mention AI
 
   Return ONLY valid JSON:
@@ -22,9 +30,9 @@ export const PROMPTS = {
     "title": "string",
     "slug": "url-friendly-slug",
     "description": "meta description 150-160 chars",
-    "content": "<full HTML>",
-    "schema": { "@context": "https://schema.org", "@type": "Article" }
-  }`,
+    "content": "<full HTML>"
+  }`;
+  },
 
   BLOG_GENERATION_USER: (keyword: string) =>
     `Write a comprehensive SEO blog post targeting the keyword: "${keyword}"`,
@@ -407,5 +415,21 @@ export const COMPETITOR_RELEVANCE_JSON_SCHEMA: Record<string, unknown> = {
     },
   },
   required: ['verdicts'],
+  additionalProperties: false,
+};
+
+// ── Blog generation JSON schema ────────────────────────────────────────────
+// The article schema (JSON-LD) is deliberately NOT requested from the model:
+// it is injected into every CMS post, so lib/llm.ts builds it in code from the
+// title and description instead of trusting free-form model output.
+export const BLOG_JSON_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    title:       { type: 'string' },
+    slug:        { type: 'string' },
+    description: { type: 'string' },
+    content:     { type: 'string' },
+  },
+  required: ['title', 'slug', 'description', 'content'],
   additionalProperties: false,
 };

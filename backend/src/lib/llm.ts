@@ -2,8 +2,9 @@
  * lib/llm.ts
  *
  * WHAT: LLM wrapper for all pipeline LLM calls.
- *       Groq is primary; Gemini is the fallback (used only when Groq
- *       rate-limits, so it's still one BullMQ attempt, not a wasted one).
+ *       Groq is the default provider and Mistral the fallback (used when the
+ *       first provider rate-limits or is unavailable, so it's still one BullMQ
+ *       attempt, not a wasted one). Blog generation prefers Mistral.
  *
  * DESIGN:
  *   - Single exported function per use case (not a generic call — each
@@ -18,13 +19,14 @@
  *   1. Add typed interface for the expected JSON response
  *   2. Add a function that calls callLLM() with the right prompts
  *   3. Export it
- *   Never add raw Groq/Gemini calls outside this file.
+ *   Never add raw Groq/Mistral calls outside this file (and lib/embeddings.ts).
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { mistralPost, isMistralConfigured, MistralApiError } from './mistral';
 import {
   PROMPTS,
   CUSTOMER_PROFILE_JSON_SCHEMA,
+  BLOG_JSON_SCHEMA,
   COMPETITOR_RELEVANCE_SYSTEM,
   COMPETITOR_RELEVANCE_USER,
   COMPETITOR_RELEVANCE_JSON_SCHEMA,
@@ -37,7 +39,10 @@ import { LLM_RATE_LIMIT } from '../constants/seo-pipeline.constants';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+// Mistral models. Blogs use the larger model; everything else that lands on
+// Mistral (as a fallback) uses the smaller, cheaper one. Override with env.
+const MISTRAL_DEFAULT_MODEL      = 'mistral-small-latest';
+const MISTRAL_BLOG_DEFAULT_MODEL = 'mistral-large-latest';
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b';
 
 // Groq's compound system — does real, server-side live web search (via
@@ -49,22 +54,6 @@ const GROQ_MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b';
 // version (docs also reference 'groq/compound' as a newer alias; sticking
 // to the type-checked literal here).
 const GROQ_COMPOUND_MODEL = 'compound-beta';
-
-// ── Gemini client (lazy singleton) ────────────────────────────────────────
-// Lazy so we don't crash at import time if key is missing —
-// crash happens at first call with a clear error message.
-
-let _genAI: GoogleGenerativeAI | null = null;
-
-
-export function getGenAI(): GoogleGenerativeAI {
-  if (!_genAI) {
-    const apiKey = config.gemini.apiKey();
-    if (!apiKey) throw new Error('GEMINI_API_KEY is not defined in environment');
-    _genAI = new GoogleGenerativeAI(apiKey);
-  }
-  return _genAI;
-}
 
 let _groq: Groq | null = null;
 
@@ -79,18 +68,19 @@ function getGroq(): Groq {
 
 // ── Global LLM rate limiter ────────────────────────────────────────────────
 /**
- * Enforces a global 14 RPM ceiling across ALL worker processes.
+ * Enforces a global requests-per-minute ceiling for Groq across ALL worker processes.
+ * (Mistral has its own 1-request-per-second gate in lib/mistral.ts.)
  * Uses a Redis sliding window counter keyed by current minute.
  * Blocks (polls every 2s) until a slot is available.
  *
  * Key: llm:rpm:{minute} — auto-expires after 60s, no cleanup needed.
- * Limit: 14 (not 15) — 1 call buffer for safety.
+ * Limit: LLM_RATE_LIMIT.GROQ_RPM, a little under Groq's own limit.
  *
- * Redis commands per Gemini call: 2 (INCR + EXPIRE on first call per minute).
+ * Redis commands per call: 2 (INCR + EXPIRE on first call per minute).
  */
-async function waitForRateLimit(provider: 'gemini' | 'groq'): Promise<void> {
+async function waitForRateLimit(provider: 'groq'): Promise<void> {
   const redis = getRedis();
-  const MAX_RPM = provider === 'groq' ? LLM_RATE_LIMIT.GROQ_RPM : LLM_RATE_LIMIT.GEMINI_RPM;
+  const MAX_RPM = LLM_RATE_LIMIT.GROQ_RPM;
 
   while (true) {
     const minute = Math.floor(Date.now() / 60_000);
@@ -109,7 +99,7 @@ async function waitForRateLimit(provider: 'gemini' | 'groq'): Promise<void> {
 
 // ── JSON extraction ────────────────────────────────────────────────────────
 /**
- * Gemini sometimes wraps JSON in ```json ... ``` fences despite instructions.
+ * Models sometimes wrap JSON in ```json ... ``` fences despite instructions.
  * This strips fences and extracts the first valid JSON object or array.
  *
  * Strategy:
@@ -204,72 +194,138 @@ function parseJsonResponse<T>(raw: string, context: string): T {
   return extractJson<T>(raw, context);
 }
 
-// ── Core Gemini call (fallback provider) ──────────────────────────────────
+// ── Core Mistral call ─────────────────────────────────────────────────────
+
+export type LlmProvider = 'groq' | 'mistral';
+
+type MistralJsonMode = 'schema' | 'json_object' | 'none';
+
+interface MistralChatResponse {
+  choices?: Array<{
+    message?:       { content?: string | Array<{ type?: string; text?: string }> };
+    finish_reason?: string;
+  }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
 /**
- * Direct Gemini call — no fallback logic inside. callLLM() decides whether
- * to fall back here; this function just calls Gemini and throws on failure.
+ * Direct Mistral call — no provider fallback inside (callLLM decides that).
+ * Same JSON strategy as Groq: schema-enforced when a schema is given, relaxed
+ * to json_object / plain only if Mistral rejects the stricter request (400/422).
+ * Rate limits and server errors throw.
  */
-async function callGeminiDirect(
+async function callMistralDirect(
   systemPrompt: string,
   userPrompt:   string,
-  context:      string, // for logging — e.g. "business-profile:projectId"
+  context:      string,
+  options:      LlmCallOptions = {},
 ): Promise<string> {
   const startedAt = Date.now();
-  // Enforce global RPM limit across all workers
-  await waitForRateLimit('gemini')
-  logger.debug('Gemini call started', {
+  const model =
+    options.mistralModel?.trim() || process.env.MISTRAL_MODEL?.trim() || MISTRAL_DEFAULT_MODEL;
+
+  logger.debug('Mistral call started', {
     context,
-    model:            GEMINI_MODEL,
-    systemPromptLen:  systemPrompt.length,
-    userPromptLen:    userPrompt.length,
+    model,
+    systemPromptLen: systemPrompt.length,
+    userPromptLen:   userPrompt.length,
+    schemaEnforced:  !!options.jsonSchema,
   });
 
-  try {
-    const genAI = getGenAI();
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
-      systemInstruction: systemPrompt,
-    });
+  let usage: MistralChatResponse['usage'];
 
-    const result = await model.generateContent(userPrompt);
-    const response = result.response;
+  const run = async (mode: MistralJsonMode): Promise<string> => {
+    let responseFormat: Record<string, unknown> | undefined;
+    if (mode === 'schema' && options.jsonSchema) {
+      responseFormat = {
+        type: 'json_schema',
+        json_schema: {
+          name:   options.jsonSchema.name,
+          strict: true,
+          schema: options.jsonSchema.schema,
+        },
+      };
+    } else if (mode === 'json_object') {
+      responseFormat = { type: 'json_object' };
+    }
 
-    // Check for blocked content (Gemini safety filters)
-    const finishReason = response.candidates?.[0]?.finishReason;
-    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt   },
+      ],
+      temperature: 0.3,
+      max_tokens:  options.maxCompletionTokens ?? 8192,
+      ...(responseFormat ? { response_format: responseFormat } : {}),
+    };
+
+    const res    = await mistralPost<MistralChatResponse>('/chat/completions', body, { context });
+    const choice = res.choices?.[0];
+
+    // Cut off at the token limit → incomplete JSON. Say so plainly.
+    if (choice?.finish_reason === 'length') {
       throw new Error(
-        `Gemini blocked response. Finish reason: ${finishReason}. Context: ${context}`
+        `Mistral output was cut off at the token limit (max_tokens ${body.max_tokens}, ` +
+        `completion tokens used ${res.usage?.completion_tokens ?? 'unknown'}). Context: ${context}`,
       );
     }
 
-    const text = response.text();
+    usage = res.usage;
+    const content = choice?.message?.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content))      return content.map(part => part.text ?? '').join('');
+    return '';
+  };
 
-    if (!text || text.trim().length === 0) {
-      throw new Error(`Gemini returned empty response. Context: ${context}`);
+  const chain: MistralJsonMode[] = options.jsonSchema
+    ? ['schema', 'json_object', 'none']
+    : ['json_object', 'none'];
+
+  try {
+    let text = '';
+    for (let i = 0; i < chain.length; i++) {
+      try {
+        text = await run(chain[i]);
+        break;
+      } catch (err) {
+        const requestRejected =
+          err instanceof MistralApiError && (err.status === 400 || err.status === 422);
+        if (!requestRejected || i === chain.length - 1) throw err;
+
+        logger.warn(`Mistral ${chain[i]} mode rejected — retrying with ${chain[i + 1]} mode`, {
+          context,
+          error: (err as Error).message.slice(0, 300),
+        });
+      }
     }
 
-    const durationMs = Date.now() - startedAt;
-    logger.info('Gemini call completed', {
+    if (!text || text.trim().length === 0) {
+      throw new Error(`Mistral returned empty response. Context: ${context}`);
+    }
+
+    logger.info('Mistral call completed', {
       context,
-      model:       GEMINI_MODEL,
-      durationMs,
-      outputLen:   text.length,
-      finishReason: finishReason ?? 'STOP',
+      model,
+      durationMs:       Date.now() - startedAt,
+      outputLen:        text.length,
+      promptTokens:     usage?.prompt_tokens,
+      completionTokens: usage?.completion_tokens,
     });
 
     return text;
 
   } catch (err) {
-    const durationMs = Date.now() - startedAt;
-    const message     = err instanceof Error ? err.message : String(err);
-    const isRateLimit   = message.includes('429') || message.toLowerCase().includes('rate limit');
-    const isServerError = message.includes('500') || message.includes('503');
-
+    const message = err instanceof Error ? err.message : String(err);
     logger.error(
       err instanceof Error ? err : new Error(message),
-      { context, model: GEMINI_MODEL, durationMs, isRateLimit, isServerError },
+      {
+        context,
+        model,
+        durationMs:  Date.now() - startedAt,
+        isRateLimit: err instanceof MistralApiError && err.status === 429,
+      },
     );
-
     throw err;
   }
 }
@@ -277,7 +333,7 @@ async function callGeminiDirect(
 // ── Core Groq call (primary provider) ─────────────────────────────────────
 /**
  * Direct Groq call — no fallback logic inside. callLLM() decides whether
- * to fall back to Gemini; this function just calls Groq and throws on failure.
+ * to fall back to Mistral; this function just calls Groq and throws on failure.
  */
 /**
  * Per-call options. Defaults reproduce the previous behaviour exactly
@@ -292,7 +348,12 @@ export interface LlmCallOptions {
    */
   jsonSchema?:          { name: string; schema: Record<string, unknown> };
   maxCompletionTokens?: number;
+  /** Groq (gpt-oss) only; ignored by Mistral. */
   reasoningEffort?:     'low' | 'medium' | 'high';
+  /** Which provider to try first. Default 'groq'. The other is the fallback. */
+  provider?:            LlmProvider;
+  /** Mistral model for this call (default: MISTRAL_MODEL env or mistral-small-latest). */
+  mistralModel?:        string;
 }
 
 type GroqJsonMode = 'schema' | 'json_object' | 'none';
@@ -313,6 +374,8 @@ async function callGroqDirect(
     userPromptLen:   userPrompt.length,
     schemaEnforced:  !!options.jsonSchema,
   });
+
+  let lastUsage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
   const run = async (mode: GroqJsonMode): Promise<string> => {
     const groq = getGroq();
@@ -343,7 +406,20 @@ async function callGroqDirect(
       ...(responseFormat ? { response_format: responseFormat } : {}),
     };
     const completion = (await groq.chat.completions.create(params as any)) as Groq.Chat.ChatCompletion;
-    return completion.choices[0]?.message?.content ?? '';
+    const choice = completion.choices[0];
+
+    // Cut off at the token limit → the JSON is incomplete. Say so plainly
+    // (instead of a confusing "unmatched braces" parse error later) so the fix
+    // is obvious: raise the limit for this call, or shorten the request.
+    if (choice?.finish_reason === 'length') {
+      throw new Error(
+        `Groq output was cut off at the token limit (max_completion_tokens ${params.max_completion_tokens}, ` +
+        `completion tokens used ${completion.usage?.completion_tokens ?? 'unknown'}). Context: ${context}`,
+      );
+    }
+
+    lastUsage = completion.usage;
+    return choice?.message?.content ?? '';
   };
 
   // Strictest mode first; relax only when Groq says the JSON could not be
@@ -384,8 +460,10 @@ async function callGroqDirect(
     logger.info('Groq call completed', {
       context,
       model:      GROQ_MODEL,
-      durationMs: Date.now() - startedAt,
-      outputLen:  text.length,
+      durationMs:       Date.now() - startedAt,
+      outputLen:        text.length,
+      promptTokens:     lastUsage?.prompt_tokens,
+      completionTokens: lastUsage?.completion_tokens,   // includes reasoning tokens
     });
 
     return text;
@@ -402,19 +480,51 @@ async function callGroqDirect(
   }
 }
 
-// ── Public dispatcher — Groq primary, Gemini fallback ─────────────────────
+// ── Public dispatcher — preferred provider first, the other as fallback ───
+/**
+ * True if a failure is about the PROVIDER being unavailable (rate limit, 5xx,
+ * timeout, network) — worth trying the other provider. A cut-off response, bad
+ * JSON or a rejected request is NOT: the other provider would not fix those.
+ */
+function isProviderUnavailable(err: unknown): boolean {
+  if (err instanceof MistralApiError) {
+    return err.status === 0 || err.status === 429 || err.status >= 500;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  const lower   = message.toLowerCase();
+  if (lower.includes('cut off at the token limit')) return false;
+
+  return (
+    /\b429\b/.test(message) ||
+    lower.includes('rate limit') ||
+    /^\s*5\d\d\b/.test(message) ||
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('fetch failed') ||
+    lower.includes('econnreset') ||
+    lower.includes('network')
+  );
+}
+
+function configuredProviders(): LlmProvider[] {
+  const out: LlmProvider[] = [];
+  if (process.env.GROQ_API_KEY?.trim()) out.push('groq');
+  if (isMistralConfigured())            out.push('mistral');
+  return out;
+}
+
 /**
  * Base function — all LLM calls go through here.
- * Tries Groq first (primary). On Groq rate limit, falls back to Gemini
- * immediately instead of burning a BullMQ retry. Any other Groq error
- * (bad JSON, empty response, 5xx) propagates so BullMQ retries against
- * Groq again on the next attempt.
+ *
+ * Tries options.provider first (default Groq). If that provider is rate
+ * limited, returns a 5xx, times out or can't be reached, the call moves to the
+ * other provider immediately instead of burning a BullMQ retry. A provider
+ * whose API key isn't set is skipped. Any other error (bad JSON, cut-off
+ * output, empty response, rejected request) propagates, so BullMQ retries.
  *
  * Throws on:
- *   - 429 rate limit (both providers exhausted) → BullMQ retries
- *   - 5xx server error    → BullMQ retries
- *   - Empty response      → BullMQ retries
- *   - Invalid JSON        → BullMQ retries
+ *   - no provider configured
+ *   - failure that the other provider can't help with, or both providers failing
  */
 export async function callLLM(
   systemPrompt: string,
@@ -422,19 +532,39 @@ export async function callLLM(
   context:      string, // for logging — e.g. "business-profile:projectId"
   options:      LlmCallOptions = {},
 ): Promise<string> {
-  try {
-    return await callGroqDirect(systemPrompt, userPrompt, context, options);
-  } catch (err) {
-    const message     = err instanceof Error ? err.message : String(err);
-    const isRateLimit = message.includes('429') || message.toLowerCase().includes('rate limit');
-
-    if (isRateLimit) {
-      logger.warn('Groq rate limited — falling back to Gemini', { context });
-      return callGeminiDirect(systemPrompt, userPrompt, context);
-    }
-
-    throw err;
+  const available = configuredProviders();
+  if (available.length === 0) {
+    throw new Error('No LLM provider configured — set GROQ_API_KEY and/or MISTRAL_API_KEY');
   }
+
+  const preferred: LlmProvider = options.provider ?? 'groq';
+  const other: LlmProvider     = preferred === 'groq' ? 'mistral' : 'groq';
+  const order = [preferred, other].filter(p => available.includes(p));
+
+  if (order[0] !== preferred) {
+    logger.warn(`${preferred} is not configured — using ${order[0]}`, { context });
+  }
+
+  let lastErr: unknown;
+  for (let i = 0; i < order.length; i++) {
+    const provider = order[i];
+    try {
+      return provider === 'groq'
+        ? await callGroqDirect(systemPrompt, userPrompt, context, options)
+        : await callMistralDirect(systemPrompt, userPrompt, context, options);
+    } catch (err) {
+      lastErr = err;
+      if (i < order.length - 1 && isProviderUnavailable(err)) {
+        logger.warn(`${provider} unavailable — falling back to ${order[i + 1]}`, {
+          context,
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
+        });
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 // ── Typed response interfaces ──────────────────────────────────────────────
@@ -565,7 +695,7 @@ export interface GeoCitationLlmResponse {
  * Used by: geo-analytics.job.ts
  *
  * ERROR HANDLING: throws on failure (rate limit, empty response, etc.) —
- * deliberately does NOT fall back to plain Gemini, since a Gemini fallback
+ * deliberately does NOT fall back to a plain chat model, since that fallback
  * would silently reintroduce non-grounded (memory-only) citation checking,
  * which defeats the point of this function. geo-analytics.job.ts already
  * treats a per-keyword failure here as non-fatal (failedPrompts++, continue
@@ -638,7 +768,7 @@ export async function geoCitationCheck(
       err instanceof Error ? err : new Error(message),
       { context, model: GROQ_COMPOUND_MODEL, durationMs: Date.now() - startedAt },
     );
-    throw err; // Deliberately no Gemini fallback — see function doc comment above.
+    throw err; // Deliberately no plain-model fallback — see function doc comment above.
   }
 }
 
@@ -754,10 +884,39 @@ export async function analyzeSerpResults(
 }
 
 /**
+ * Completion-token budget for ONE blog generation (reasoning tokens count
+ * against it). Defaults to 8192, as before. If a blog is cut off ("Groq output
+ * was cut off at the token limit") raise BLOG_MAX_COMPLETION_TOKENS — but note
+ * Groq's per-minute token limit on your plan: a request that cannot fit inside
+ * it will be rejected instead.
+ */
+function blogMaxCompletionTokens(): number {
+  const parsed = Number.parseInt(process.env.BLOG_MAX_COMPLETION_TOKENS ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 1024 ? parsed : 8192;
+}
+
+/**
+ * Article JSON-LD built in code from the generated title and description.
+ * It is injected into every CMS post, so it must be valid and must not contain
+ * anything the model invented (authors, URLs, dates).
+ */
+function buildArticleSchema(title: string, description: string): Record<string, unknown> {
+  return {
+    '@context':  'https://schema.org',
+    '@type':     'Article',
+    headline:    title,
+    description,
+  };
+}
+
+/**
  * Generates a full blog post for a keyword.
  * Used by: content-generation.job.ts (the live, actually-wired job —
  * deprecated/blog-generation.job.ts used this too before being
  * superseded; see deprecated/README.md)
+ *
+ * Output shape is enforced with a strict JSON schema; the JSON-LD `schema`
+ * field is added here in code (see buildArticleSchema).
  */
 export async function generateBlogPost(
   keyword:         string,
@@ -768,12 +927,27 @@ export async function generateBlogPost(
   projectId:       string,
   keywordId:       string,
 ): Promise<BlogGenerationLlmResponse> {
+  const context = `blog-generation:${projectId}:${keywordId}`;
   const raw = await callLLM(
     PROMPTS.BLOG_GENERATION_SYSTEM(customerProfile, keyword, sourceAnalysis, knowledgeChunks, contactUrl),
     PROMPTS.BLOG_GENERATION_USER(keyword),
-    `blog-generation:${projectId}:${keywordId}`,
+    context,
+    {
+      jsonSchema:          { name: 'blog_post', schema: BLOG_JSON_SCHEMA },
+      maxCompletionTokens: blogMaxCompletionTokens(),
+      reasoningEffort:     'low',                       // used only if Groq handles the call
+      // Blogs go to Mistral first (Groq's free per-minute token limit is too
+      // small for a full article); Groq is the automatic fallback.
+      provider:            'mistral',
+      mistralModel:        process.env.MISTRAL_BLOG_MODEL?.trim() || MISTRAL_BLOG_DEFAULT_MODEL,
+    },
   );
-  return extractJson<BlogGenerationLlmResponse>(raw, `blog-generation:${projectId}:${keywordId}`);
+
+  const parsed = parseJsonResponse<BlogGenerationLlmResponse>(raw, context);
+  return {
+    ...parsed,
+    schema: buildArticleSchema(parsed.title ?? '', parsed.description ?? ''),
+  };
 }
 
 /**

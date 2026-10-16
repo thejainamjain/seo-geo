@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import Link from 'next/link';
-import { useKeywords, useBlogs } from '@/lib/hooks';
+import { useKeywords, useBlogs, useCmsConfig } from '@/lib/hooks';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,24 +28,30 @@ import type { Blog, Keyword } from '@/types/api';
  * blog-generation.job.ts (which DOES create 'draft' blogs) is dead code.
  */
 
-function BlogStatusBadge({ status }: { status: string }) {
+/**
+ * A blog with status 'ready' is only "scheduled" when RankAI can actually
+ * publish it later — i.e. a CMS is connected with auto-publish on. Otherwise
+ * it is simply ready, waiting for a manual publish.
+ */
+function BlogStatusBadge({ status, autoPublishActive }: { status: string; autoPublishActive: boolean }) {
   const map: Record<string, 'default' | 'secondary' | 'outline'> = {
     published:  'default',
     ready:      'secondary',
     draft:      'outline',
     archived:   'outline',
   };
+  const label = status === 'ready' ? (autoPublishActive ? 'scheduled' : 'ready') : status;
   return (
     <Badge variant={map[status] ?? 'outline'} className="capitalize text-xs">
-      {status === 'ready' ? 'scheduled' : status}
+      {label}
     </Badge>
   );
 }
 
 function BlogsTable({
-  blogs, kwMap, projectId,
+  blogs, kwMap, projectId, autoPublishActive,
 }: {
-  blogs: Blog[]; kwMap: Map<string, Keyword>; projectId: string;
+  blogs: Blog[]; kwMap: Map<string, Keyword>; projectId: string; autoPublishActive: boolean;
 }) {
   if (blogs.length === 0) return null;
 
@@ -86,7 +92,7 @@ function BlogsTable({
               </TableCell>
 
               <TableCell>
-                <BlogStatusBadge status={blog.status} />
+                <BlogStatusBadge status={blog.status} autoPublishActive={autoPublishActive} />
               </TableCell>
 
               <TableCell>
@@ -116,14 +122,20 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
 
   const { data: keywords, isLoading: kwLoading } = useKeywords(projectId);
   const { data: blogs,    isLoading: blLoading  } = useBlogs(projectId);
+  const { data: cmsConfig } = useCmsConfig(projectId);
 
   const isLoading = kwLoading || blLoading;
+
+  // "Scheduled" only when a CMS is connected AND auto-publish is on; otherwise
+  // the same posts are just "Ready". Until the CMS config loads, say "Ready".
+  const autoPublishActive = !!cmsConfig?.cmsType && !!cmsConfig?.autoPublish;
+  const readyLabel        = autoPublishActive ? 'Scheduled' : 'Ready';
 
   const kwMap = new Map<string, Keyword>(
     (keywords ?? []).map(k => [k._id, k])
   );
 
-  const scheduledBlogs = blogs?.filter(b => b.status === 'ready')     ?? [];
+  const readyBlogs     = blogs?.filter(b => b.status === 'ready')     ?? [];
   const publishedBlogs = blogs?.filter(b => b.status === 'published') ?? [];
 
   return (
@@ -131,7 +143,7 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
       <div className="mb-8">
         <h1 className="text-2xl font-semibold">All Posts</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Every post SearchPilot has generated, scheduled, or published for this project
+          Every post RankAI has generated, scheduled, or published for this project
         </p>
       </div>
 
@@ -142,9 +154,13 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
       ) : (
         <div className="grid grid-cols-2 gap-4 mb-8">
           <div className="border border-border rounded-lg p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide">Scheduled</p>
-            <p className="text-3xl font-semibold mt-1">{scheduledBlogs.length}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Generated, waiting for the next publish window</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">{readyLabel}</p>
+            <p className="text-3xl font-semibold mt-1">{readyBlogs.length}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {autoPublishActive
+                ? 'Generated, waiting for the next publish window'
+                : 'Generated. Connect your CMS and turn on auto-publish to publish them automatically'}
+            </p>
           </div>
           <div className="border border-border rounded-lg p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Published</p>
@@ -154,25 +170,25 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
         </div>
       )}
 
-      <Tabs defaultValue="scheduled">
+      <Tabs defaultValue="ready">
         <TabsList className="mb-4">
-          <TabsTrigger value="scheduled">
-            Scheduled {!isLoading && scheduledBlogs.length > 0 ? `(${scheduledBlogs.length})` : ''}
+          <TabsTrigger value="ready">
+            {readyLabel} {!isLoading && readyBlogs.length > 0 ? `(${readyBlogs.length})` : ''}
           </TabsTrigger>
           <TabsTrigger value="published">
             Published {!isLoading && publishedBlogs.length > 0 ? `(${publishedBlogs.length})` : ''}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="scheduled">
+        <TabsContent value="ready">
           {isLoading && <Skeleton className="h-64 w-full" />}
-          {!isLoading && scheduledBlogs.length === 0 && (
+          {!isLoading && readyBlogs.length === 0 && (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              Nothing scheduled right now.
+              {autoPublishActive ? 'Nothing scheduled right now.' : 'No posts ready right now.'}
             </p>
           )}
-          {!isLoading && scheduledBlogs.length > 0 && (
-            <BlogsTable blogs={scheduledBlogs} kwMap={kwMap} projectId={projectId} />
+          {!isLoading && readyBlogs.length > 0 && (
+            <BlogsTable blogs={readyBlogs} kwMap={kwMap} projectId={projectId} autoPublishActive={autoPublishActive} />
           )}
         </TabsContent>
 
@@ -184,7 +200,7 @@ export default function BlogsPage({ params }: { params: Promise<{ projectId: str
             </p>
           )}
           {!isLoading && publishedBlogs.length > 0 && (
-            <BlogsTable blogs={publishedBlogs} kwMap={kwMap} projectId={projectId} />
+            <BlogsTable blogs={publishedBlogs} kwMap={kwMap} projectId={projectId} autoPublishActive={autoPublishActive} />
           )}
         </TabsContent>
       </Tabs>

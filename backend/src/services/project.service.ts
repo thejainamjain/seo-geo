@@ -4,6 +4,7 @@ import { QUEUE_NAMES, JOB_RETRY_CONFIG, JOB_PRIORITY, PIPELINE_STEP } from '../c
 import { getConnectionOptions } from '../loaders/redis';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../utils/errors';
 import { normalizeToStringArray } from '../utils/normalize';
+import { validateBusinessSection, mergeCompetitors, normalizeDomain } from '../utils/business-sections';
 import { uploadToCloudinary, deleteFromCloudinary } from '../lib/cloudinary';
 import { detectBrandColor } from '../lib/brand-color-detect';
 import { logger } from '../open-tele';
@@ -265,6 +266,73 @@ export const projectService = {
     const businessContext = await BusinessContext.findOne({ projectId: project._id }).lean();
 
     return { project: updatedProject, businessContext };
+  },
+
+  /**
+   * Saves ONE section of the Business page (company, product, customers,
+   * competition, socialProof) — a partial update.
+   *
+   * Only the fields in `data` are written, each as a dotted path
+   * ("competition.differentiation"), so nothing else in the section is touched.
+   * This is deliberately separate from saveOnboardingStep above: that one
+   * replaces whole sub-objects (company, product, customers, competition) with
+   * what the wizard sends, which is right for the wizard but would wipe data
+   * if the Business page used it.
+   *
+   * Competitors: the page edits plain domains, but each stored competitor is a
+   * structured entry (verified flag, SERP snippet, crawl outcome …). Existing
+   * entries are kept for domains that are still listed, new domains become
+   * user-entered entries, removed domains are dropped (with their insights).
+   */
+  async updateBusinessSection(
+    userId:    string,
+    projectId: string,
+    section:   string,
+    data:      unknown,
+  ): Promise<{ saved: true; section: string }> {
+    const project = await projectService.getProject(userId, projectId);
+
+    const parsed = validateBusinessSection(section, data);
+    if (!parsed.ok) throw new ValidationError(parsed.error);
+
+    const $set: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed.value)) {
+      $set[`${parsed.section}.${key}`] = value;
+    }
+
+    if (parsed.section === 'company' && 'targetRegions' in parsed.value) {
+      $set['company.targetRegions'] = normalizeToStringArray(parsed.value.targetRegions);
+    }
+
+    if (parsed.section === 'competition' && Array.isArray(parsed.value.mainCompetitors)) {
+      const current = await BusinessContext.findOne({ projectId: project._id })
+        .select('competition')
+        .lean();
+      const competition = ((current as { competition?: Record<string, unknown> } | null)?.competition ?? {});
+
+      const { entries, kept } = mergeCompetitors(
+        competition.mainCompetitors,
+        parsed.value.mainCompetitors as string[],
+        new Date(),
+      );
+      $set['competition.mainCompetitors'] = entries;
+
+      // Insights of competitors the user removed would otherwise linger.
+      if (Array.isArray(competition.competitorInsights)) {
+        $set['competition.competitorInsights'] = competition.competitorInsights.filter(
+          (insight: unknown) => kept.has(normalizeDomain(String((insight as { domain?: unknown })?.domain ?? ''))),
+        );
+      }
+    }
+
+    await BusinessContext.findOneAndUpdate(
+      { projectId: project._id },
+      { $set },
+      { upsert: true, new: true, runValidators: false },
+    );
+
+    logger.info('Business section saved', { projectId, section: parsed.section, fields: Object.keys(parsed.value) });
+    return { saved: true, section: parsed.section };
   },
 
   /**

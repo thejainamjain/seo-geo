@@ -36,6 +36,9 @@ export function DiffModal({
   isDisabling?: boolean;
 }) {
   const isRealDiff = REAL_DIFF_TYPES.has(change.type);
+  // A real-diff fix with no generated "After" has nothing to apply — Apply stays
+  // disabled until the audit has produced the markup.
+  const nothingToApply = isRealDiff && !(change.newHtml ?? '').trim();
   // The v2 LLM tier wraps its suggestion as an HTML comment
   // (<!-- SEO Fix: ... -->) — strip that wrapper for display so the
   // recommendation reads as a sentence, not literal markup.
@@ -119,7 +122,12 @@ export function DiffModal({
         {(onApply || onDisable) && change.status === 'pending' && (
           <div className="flex gap-2 mt-4">
             {onApply && (
-              <Button size="sm" onClick={() => onApply(change._id)} disabled={isApplying || isDisabling}>
+              <Button
+                size="sm"
+                onClick={() => onApply(change._id)}
+                disabled={isApplying || isDisabling || nothingToApply}
+                title={nothingToApply ? 'Nothing to apply yet — this fix has not been generated' : undefined}
+              >
                 Apply
               </Button>
             )}
@@ -129,6 +137,11 @@ export function DiffModal({
               </Button>
             )}
           </div>
+        )}
+        {(onApply || onDisable) && change.status === 'pending' && nothingToApply && (
+          <p className="text-xs text-muted-foreground mt-2">
+            This fix hasn&apos;t been generated yet, so there is nothing to apply. It appears once the audit has produced it.
+          </p>
         )}
       </DialogContent>
     </Dialog>

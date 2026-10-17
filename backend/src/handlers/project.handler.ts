@@ -87,6 +87,24 @@ export const projectHandler = {
   },
 
   /**
+   * PATCH /api/v1/projects/:projectId/business/:section
+   * Partial save of one Business-page section. See projectService.updateBusinessSection.
+   */
+  async updateBusinessSection(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await projectService.updateBusinessSection(
+        req.userId,
+        req.params['projectId'] as string,
+        req.params['section'] as string,
+        (req.body as { data: unknown }).data,
+      );
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
    * POST /api/v1/projects/:projectId/pipeline/start
    * Starts the pipeline after onboarding is complete.
    */

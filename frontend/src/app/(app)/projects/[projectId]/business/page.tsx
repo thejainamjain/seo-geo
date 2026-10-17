@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useState } from 'react';
-import { useBusinessContext, useSaveOnboardingStep } from '@/lib/hooks';
+import { useBusinessContext, useSaveBusinessSection } from '@/lib/hooks';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -88,7 +88,7 @@ export default function BusinessPage({
 }) {
   const { projectId } = use(params);
   const { data: bc, isLoading } = useBusinessContext(projectId);
-  const save = useSaveOnboardingStep(projectId);
+  const save = useSaveBusinessSection(projectId);
 
   // Track which section was last saved for "Saved" confirmation
   const [lastSaved, setLastSaved] = useState<number | null>(null);
@@ -143,7 +143,14 @@ export default function BusinessPage({
     setPainPoints(bc.customers?.painPoints ?? '');
     setKeywords(bc.customers?.keywordsTheyUse ?? '');
     setTopUseCases(bc.customers?.topUseCases ?? '');
-    setCompetitors((bc.competition?.mainCompetitors ?? []).join('\n'));
+    // Stored competitors are structured entries ({ domain, verified, … }), not
+    // strings — show the domain. (join() on the objects printed "[object Object]".)
+    setCompetitors(
+      (bc.competition?.mainCompetitors ?? [])
+        .map(entry => (typeof entry === 'string' ? entry : entry?.domain ?? ''))
+        .filter(Boolean)
+        .join('\n'),
+    );
     setDifferentiation(bc.competition?.differentiation ?? '');
     setStrengths(bc.competition?.uniqueStrengths ?? '');
     setTradeOffs(bc.competition?.tradeOffs ?? '');
@@ -152,9 +159,15 @@ export default function BusinessPage({
     setSocialMedia(bc.socialProof?.socialMediaPresence ?? '');
   }
 
+  // Each section is saved on its own through the Business-page endpoint, which
+  // writes only the fields sent. (These used to go to the onboarding-wizard
+  // endpoint, whose steps mean something different — saves landed in the wrong
+  // place or wiped neighbouring data.)
+  const SECTION_BY_STEP = ['company', 'product', 'customers', 'competition', 'socialProof'] as const;
+
   function doSave(step: 1 | 2 | 3 | 4 | 5, data: Record<string, unknown>) {
     save.mutate(
-      { step, data },
+      { section: SECTION_BY_STEP[step - 1], data },
       {
         onSuccess: () => {
           setLastSaved(step);

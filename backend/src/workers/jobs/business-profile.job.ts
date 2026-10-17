@@ -256,6 +256,18 @@ export async function runBusinessProfileJob(job: Job<PipelineJobData>): Promise<
   const filledFieldCount = assertUsableProfile(llmResponse, projectId);
   logger.debug('Business profile passed usability check', { projectId, filledFieldCount });
 
+  // The strategic fields are judgment calls, so a model can quietly leave them
+  // blank. Saving is still fine (the owner can fill them in), but say so in the
+  // logs instead of letting it pass unnoticed.
+  const emptyStrategicFields = (['MainCompetitors', 'Differentiation', 'UniqueStrengths', 'TradeOffsYouAccept'] as const)
+    .filter(key => {
+      const value = llmResponse.CompetitorsAndDifferentiation?.[key];
+      return typeof value !== 'string' || value.trim().length === 0;
+    });
+  if (emptyStrategicFields.length > 0) {
+    logger.warn('Business profile saved with empty strategic fields', { projectId, emptyStrategicFields });
+  }
+
   // 4. Map LLM response to BusinessContext schema
   const mapped = mapLlmResponseToBusinessContext(llmResponse, projectId);
 

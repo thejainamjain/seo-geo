@@ -39,6 +39,12 @@ const SaveOnboardingStepSchema = z.object({
   data: z.record(z.unknown()),
 });
 
+// Business page — save one section at a time (validated field-by-field in
+// projectService.updateBusinessSection)
+const UpdateBusinessSectionSchema = z.object({
+  data: z.record(z.unknown()),
+});
+
 const StartPipelineSchema = z.object({
   keywordPrimaryCountryCode: z.string().optional(),
 });
@@ -64,6 +70,15 @@ router.get('/:projectId', projectHandler.getOne);
 // Business context (legacy)
 router.post('/:projectId/business', validate(UpdateBusinessSchema), projectHandler.updateBusiness);
 router.get('/:projectId/business',  projectHandler.getBusinessContext);
+
+// Business page — partial save of one section
+// PATCH /api/v1/projects/:projectId/business/:section
+// Body: { data: { ...fields of that section } }
+router.patch(
+  '/:projectId/business/:section',
+  validate(UpdateBusinessSectionSchema),
+  projectHandler.updateBusinessSection,
+);
 
 // Onboarding wizard — save one step at a time
 // POST /api/v1/projects/:projectId/onboarding/step

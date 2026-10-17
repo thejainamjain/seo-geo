@@ -1,8 +1,16 @@
 import { Types } from 'mongoose';
 import { Audit, CodeChange, FAQ, TLDR } from '../models';
-import { NotFoundError, ForbiddenError } from '../utils/errors';
+import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { OrganizationMember, Project } from '../models';
 import { logger } from '../open-tele';
+
+// Types whose newHtml is real, copy-in markup (mirrors the frontend's
+// REAL_DIFF_TYPES). Applying one with nothing generated would mark a fix as
+// done when there is nothing to apply.
+const REAL_DIFF_TYPES = new Set([
+  'title', 'description', 'open_graph', 'canonical',
+  'alt_text', 'link_title', 'link_target', 'schema',
+]);
 
 async function assertProjectAccess(userId: string, projectId: string) {
   const project = await Project.findById(projectId);
@@ -180,6 +188,10 @@ export const auditService = {
 
     const change = await CodeChange.findOne({ _id: changeId, projectId });
     if (!change) throw new NotFoundError('CodeChange');
+
+    if (REAL_DIFF_TYPES.has(change.type) && !(change.newHtml ?? '').trim()) {
+      throw new ValidationError('This fix has no generated content yet, so it cannot be applied.');
+    }
 
     change.status    = 'applied';
     change.appliedAt = new Date();

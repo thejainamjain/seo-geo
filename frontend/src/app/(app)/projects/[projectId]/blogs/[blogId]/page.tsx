@@ -128,6 +128,7 @@ export default function BlogEditorPage({
   const [title,        setTitle]        = useState('');
   const [description,  setDescription]  = useState('');
   const [heroImageUrl, setHeroImageUrl] = useState<string | null>(null);
+  const [content,       setContent]     = useState(''); // mirrors editor content, for word count + save payload
   const [slug,          setSlug]        = useState('');
   const [slugError,    setSlugError]    = useState<string | null>(null);
   const [lastSavedAt,  setLastSavedAt]  = useState<Date | null>(null);
@@ -138,6 +139,7 @@ export default function BlogEditorPage({
       setTitle(blog.title);
       setDescription(blog.description ?? '');
       setHeroImageUrl(blog.heroImageUrl ?? null);
+      setContent(blog.content ?? '');
       setSlug(blog.slug);
       initialized.current = true;
     }
@@ -440,15 +442,15 @@ export default function BlogEditorPage({
           />
 
           <div className="mt-8">
-            {/* TipTap reads `content` ONCE, when the editor is created. It must
-                therefore be the loaded blog's content: state filled in by an effect
-                AFTER this first render left the editor mounted empty ("0 words")
-                while the saved post was fine. Later refetches are intentionally not
-                pushed into the editor (see the header comment: local edits are
-                never re-synced from the server). */}
+            {/* TipTap reads `content` ONCE, when the editor is created. The editor
+                therefore gets the loaded blog's content directly. The `content` state
+                is only a live mirror for the word count: it is filled in by an effect
+                AFTER this first render, so passing it here left the editor mounted
+                empty ("0 words") while the saved post was fine. Later refetches are
+                intentionally not pushed into the editor (see the header comment). */}
             <RichTextEditor
               content={blog.content ?? ''}
-              onChange={(html) => scheduleSave({ content: html })}
+              onChange={(html) => { setContent(html); scheduleSave({ content: html }); }}
             />
           </div>
         </div>

@@ -64,6 +64,9 @@ import { FAQ }             from '@/models/FAQ';
 import { TLDR }            from '@/models/TLDR';
 import { Project }         from '@/models/Project';
 import { getAllPages }      from '@/lib/page-selector';
+import {
+  cleanLlmText, escapeHtmlText, escapeHtmlAttr, jsonForScriptTag, htmlCommentSafe, setTagAttribute,
+} from '@/utils/html-escape';
 import { auditPage, generateSeoScore } from '@/lib/llm';
 import type { PipelineJobData }        from '../seo-pipeline.worker';
 import type { TieredPage }             from '@/lib/page-selector';
@@ -130,6 +133,15 @@ interface PageCodeChanges {
   description: string;
   textContent: string;
   linkRefs:    Array<{ href: string; text: string }>; // links needing title attrs
+
+  // Per-change lookups keyed by CodeChange _id. The LLM is asked about a
+  // de-duplicated, capped list (imageSrcs / linkRefs), but every change must be
+  // matched to ITS OWN image/link — never by position in those lists (a link
+  // that failed to parse, a duplicate image, or the cap used to shift every
+  // later change onto the wrong value).
+  imageSrcById: Record<string, string>;
+  linkRefById:  Record<string, { href: string; text: string }>;
+  oldHtmlById:  Record<string, string>;
 }
 
 interface AuditScoreInput {
@@ -323,43 +335,42 @@ async function applyCodeChanges(
 ): Promise<number> {
   const ops: Parameters<typeof CodeChange.bulkWrite>[0] = [];
 
+  // Every LLM string is cleaned (single line, length-capped) and ESCAPED before it
+  // goes into markup the customer will copy onto their live site.
+  const title         = cleanLlmText(llmResult.title,         200);
+  const description   = cleanLlmText(llmResult.description,   400);
+  const ogTitle       = cleanLlmText(llmResult.ogTitle,       200);
+  const ogDescription = cleanLlmText(llmResult.ogDescription, 400);
+
   // title
-  if (llmResult.title && pageChanges.changeIds['title']) {
+  if (title && pageChanges.changeIds['title']) {
     for (const id of pageChanges.changeIds['title']!) {
       ops.push({
         updateOne: {
           filter: { _id: id },
-          update: {
-            $set: {
-              newHtml: `<title>${llmResult.title}</title>`,
-            },
-          },
+          update: { $set: { newHtml: `<title>${escapeHtmlText(title)}</title>` } },
         },
       });
     }
   }
 
   // description
-  if (llmResult.description && pageChanges.changeIds['description']) {
+  if (description && pageChanges.changeIds['description']) {
     for (const id of pageChanges.changeIds['description']!) {
       ops.push({
         updateOne: {
           filter: { _id: id },
-          update: {
-            $set: {
-              newHtml: `<meta name="description" content="${llmResult.description}">`,
-            },
-          },
+          update: { $set: { newHtml: `<meta name="description" content="${escapeHtmlAttr(description)}">` } },
         },
       });
     }
   }
 
   // open_graph — one CodeChange record, both OG tags in newHtml
-  if ((llmResult.ogTitle || llmResult.ogDescription) && pageChanges.changeIds['open_graph']) {
+  if ((ogTitle || ogDescription) && pageChanges.changeIds['open_graph']) {
     const ogHtml = [
-      llmResult.ogTitle       ? `<meta property="og:title" content="${llmResult.ogTitle}">` : '',
-      llmResult.ogDescription ? `<meta property="og:description" content="${llmResult.ogDescription}">` : '',
+      ogTitle       ? `<meta property="og:title" content="${escapeHtmlAttr(ogTitle)}">` : '',
+      ogDescription ? `<meta property="og:description" content="${escapeHtmlAttr(ogDescription)}">` : '',
     ].filter(Boolean).join('\n');
 
     for (const id of pageChanges.changeIds['open_graph']!) {
@@ -372,47 +383,48 @@ async function applyCodeChanges(
     }
   }
 
-  // alt_text — LLM returns { src: alt } map
-  // Match each CodeChange by extracting src from oldHtml
+  // alt_text — LLM returns { src: alt }. Each change is matched by ITS OWN
+  // image (looked up by id), and the alt attribute is set on the original
+  // <img> tag so its other attributes (class, width, srcset …) are preserved.
   if (llmResult.altTexts && pageChanges.changeIds['alt_text']) {
     for (const id of pageChanges.changeIds['alt_text']!) {
-      // We stored imageSrcs in order — but we need to match by id
-      // Fetch the CodeChange to get its oldHtml src
-      // NOTE: We already have imageSrcs in order matching changeIds order
-      const idx = pageChanges.changeIds['alt_text']!.indexOf(id);
-      const src = pageChanges.imageSrcs[idx];
-      if (!src) continue;
+      const src     = pageChanges.imageSrcById[id];
+      const oldHtml = pageChanges.oldHtmlById[id];
+      if (!src || !oldHtml) continue;
 
-      const alt = llmResult.altTexts[src];
+      const alt = cleanLlmText(llmResult.altTexts[src], 200);
       if (!alt) continue;
+
+      const newHtml = setTagAttribute(oldHtml, 'img', 'alt', alt);
+      if (!newHtml) continue;
 
       ops.push({
         updateOne: {
           filter: { _id: id },
-          update: {
-            $set: {
-              newHtml: `<img src="${src}" alt="${alt}">`,
-              htmlAttributes: { alt },
-            },
-          },
+          update: { $set: { newHtml, htmlAttributes: { alt } } },
         },
       });
     }
   }
 
+  // link_title — same rule: matched by id, title attribute set on the ORIGINAL
+  // <a> tag so the link's inner markup (an <img>, <span>, …) is never lost.
   if (llmResult.linkTitles && pageChanges.changeIds['link_title']) {
     for (const id of pageChanges.changeIds['link_title']!) {
-      const idx = pageChanges.changeIds['link_title']!.indexOf(id);
-      const ref = pageChanges.linkRefs[idx];
-      if (!ref) continue;
+      const ref     = pageChanges.linkRefById[id];
+      const oldHtml = pageChanges.oldHtmlById[id];
+      if (!ref || !oldHtml) continue;
 
-      const linkTitle = llmResult.linkTitles[ref.href];
+      const linkTitle = cleanLlmText(llmResult.linkTitles[ref.href], 120);
       if (!linkTitle) continue;
+
+      const newHtml = setTagAttribute(oldHtml, 'a', 'title', linkTitle);
+      if (!newHtml) continue;
 
       ops.push({
         updateOne: {
           filter: { _id: id },
-          update: { $set: { newHtml: `<a href="${ref.href}" title="${linkTitle}">${ref.text}</a>` } },
+          update: { $set: { newHtml } },
         },
       });
     }
@@ -420,7 +432,7 @@ async function applyCodeChanges(
 
   // schema — stored as JSON-LD script tag
   if (llmResult.schema && pageChanges.changeIds['schema']) {
-    const schemaHtml = `<script type="application/ld+json">\n${JSON.stringify(llmResult.schema, null, 2)}\n</script>`;
+    const schemaHtml = `<script type="application/ld+json">\n${jsonForScriptTag(llmResult.schema)}\n</script>`;
     for (const id of pageChanges.changeIds['schema']!) {
       ops.push({
         updateOne: {
@@ -448,12 +460,12 @@ async function applyCodeChanges(
       'pageSizeFix'
     ] as string | undefined;
 
-    if (suggestion && pageChanges.changeIds[v2type]) {
+    if (typeof suggestion === 'string' && suggestion.trim() && pageChanges.changeIds[v2type]) {
       for (const id of pageChanges.changeIds[v2type]!) {
         ops.push({
           updateOne: {
             filter: { _id: id },
-            update: { $set: { newHtml: `<!-- SEO Fix: ${suggestion} -->` } },
+            update: { $set: { newHtml: `<!-- SEO Fix: ${htmlCommentSafe(suggestion)} -->` } },
           },
         });
       }
@@ -598,6 +610,9 @@ async function groupCodeChangesByPage(
         description: '', // extracted from CodeChange oldHtml below
         textContent: page?.textContent ?? '',
         linkRefs:    [],
+        imageSrcById: {},
+        linkRefById:  {},
+        oldHtmlById:  {},
       });
     }
 
@@ -619,22 +634,30 @@ async function groupCodeChangesByPage(
       entry.description = extractCurrentValueFromOldHtml('description', change.oldHtml);
     }
 
-    // Extract image src for alt_text changes
+    // Extract image src for alt_text changes. Every change is recorded BY ID;
+    // the list sent to the LLM is de-duplicated and capped.
     if (change.type === 'alt_text' && change.oldHtml) {
       const src = extractImgSrc(change.oldHtml);
-      if (src && !entry.imageSrcs.includes(src)) {
+      if (src) {
+        entry.imageSrcById[String(change._id)] = src;
+        entry.oldHtmlById[String(change._id)]  = change.oldHtml;
         // Cap at MAX_ALT_TEXT_IMGS — avoid huge prompts for image-heavy pages
-        if (entry.imageSrcs.length < TECHNICAL_AUDIT_CONFIG.MAX_ALT_TEXT_IMGS) {
+        if (!entry.imageSrcs.includes(src) && entry.imageSrcs.length < TECHNICAL_AUDIT_CONFIG.MAX_ALT_TEXT_IMGS) {
           entry.imageSrcs.push(src);
         }
       }
     }
 
-    // Extract href/text for link_title changes
+    // Extract href/text for link_title changes (same rule: by ID, list de-duplicated by href)
     if (change.type === 'link_title' && change.oldHtml) {
       const ref = extractLinkRef(change.oldHtml);
       if (ref) {
-        if (entry.linkRefs.length < TECHNICAL_AUDIT_CONFIG.MAX_LINK_TITLES) {
+        entry.linkRefById[String(change._id)] = ref;
+        entry.oldHtmlById[String(change._id)]  = change.oldHtml;
+        if (
+          !entry.linkRefs.some(r => r.href === ref.href) &&
+          entry.linkRefs.length < TECHNICAL_AUDIT_CONFIG.MAX_LINK_TITLES
+        ) {
           entry.linkRefs.push(ref);
         }
       }
@@ -783,6 +806,9 @@ export async function runTechnicalAuditJob(job: Job<PipelineJobData>): Promise<v
       description:  '',
       textContent:  pages[i]?.textContent ?? '',
       linkRefs:     [],
+      imageSrcById: {},
+      linkRefById:  {},
+      oldHtmlById:  {},
     };
 
     // Build what the LLM needs to generate for this page

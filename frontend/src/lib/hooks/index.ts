@@ -156,6 +156,21 @@ export function useSaveOnboardingStep(projectId: string) {
   });
 }
 
+export function useSaveBusinessSection(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ section, data }: {
+      section: 'company' | 'product' | 'customers' | 'competition' | 'socialProof';
+      data:    Record<string, unknown>;
+    }) => projectsApi.saveBusinessSection(projectId, section, data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['businessContext', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
+  });
+}
+
 export function useStartPipeline(projectId: string) {
   const queryClient = useQueryClient();
 

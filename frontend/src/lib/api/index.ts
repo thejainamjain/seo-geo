@@ -69,6 +69,17 @@ export const projectsApi = {
     apiClient.post<SaveOnboardingStepResult>(`/projects/${projectId}/onboarding/step`, { step, data })
       .then(r => r.data),
 
+  // Business page: partial save of ONE section. Unlike saveOnboardingStep (which
+  // replaces whole sub-objects and is meant for the wizard only), this writes
+  // just the fields sent.
+  saveBusinessSection: (
+    projectId: string,
+    section:   'company' | 'product' | 'customers' | 'competition' | 'socialProof',
+    data:      Record<string, unknown>,
+  ) =>
+    apiClient.patch<{ saved: true; section: string }>(`/projects/${projectId}/business/${section}`, { data })
+      .then(r => r.data),
+
   startPipeline: (projectId: string) =>
     apiClient.post<StartPipelineResult>(`/projects/${projectId}/pipeline/start`)
       .then(r => r.data),

@@ -108,7 +108,9 @@ Schema:
   CRITICAL: Every single value in the JSON must be a plain string. No arrays. No objects. No nested structures anywhere.
   Use newlines within strings to separate multiple items (e.g. "item1\nitem2\nitem3").
   For pricing: write as plain text like "Free plan: basic features. Pro: $29/mo with advanced features."
-  If a value cannot be determined from the content, use an empty string. Never use null and never omit a key.
+  Never use null and never omit a key.
+  Facts the content does not state (pricing, lifetime value, case studies, proof, social links, discussions): use an empty string rather than inventing them.
+  Strategic fields (MainCompetitors, Differentiation, UniqueStrengths, TradeOffsYouAccept): do NOT leave these empty. Write your best specific draft from what the content shows about how the business positions itself, who it serves and what it emphasizes. They are drafts for the owner to edit, so keep each to a few short sentences or newline-separated points, and never invent awards, customers, statistics or claims the content does not support. For MainCompetitors list domains of realistic competitors for this kind of business in its region.
 
   Schema:
   {
